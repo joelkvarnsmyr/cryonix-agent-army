@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { useAgentSystem } from "@/hooks/useAgentSystem";
 import { 
   ReactFlow,
@@ -53,7 +54,7 @@ const nodeTypes = {
 };
 
 const AgentOrchestrator = () => {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const { toast } = useToast();
   const { 
     agentTypes, 
@@ -89,6 +90,10 @@ const AgentOrchestrator = () => {
     setIsSettingsOpen(false);
   };
 
+  // Live stats for mapping real data
+  const [mailStats, setMailStats] = useState({ total: 0, priority: 0, lastCheck: '' });
+  const [memoryCount, setMemoryCount] = useState(0);
+
   // React Flow state
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -105,10 +110,52 @@ const AgentOrchestrator = () => {
   }, [user, currentSession, sessionId, createCoordinatorSession]);
 
   useEffect(() => {
-    // Initialize the flow with default nodes when agents are loaded
+    // Initialize/refresh flow when agents or live stats change
     if (agents.length > 0) {
       initializeAgentFlow();
     }
+  }, [agents, mailStats, memoryCount, isOrchestrating]);
+
+  // Fetch Gmail stats (first 200) if connected
+  useEffect(() => {
+    const hasGoogle = session?.user?.identities?.some((i: any) => i.provider === 'google');
+    const accessToken = (session as any)?.provider_token as string | undefined;
+    if (!hasGoogle || !accessToken) return;
+
+    (async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('email-service', {
+          body: { action: 'gmail-list', accessToken, maxResults: 200 },
+        });
+        if (error) throw error;
+        const emails = (data?.emails || []) as any[];
+        setMailStats({
+          total: emails.length,
+          priority: emails.filter((e) => !e.isRead).length,
+          lastCheck: new Date().toLocaleTimeString(),
+        });
+      } catch (err) {
+        console.error('Failed to fetch Gmail emails for stats', err);
+      }
+    })();
+  }, [session]);
+
+  // Fetch memory count for user's agents
+  useEffect(() => {
+    const fetchMemory = async () => {
+      try {
+        const agentIds = agents.map((a) => a.id);
+        if (agentIds.length === 0) return;
+        const { count, error } = await supabase
+          .from('agent_memory')
+          .select('id', { count: 'exact', head: true })
+          .in('agent_id', agentIds);
+        if (!error && typeof count === 'number') setMemoryCount(count);
+      } catch (err) {
+        console.error('Failed to fetch memory count', err);
+      }
+    };
+    fetchMemory();
   }, [agents]);
 
   const initializeAgentFlow = () => {
@@ -145,9 +192,9 @@ const AgentOrchestrator = () => {
         data: {
           label: mailAgent.name,
           status: mailAgent.status === 'active' ? 'checking' : 'idle',
-          emailCount: 12,
-          priorityEmails: 3,
-          lastCheck: '2 min ago',
+          emailCount: mailStats.total,
+          priorityEmails: mailStats.priority,
+          lastCheck: mailStats.lastCheck || undefined,
           currentAction: mailAgent.status === 'active' ? 'Analyzing incoming emails' : undefined
         }
       });
@@ -202,9 +249,9 @@ const AgentOrchestrator = () => {
         data: {
           label: memoryAgent.name,
           status: memoryAgent.status === 'active' ? 'storing' : 'idle',
-          memoryEntries: 157,
+          memoryEntries: memoryCount,
           contextSize: 12,
-          lastAccess: '30s ago',
+          lastAccess: undefined,
           currentOperation: memoryAgent.status === 'active' ? 'Storing conversation context' : undefined
         }
       });
