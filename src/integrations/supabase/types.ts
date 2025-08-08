@@ -367,6 +367,51 @@ export type Database = {
         }
         Relationships: []
       }
+      service_credentials: {
+        Row: {
+          config: Json
+          created_at: string
+          email: string | null
+          encrypted_secret: string
+          host: string | null
+          id: string
+          iv: string
+          port: number | null
+          service: string
+          updated_at: string
+          user_id: string
+          username: string
+        }
+        Insert: {
+          config?: Json
+          created_at?: string
+          email?: string | null
+          encrypted_secret: string
+          host?: string | null
+          id?: string
+          iv: string
+          port?: number | null
+          service: string
+          updated_at?: string
+          user_id: string
+          username: string
+        }
+        Update: {
+          config?: Json
+          created_at?: string
+          email?: string | null
+          encrypted_secret?: string
+          host?: string | null
+          id?: string
+          iv?: string
+          port?: number | null
+          service?: string
+          updated_at?: string
+          user_id?: string
+          username?: string
+        }
+        Relationships: []
+      }
       trades: {
         Row: {
           bot_id: string | null
