@@ -33,6 +33,7 @@ import EmailNode from "@/components/flow/nodes/EmailNode";
 import ConditionNode from "@/components/flow/nodes/ConditionNode";
 import WebhookNode from "@/components/flow/nodes/WebhookNode";
 import NodeToolbox from "@/components/flow/NodeToolbox";
+import NodeConfigPanel from "@/components/flow/NodeConfigPanel";
 
 const nodeTypes = {
   trigger: TriggerNode,
@@ -65,6 +66,7 @@ const AgentBuilder = () => {
   const [flowDescription, setFlowDescription] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -430,11 +432,46 @@ const AgentBuilder = () => {
     });
   };
 
+  const onNodeClick = (event: React.MouseEvent, node: Node) => {
+    setSelectedNode(node);
+  };
+
+  const onUpdateNode = (nodeId: string, data: any) => {
+    setNodes((nds) =>
+      nds.map((node) =>
+        node.id === nodeId ? { ...node, data: { ...node.data, ...data } } : node
+      )
+    );
+    toast({
+      title: "Node uppdaterad",
+      description: "Nodkonfigurationen har sparats.",
+    });
+  };
+
+  const onDeleteNode = (nodeId: string) => {
+    setNodes((nds) => nds.filter((node) => node.id !== nodeId));
+    setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
+    setSelectedNode(null);
+    toast({
+      title: "Node borttagen",
+      description: "Noden och dess kopplingar har tagits bort.",
+    });
+  };
+
   return (
-    <div className="h-screen flex">
-      {/* Sidebar */}
-      <div className="w-80 border-r bg-background p-4 overflow-y-auto">
-        <div className="mb-6">
+    <div className="h-screen flex"
+      onClick={(e) => {
+        // Deselect node when clicking on background
+        if (e.target === e.currentTarget) {
+          setSelectedNode(null);
+        }
+      }}
+    >
+      {/* Left Sidebar - Node Toolbox & Basic Config */}
+      <div className="w-80 border-r bg-background flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 border-b">
           <Button 
             variant="ghost" 
             onClick={() => navigate("/")}
@@ -467,60 +504,66 @@ const AgentBuilder = () => {
         </div>
 
         {/* AI Flow Generator */}
-        <Card className="glass mb-6">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-purple-500" />
-              AI Flödes-Generator
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="flow-description">Beskriv vad din agent ska göra</Label>
-              <Textarea
-                id="flow-description"
-                value={flowDescription}
-                onChange={(e) => setFlowDescription(e.target.value)}
-                placeholder="T.ex: 'Läs nya emails, analysera dem med AI och svara automatiskt på enkla frågor'"
-                rows={3}
-                className="resize-none"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button 
-                onClick={generateFlowWithAI} 
-                className="flex-1 gradient-primary shadow-primary"
-                disabled={isGenerating}
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Genererar...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 mr-2" />
-                    Skapa Flöde med AI
-                  </>
-                )}
-              </Button>
-              <Button 
-                onClick={clearFlow} 
-                variant="outline"
-                disabled={isGenerating}
-              >
-                Rensa
-              </Button>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              💡 AI skapar ett komplett flöde som du sedan kan granska och justera
-            </div>
-          </CardContent>
-        </Card>
+        <div className="p-4 border-b">
+          <Card className="glass">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-purple-500" />
+                AI Flödes-Generator
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Label htmlFor="flow-description">Beskriv vad din agent ska göra</Label>
+                <Textarea
+                  id="flow-description"
+                  value={flowDescription}
+                  onChange={(e) => setFlowDescription(e.target.value)}
+                  placeholder="T.ex: 'Läs nya emails, analysera dem med AI och svara automatiskt på enkla frågor'"
+                  rows={3}
+                  className="resize-none"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={generateFlowWithAI} 
+                  className="flex-1 gradient-primary shadow-primary"
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Genererar...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      Skapa Flöde med AI
+                    </>
+                  )}
+                </Button>
+                <Button 
+                  onClick={clearFlow} 
+                  variant="outline"
+                  disabled={isGenerating}
+                >
+                  Rensa
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                💡 AI skapar ett komplett flöde som du sedan kan granska och justera
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
-        <NodeToolbox />
+        {/* Node Toolbox */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <NodeToolbox />
+        </div>
 
-        <div className="mt-6 space-y-3">
+        {/* Action Buttons */}
+        <div className="p-4 border-t space-y-3">
           <Button onClick={saveAgent} className="w-full" variant="outline">
             <Save className="w-4 h-4 mr-2" />
             {isEditing ? 'Uppdatera Agent' : 'Spara Agent'}
@@ -550,6 +593,7 @@ const AgentBuilder = () => {
           onConnect={onConnect}
           onDrop={onDrop}
           onDragOver={onDragOver}
+          onNodeClick={onNodeClick}
           nodeTypes={nodeTypes}
           fitView
           className="bg-gray-50"
@@ -558,6 +602,17 @@ const AgentBuilder = () => {
           <MiniMap />
           <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
         </ReactFlow>
+      </div>
+
+      {/* Right Sidebar - Node Configuration */}
+      <div className="w-80 border-l bg-background"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <NodeConfigPanel
+          selectedNode={selectedNode}
+          onUpdateNode={onUpdateNode}
+          onDeleteNode={onDeleteNode}
+        />
       </div>
     </div>
   );
