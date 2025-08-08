@@ -61,30 +61,35 @@ export default function Integrations() {
 
       const response = await supabase.functions.invoke('email-service', {
         body: requestBody,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
       });
 
-      console.log('Supabase response:', response);
+      console.log('Raw Supabase response:', response);
+      console.log('Response data:', response.data);
+      console.log('Response error:', response.error);
 
       if (response.error) {
-        console.error('Supabase error:', response.error);
-        throw new Error(response.error.message);
+        console.error('Supabase error details:', response.error);
+        throw new Error(response.error.message || response.error.toString());
       }
 
       const { data } = response;
-      if (data.success) {
+      console.log('Response data content:', data);
+      
+      if (data?.success) {
         setConnectionStatus('success');
         toast({
           title: "Anslutning lyckades!",
-          description: `Ansluten till ${data.config.imapHost}:${data.config.imapPort}`,
+          description: `Ansluten till ${data.config?.imapHost || 'email-server'}`,
         });
       } else {
-        throw new Error(data.message || 'Connection failed');
+        console.log('Connection failed, data:', data);
+        throw new Error(data?.error || data?.message || 'Connection failed');
       }
     } catch (error: any) {
+      console.error('Full error details:', error);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      
       setConnectionStatus('error');
       toast({
         title: "Anslutning misslyckades",
