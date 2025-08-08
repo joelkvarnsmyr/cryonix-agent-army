@@ -178,7 +178,7 @@ const Dashboard = () => {
               <Button 
                 className="w-full justify-start" 
                 variant="outline"
-                onClick={() => navigate("/builder")}
+                onClick={() => navigate("/chat")}
               >
                 <Bot className="w-4 h-4 mr-2" />
                 Skapa Ny Agent

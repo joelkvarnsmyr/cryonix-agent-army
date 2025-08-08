@@ -95,7 +95,7 @@ const Navigation = () => {
             <Button variant="outline" size="sm" onClick={() => navigate("/settings")}>
               <Settings className="w-4 h-4" />
             </Button>
-            <Button size="sm" className="gradient-primary shadow-primary" onClick={() => navigate("/builder")}>
+            <Button size="sm" className="gradient-primary shadow-primary" onClick={() => navigate("/chat")}>
               <Plus className="w-4 h-4 mr-2" />
               New Agent
             </Button>
