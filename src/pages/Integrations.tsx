@@ -22,17 +22,21 @@ export default function Integrations() {
     password: '',
     customHost: '',
     customPort: '',
+    lastSummary: { total: 0, unread: 0, lastCheck: '' as string | undefined },
   });
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
-  // Gmail fetching state
   const [isFetchingGmail, setIsFetchingGmail] = useState(false);
   const [gmailEmails, setGmailEmails] = useState<Array<{ id: string; from: string; subject: string; date: string; snippet: string }>>([]);
+  const [isFetchingImap, setIsFetchingImap] = useState(false);
+  const [imapEmails, setImapEmails] = useState<Array<{ id: string; from: string; subject: string; date: string; snippet: string; isRead?: boolean }>>([]);
+  
 
   const identities = useMemo(() => session?.user?.identities || [], [session]);
   const hasGoogle = identities.some((i) => i.provider === "google");
   const hasMicrosoft = identities.some((i) => i.provider?.includes("azure"));
+  const [hasGoogleFetch, setHasGoogleFetch] = useState(false);
 
   useEffect(() => {
     try {
@@ -167,6 +171,60 @@ export default function Integrations() {
       setIsFetchingGmail(false);
     }
   };
+
+  const fetchImapEmails = async (count = 200) => {
+    if (!imapConfig.email || !imapConfig.password) {
+      toast({ title: 'Saknas uppgifter', description: 'Fyll i e‑post och lösenord', variant: 'destructive' });
+      return;
+    }
+
+    const baseConfig: any = {
+      provider: imapConfig.provider,
+      email: imapConfig.email,
+      password: imapConfig.password,
+    };
+    if (imapConfig.provider === 'onecom') {
+      baseConfig.imapHost = 'imap.one.com'; baseConfig.imapPort = 993;
+    } else if (imapConfig.provider === 'outlook') {
+      baseConfig.imapHost = 'imap-mail.outlook.com'; baseConfig.imapPort = 993;
+    } else if (imapConfig.provider === 'gmail') {
+      baseConfig.imapHost = 'imap.gmail.com'; baseConfig.imapPort = 993;
+    } else if (imapConfig.provider === 'imap') {
+      baseConfig.imapHost = imapConfig.customHost; baseConfig.imapPort = parseInt(imapConfig.customPort) || 993;
+    }
+
+    try {
+      setIsFetchingImap(true);
+      setImapEmails([]);
+
+      const { data, error } = await supabase.functions.invoke('email-service', {
+        body: { action: 'imap-list', config: baseConfig, limit: count },
+      });
+      if (error) throw error;
+
+      const emails = (data?.emails || []).map((e: any) => ({
+        id: e.id,
+        from: e.from,
+        subject: e.subject,
+        date: e.date,
+        snippet: e.body,
+        isRead: e.isRead,
+      }));
+      setImapEmails(emails);
+
+      const unread = emails.filter((e) => !e.isRead).length;
+      const summary = { total: emails.length, unread, lastCheck: new Date().toISOString() };
+      try { localStorage.setItem('mailStats', JSON.stringify(summary)); } catch {}
+
+      toast({ title: 'Hämtat e‑post (IMAP)', description: `Visar ${emails.length} konversationer` });
+    } catch (err: any) {
+      console.error('IMAP fetch error:', err);
+      toast({ title: 'Kunde inte hämta IMAP', description: err.message || String(err), variant: 'destructive' });
+    } finally {
+      setIsFetchingImap(false);
+    }
+  };
+
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <div className="flex items-center gap-2">
@@ -394,6 +452,40 @@ export default function Integrations() {
                   <Button variant="outline" onClick={() => setShowImapConfig(false)}>
                     Stäng
                   </Button>
+                </div>
+
+                <div className="space-y-2">
+                  <Button 
+                    variant="secondary"
+                    onClick={() => fetchImapEmails(200)}
+                    disabled={!imapConfig.email || !imapConfig.password || isFetchingImap}
+                  >
+                    {isFetchingImap ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Hämtar (IMAP)...
+                      </>
+                    ) : (
+                      'Hämta 200 mail (IMAP)'
+                    )}
+                  </Button>
+
+                  {imapEmails.length > 0 && (
+                    <div className="mt-2 max-h-64 overflow-auto rounded-md border">
+                      <ul className="divide-y">
+                        {imapEmails.slice(0, 200).map((m) => (
+                          <li key={m.id} className="p-2 text-sm">
+                            <div className="flex justify-between">
+                              <span className="font-medium">{m.subject}</span>
+                              <span className="text-muted-foreground">{new Date(m.date).toLocaleString()}</span>
+                            </div>
+                            <div className="text-xs text-muted-foreground truncate">{m.from}</div>
+                            <div className="text-xs text-muted-foreground truncate">{m.snippet}</div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

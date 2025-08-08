@@ -140,6 +140,27 @@ const AgentOrchestrator = () => {
     })();
   }, [session]);
 
+  // Fallback: read last mail stats from localStorage (e.g., IMAP fetch on Integrations page)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('mailStats');
+      if (raw) {
+        const s = JSON.parse(raw);
+        setMailStats({ total: s.total || 0, priority: s.unread || 0, lastCheck: s.lastCheck || '' });
+      }
+    } catch {}
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'mailStats' && e.newValue) {
+        try {
+          const s = JSON.parse(e.newValue);
+          setMailStats({ total: s.total || 0, priority: s.unread || 0, lastCheck: s.lastCheck || '' });
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   // Fetch memory count for user's agents
   useEffect(() => {
     const fetchMemory = async () => {

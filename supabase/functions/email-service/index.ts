@@ -206,6 +206,31 @@ serve(async (req) => {
           );
         }
 
+        case 'imap-list': {
+          const { config, limit: maxResults } = body as {
+            config: EmailConfig;
+            limit?: number;
+          };
+
+          // NOTE: IMAP listing is mocked for now. Replace with real IMAP protocol implementation.
+          const limit = Math.min(Math.max(maxResults || 50, 1), 200);
+          const now = Date.now();
+          const emails: EmailMessage[] = Array.from({ length: limit }).map((_, i) => ({
+            id: `${i + 1}`,
+            from: i % 3 === 0 ? 'billing@vendor.com' : 'team@company.com',
+            to: config.email,
+            subject: i % 5 === 0 ? `Faktura #${1000 + i}` : `Uppdatering ${i + 1}`,
+            body: 'Sammanfattning av meddelandet... (demo)',
+            date: new Date(now - i * 3600_000).toISOString(),
+            isRead: i % 4 !== 0,
+          }));
+
+          return new Response(
+            JSON.stringify({ success: true, count: emails.length, emails }),
+            { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+          );
+        }
+
         case 'gmail-list': {
           const { accessToken, maxResults } = body as {
             accessToken: string;
