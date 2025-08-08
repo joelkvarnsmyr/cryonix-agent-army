@@ -14,16 +14,11 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Save, Play, Eye, Bot, ArrowLeft, Sparkles, Loader2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAgents } from "@/hooks/useAgents";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 
 // Custom node types
 import TriggerNode from "@/components/flow/nodes/TriggerNode";
@@ -32,8 +27,8 @@ import BinanceNode from "@/components/flow/nodes/BinanceNode";
 import EmailNode from "@/components/flow/nodes/EmailNode";
 import ConditionNode from "@/components/flow/nodes/ConditionNode";
 import WebhookNode from "@/components/flow/nodes/WebhookNode";
-import NodeToolbox from "@/components/flow/NodeToolbox";
 import NodeConfigPanel from "@/components/flow/NodeConfigPanel";
+import { AgentBuilderSidebar } from "@/components/layout/AgentBuilderSidebar";
 
 const nodeTypes = {
   trigger: TriggerNode,
@@ -425,13 +420,6 @@ const AgentBuilder = () => {
     return plan;
   };
 
-  const previewMode = () => {
-    toast({
-      title: "Preview Mode",
-      description: "Förhandsvisning av agent-flödet.",
-    });
-  };
-
   const onNodeClick = (event: React.MouseEvent, node: Node) => {
     setSelectedNode(node);
   };
@@ -458,163 +446,74 @@ const AgentBuilder = () => {
     });
   };
 
+  const previewMode = () => {
+    toast({
+      title: "Preview Mode",
+      description: "Förhandsvisning av agent-flödet.",
+    });
+  };
+
   return (
-    <div className="h-screen flex"
-      onClick={(e) => {
-        // Deselect node when clicking on background
-        if (e.target === e.currentTarget) {
-          setSelectedNode(null);
-        }
-      }}
-    >
-      {/* Left Sidebar - Node Toolbox & Basic Config */}
-      <div className="w-80 border-r bg-background flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="p-4 border-b">
-          <Button 
-            variant="ghost" 
-            onClick={() => navigate("/")}
-            className="mb-4"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Tillbaka
-          </Button>
-          
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="agent-name">Agent Namn</Label>
-              <Input
-                id="agent-name"
-                value={agentName}
-                onChange={(e) => setAgentName(e.target.value)}
-                placeholder="Min Nya Agent"
-              />
-            </div>
-            <div>
-              <Label htmlFor="agent-desc">Beskrivning</Label>
-              <Input
-                id="agent-desc"
-                value={agentDescription}
-                onChange={(e) => setAgentDescription(e.target.value)}
-                placeholder="Vad gör denna agent?"
-              />
-            </div>
+    <SidebarProvider>
+      <div className="min-h-screen flex w-full">
+        {/* Sidebar trigger in header */}
+        <header className="fixed top-0 left-0 right-0 h-12 flex items-center border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-40">
+          <SidebarTrigger className="ml-2" />
+          <h1 className="ml-4 font-semibold">Agent Builder</h1>
+        </header>
+
+        {/* Left Sidebar */}
+        <AgentBuilderSidebar
+          agentName={agentName}
+          setAgentName={setAgentName}
+          agentDescription={agentDescription}
+          setAgentDescription={setAgentDescription}
+          flowDescription={flowDescription}
+          setFlowDescription={setFlowDescription}
+          isGenerating={isGenerating}
+          isExecuting={isExecuting}
+          isEditing={isEditing}
+          onGenerateFlow={generateFlowWithAI}
+          onClearFlow={clearFlow}
+          onSaveAgent={saveAgent}
+          onPreviewMode={previewMode}
+          onExecuteFlow={executeFlow}
+        />
+
+        {/* Main Content Area */}
+        <div className="flex-1 flex pt-12">
+          {/* Flow Canvas */}
+          <div className="flex-1" ref={reactFlowWrapper}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onDrop={onDrop}
+              onDragOver={onDragOver}
+              onNodeClick={onNodeClick}
+              nodeTypes={nodeTypes}
+              fitView
+              className="bg-gray-50"
+            >
+              <Controls />
+              <MiniMap />
+              <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
+            </ReactFlow>
+          </div>
+
+          {/* Right Sidebar - Node Configuration */}
+          <div className="w-80 border-l bg-background">
+            <NodeConfigPanel
+              selectedNode={selectedNode}
+              onUpdateNode={onUpdateNode}
+              onDeleteNode={onDeleteNode}
+            />
           </div>
         </div>
-
-        {/* AI Flow Generator */}
-        <div className="p-4 border-b">
-          <Card className="glass">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-purple-500" />
-                AI Flödes-Generator
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <Label htmlFor="flow-description">Beskriv vad din agent ska göra</Label>
-                <Textarea
-                  id="flow-description"
-                  value={flowDescription}
-                  onChange={(e) => setFlowDescription(e.target.value)}
-                  placeholder="T.ex: 'Läs nya emails, analysera dem med AI och svara automatiskt på enkla frågor'"
-                  rows={3}
-                  className="resize-none"
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button 
-                  onClick={generateFlowWithAI} 
-                  className="flex-1 gradient-primary shadow-primary"
-                  disabled={isGenerating}
-                >
-                  {isGenerating ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Genererar...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4 mr-2" />
-                      Skapa Flöde med AI
-                    </>
-                  )}
-                </Button>
-                <Button 
-                  onClick={clearFlow} 
-                  variant="outline"
-                  disabled={isGenerating}
-                >
-                  Rensa
-                </Button>
-              </div>
-              <div className="text-xs text-muted-foreground">
-                💡 AI skapar ett komplett flöde som du sedan kan granska och justera
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Node Toolbox */}
-        <div className="flex-1 overflow-y-auto p-4">
-          <NodeToolbox />
-        </div>
-
-        {/* Action Buttons */}
-        <div className="p-4 border-t space-y-3">
-          <Button onClick={saveAgent} className="w-full" variant="outline">
-            <Save className="w-4 h-4 mr-2" />
-            {isEditing ? 'Uppdatera Agent' : 'Spara Agent'}
-          </Button>
-          <Button onClick={previewMode} className="w-full" variant="outline">
-            <Eye className="w-4 h-4 mr-2" />
-            Förhandsgranska
-          </Button>
-          <Button 
-            onClick={executeFlow} 
-            className="w-full gradient-primary shadow-primary"
-            disabled={isExecuting || isGenerating}
-          >
-            <Play className="w-4 h-4 mr-2" />
-            {isExecuting ? "Kör..." : "Kör Agent"}
-          </Button>
-        </div>
       </div>
-
-      {/* Flow Canvas */}
-      <div className="flex-1" ref={reactFlowWrapper}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onDrop={onDrop}
-          onDragOver={onDragOver}
-          onNodeClick={onNodeClick}
-          nodeTypes={nodeTypes}
-          fitView
-          className="bg-gray-50"
-        >
-          <Controls />
-          <MiniMap />
-          <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
-        </ReactFlow>
-      </div>
-
-      {/* Right Sidebar - Node Configuration */}
-      <div className="w-80 border-l bg-background"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <NodeConfigPanel
-          selectedNode={selectedNode}
-          onUpdateNode={onUpdateNode}
-          onDeleteNode={onDeleteNode}
-        />
-      </div>
-    </div>
+    </SidebarProvider>
   );
 };
 
