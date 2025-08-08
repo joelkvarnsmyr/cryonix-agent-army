@@ -1,5 +1,5 @@
 import { useState } from "react";
-import Navigation from "@/components/layout/Navigation";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -150,8 +150,7 @@ const Agents = () => {
   if (loading) {
     return (
       <div className="min-h-screen">
-        <Navigation />
-        <div className="pt-20 container mx-auto px-6">
+        <div className="pt-6 container mx-auto px-6">
           <div className="animate-pulse space-y-4">
             <div className="h-8 bg-muted rounded w-1/4"></div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -167,9 +166,8 @@ const Agents = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      <Navigation />
       
-      <main className="pt-20 container mx-auto px-6 pb-8">
+      <main className="pt-6 container mx-auto px-6 pb-8">
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import Navigation from "@/components/layout/Navigation";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -266,9 +266,8 @@ const AgentOrchestrator = () => {
 
   return (
     <div className="h-screen flex flex-col bg-background">
-      <Navigation />
       
-      <main className="flex-1 flex pt-16">
+      <main className="flex-1 flex pt-0">
         {/* Flow Visualization Area */}
         <div className="flex-1 flex flex-col">
           {/* Header */}

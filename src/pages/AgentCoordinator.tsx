@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import Navigation from "@/components/layout/Navigation";
+
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -271,9 +271,8 @@ const AgentCoordinator = () => {
 
   return (
     <div className="h-screen flex flex-col bg-background">
-      <Navigation />
       
-      <main className="flex-1 flex pt-16">
+      <main className="flex-1 flex pt-0">
         {/* Chat Area */}
         <div className="flex-1 flex flex-col">
           {/* Header */}
