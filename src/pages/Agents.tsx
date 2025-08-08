@@ -145,7 +145,7 @@ const Agents = () => {
   };
 
   const handleChatWithAgent = (agentId: string) => {
-    navigate(`/chat/${agentId}`);
+    navigate(`/orchestrator`);
   };
 
   if (loading) {
@@ -176,7 +176,7 @@ const Agents = () => {
               <p className="text-muted-foreground">Hantera alla dina AI-agenter på ett ställe</p>
             </div>
             <Button 
-              onClick={() => navigate("/chat")}
+              onClick={() => navigate("/orchestrator")}
               className="gradient-primary shadow-primary"
             >
               <Plus className="w-4 h-4 mr-2" />
@@ -236,7 +236,7 @@ const Agents = () => {
                 }
               </p>
               {!searchTerm && statusFilter === "all" && (
-                <Button onClick={() => navigate("/chat")} className="gradient-primary shadow-primary">
+                <Button onClick={() => navigate("/orchestrator")} className="gradient-primary shadow-primary">
                   <Plus className="w-4 h-4 mr-2" />
                   Skapa Din Första Agent
                 </Button>

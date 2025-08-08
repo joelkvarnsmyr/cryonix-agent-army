@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import Auth from "./pages/Auth";
-import AgentChat from "./pages/AgentChat";
+
 import AgentCoordinator from "./pages/AgentCoordinator";
 import AgentOrchestrator from "./pages/AgentOrchestrator";
 import Agents from "./pages/Agents";
@@ -28,8 +28,6 @@ const App = () => (
             <Routes>
               <Route path="/" element={<Navigate to="/orchestrator" replace />} />
               <Route path="/auth" element={<Auth />} />
-              <Route path="/agents" element={<Agents />} />
-              <Route path="/chat" element={<AgentChat />} />
               <Route path="/coordinator" element={<AgentCoordinator />} />
               <Route path="/orchestrator" element={<AgentOrchestrator />} />
               <Route path="/integrations" element={<Integrations />} />
