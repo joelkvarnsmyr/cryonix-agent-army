@@ -21,7 +21,10 @@ import {
   Brain,
   ArrowLeft,
   Check,
-  Loader2
+  Loader2,
+  Play,
+  Settings,
+  Plus
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { v4 as uuidv4 } from 'uuid';
@@ -66,6 +69,7 @@ const AgentChat = () => {
   const [isTyping, setIsTyping] = useState(false);
   const [sessionId] = useState(() => uuidv4());
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
+  const [createdAgent, setCreatedAgent] = useState<any>(null);
   const [creationStep, setCreationStep] = useState<'greeting' | 'type_selection' | 'customization' | 'team_setup' | 'completion'>('greeting');
   const [selectedTemplate, setSelectedTemplate] = useState<AgentTemplate | null>(null);
   const [agentConfig, setAgentConfig] = useState<any>({});
@@ -262,6 +266,8 @@ Ska jag skapa agenten nu?`);
 
       if (error) throw error;
 
+      setCreatedAgent(agent);
+      
       addMessage('assistant', `🎉 Fantastiskt! Din ${agentConfig.name} har skapats och är redo att användas. 
 
 Agent-ID: ${agent.id}
@@ -409,79 +415,161 @@ Vill du:
           </div>
         </div>
 
-        {/* Sidebar with Templates */}
+        {/* Sidebar - Templates or Agent Config */}
         <div className="w-80 border-l bg-card/30 p-4">
-          <h2 className="font-medium mb-4 flex items-center gap-2">
-            <Users className="w-4 h-4" />
-            Agent-mallar
-          </h2>
-          
-          <div className="space-y-3">
-            {templates.map((template) => {
-              const IconComponent = getAgentIcon(template.agent_type);
-              return (
-                <Card 
-                  key={template.id} 
-                  className={`cursor-pointer transition-all hover:shadow-md ${
-                    selectedTemplate?.id === template.id ? 'ring-2 ring-primary' : ''
-                  }`}
-                  onClick={() => handleTemplateSelection(template)}
-                >
-                  <CardContent className="p-3">
-                    <div className="flex items-start gap-3">
-                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                        <IconComponent className="w-4 h-4 text-primary" />
+          {!createdAgent ? (
+            // Show templates when no agent is created yet
+            <>
+              <h2 className="font-medium mb-4 flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                Agent-mallar
+              </h2>
+              
+              <div className="space-y-3">
+                {templates.map((template) => {
+                  const IconComponent = getAgentIcon(template.agent_type);
+                  return (
+                    <Card 
+                      key={template.id} 
+                      className={`cursor-pointer transition-all hover:shadow-md ${
+                        selectedTemplate?.id === template.id ? 'ring-2 ring-primary' : ''
+                      }`}
+                      onClick={() => handleTemplateSelection(template)}
+                    >
+                      <CardContent className="p-3">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                            <IconComponent className="w-4 h-4 text-primary" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-medium text-sm truncate">{template.name}</h3>
+                            <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
+                              {template.description}
+                            </p>
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {template.required_integrations.slice(0, 2).map((integration) => (
+                                <Badge key={integration} variant="secondary" className="text-xs">
+                                  {integration}
+                                </Badge>
+                              ))}
+                              {template.required_integrations.length > 2 && (
+                                <Badge variant="secondary" className="text-xs">
+                                  +{template.required_integrations.length - 2}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          {selectedTemplate?.id === template.id && (
+                            <Check className="w-4 h-4 text-primary flex-shrink-0" />
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            // Show agent configuration when agent is created
+            <>
+              <h2 className="font-medium mb-4 flex items-center gap-2">
+                <Bot className="w-4 h-4" />
+                {createdAgent.name}
+              </h2>
+              
+              <Card className="glass mb-4">
+                <CardContent className="p-4">
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Agent-ID</label>
+                      <p className="text-sm font-mono bg-muted p-2 rounded text-center">
+                        {createdAgent.id.slice(0, 8)}...{createdAgent.id.slice(-8)}
+                      </p>
+                    </div>
+                    
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Status</label>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Badge variant="secondary">
+                          Inaktiv (aktivera när du är redo)
+                        </Badge>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-medium text-sm truncate">{template.name}</h3>
-                        <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                          {template.description}
-                        </p>
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {template.required_integrations.slice(0, 2).map((integration) => (
-                            <Badge key={integration} variant="secondary" className="text-xs">
+                    </div>
+                    
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Typ</label>
+                      <p className="text-sm capitalize">{createdAgent.agent_type}</p>
+                    </div>
+                    
+                    {createdAgent.api_integrations && createdAgent.api_integrations.length > 0 && (
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">Integrationer</label>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {createdAgent.api_integrations.map((integration: string) => (
+                            <Badge key={integration} variant="outline" className="text-xs">
                               {integration}
                             </Badge>
                           ))}
-                          {template.required_integrations.length > 2 && (
-                            <Badge variant="secondary" className="text-xs">
-                              +{template.required_integrations.length - 2}
-                            </Badge>
-                          )}
                         </div>
                       </div>
-                      {selectedTemplate?.id === template.id && (
-                        <Check className="w-4 h-4 text-primary flex-shrink-0" />
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
 
-          {creationStep === 'completion' && (
-            <div className="mt-6 space-y-2">
-              <Button
-                onClick={() => navigate("/agents")}
-                className="w-full"
-                variant="outline"
-              >
-                Visa Alla Agenter
-              </Button>
-              <Button
-                onClick={() => {
-                  setMessages([]);
-                  setCreationStep('greeting');
-                  setSelectedTemplate(null);
-                  addMessage('assistant', 'Hej igen! Vill du skapa en till agent?');
-                  setCreationStep('type_selection');
-                }}
-                className="w-full gradient-primary shadow-primary"
-              >
-                Skapa Ny Agent
-              </Button>
-            </div>
+              <div className="space-y-2">
+                <Button
+                  onClick={() => addMessage('user', '• Testa agenten direkt')}
+                  className="w-full"
+                  variant="outline"
+                >
+                  <Play className="w-4 h-4 mr-2" />
+                  Testa Agenten
+                </Button>
+                
+                <Button
+                  onClick={() => navigate(`/builder?edit=${createdAgent.id}`)}
+                  className="w-full"
+                  variant="outline"
+                >
+                  <Settings className="w-4 h-4 mr-2" />
+                  Konfigurera & Redigera
+                </Button>
+                
+                <Button
+                  onClick={() => addMessage('user', '• Konfigurera API-integrations')}
+                  className="w-full"
+                  variant="outline"
+                >
+                  <Bot className="w-4 h-4 mr-2" />
+                  API-inställningar
+                </Button>
+                
+                <Button
+                  onClick={() => navigate("/agents")}
+                  className="w-full"
+                  variant="outline"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Gå till Översikt
+                </Button>
+                
+                <Button
+                  onClick={() => {
+                    setMessages([]);
+                    setCreationStep('greeting');
+                    setSelectedTemplate(null);
+                    setCreatedAgent(null);
+                    addMessage('assistant', 'Hej igen! Vill du skapa en till agent?');
+                    setCreationStep('type_selection');
+                  }}
+                  className="w-full gradient-primary shadow-primary"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Skapa Ny Agent
+                </Button>
+              </div>
+            </>
           )}
         </div>
       </main>
