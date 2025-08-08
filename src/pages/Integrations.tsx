@@ -1,15 +1,30 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Mail, Calendar, CheckCircle2, XCircle, Plug, LogIn } from "lucide-react";
+import { Mail, Calendar, CheckCircle2, XCircle, Plug, LogIn, Settings, Loader2 } from "lucide-react";
 
 export default function Integrations() {
   const { session } = useAuth();
   const { toast } = useToast();
+
+  // States for IMAP/SMTP configuration
+  const [showImapConfig, setShowImapConfig] = useState(false);
+  const [imapConfig, setImapConfig] = useState({
+    provider: 'onecom',
+    email: '',
+    password: '',
+    customHost: '',
+    customPort: '',
+  });
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   const identities = useMemo(() => session?.user?.identities || [], [session]);
   const hasGoogle = identities.some((i) => i.provider === "google");
@@ -23,6 +38,53 @@ export default function Integrations() {
     });
     if (error) {
       toast({ title: "Fel vid anslutning", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const testImapConnection = async () => {
+    setIsTestingConnection(true);
+    setConnectionStatus('idle');
+
+    try {
+      const response = await supabase.functions.invoke('email-service', {
+        body: {
+          provider: imapConfig.provider,
+          email: imapConfig.email,
+          password: imapConfig.password,
+          customConfig: imapConfig.customHost ? {
+            imapHost: imapConfig.customHost,
+            imapPort: parseInt(imapConfig.customPort) || 993,
+          } : undefined,
+        },
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
+
+      const { data } = response;
+      if (data.success) {
+        setConnectionStatus('success');
+        toast({
+          title: "Anslutning lyckades!",
+          description: `Ansluten till ${data.config.imapHost}:${data.config.imapPort}`,
+        });
+      } else {
+        throw new Error(data.message || 'Connection failed');
+      }
+    } catch (error: any) {
+      setConnectionStatus('error');
+      toast({
+        title: "Anslutning misslyckades",
+        description: error.message || "Kunde inte ansluta till email-servern",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTestingConnection(false);
     }
   };
 
@@ -104,20 +166,131 @@ export default function Integrations() {
           </CardContent>
         </Card>
 
-        {/* iCloud (IMAP/CalDAV via edge-func) */}
+        {/* IMAP/SMTP */}
         <Card className="glass">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">iCloud Mail & Calendar (IMAP/CalDAV)</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Mail className="w-4 h-4" />
+              IMAP/SMTP Email
+              <Badge variant="outline">One.com, Gmail, Outlook</Badge>
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Kräver app‑lösenord. Vi kommer använda en skyddad edge‑funktion för IMAP/CalDAV.
-            </p>
-            <div className="flex gap-2">
-              <Button variant="outline" disabled>
-                Kommer snart
-              </Button>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-2">
+              {connectionStatus === 'success' ? (
+                <Badge variant="secondary" className="flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-primary" /> Testad & Fungerar
+                </Badge>
+              ) : connectionStatus === 'error' ? (
+                <Badge variant="destructive" className="flex items-center gap-1">
+                  <XCircle className="w-3 h-3" /> Anslutning misslyckad
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="flex items-center gap-1">
+                  <Settings className="w-3 h-3" /> Behöver konfiguration
+                </Badge>
+              )}
             </div>
+
+            {!showImapConfig ? (
+              <div className="flex gap-2">
+                <Button onClick={() => setShowImapConfig(true)}>
+                  <Settings className="w-4 h-4 mr-2" /> Konfigurera IMAP/SMTP
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4 p-4 border rounded-lg bg-muted/20">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="provider">Email-leverantör</Label>
+                    <Select 
+                      value={imapConfig.provider} 
+                      onValueChange={(value) => setImapConfig({...imapConfig, provider: value})}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="onecom">One.com</SelectItem>
+                        <SelectItem value="gmail">Gmail (App-lösenord krävs)</SelectItem>
+                        <SelectItem value="outlook">Outlook</SelectItem>
+                        <SelectItem value="imap">Anpassad IMAP</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="email">Email-adress</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="din@email.com"
+                      value={imapConfig.email}
+                      onChange={(e) => setImapConfig({...imapConfig, email: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="password">
+                    {imapConfig.provider === 'gmail' ? 'App-lösenord' : 'Lösenord'}
+                  </Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder={imapConfig.provider === 'gmail' ? 'App-lösenord från Google' : 'Ditt email-lösenord'}
+                    value={imapConfig.password}
+                    onChange={(e) => setImapConfig({...imapConfig, password: e.target.value})}
+                  />
+                  {imapConfig.provider === 'gmail' && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Skapa app-lösenord på: myaccount.google.com/apppasswords
+                    </p>
+                  )}
+                </div>
+
+                {imapConfig.provider === 'imap' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="customHost">IMAP Server</Label>
+                      <Input
+                        id="customHost"
+                        placeholder="imap.example.com"
+                        value={imapConfig.customHost}
+                        onChange={(e) => setImapConfig({...imapConfig, customHost: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="customPort">Port</Label>
+                      <Input
+                        id="customPort"
+                        placeholder="993"
+                        value={imapConfig.customPort}
+                        onChange={(e) => setImapConfig({...imapConfig, customPort: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button 
+                    onClick={testImapConnection}
+                    disabled={!imapConfig.email || !imapConfig.password || isTestingConnection}
+                  >
+                    {isTestingConnection ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Testar...
+                      </>
+                    ) : (
+                      'Testa anslutning'
+                    )}
+                  </Button>
+                  <Button variant="outline" onClick={() => setShowImapConfig(false)}>
+                    Stäng
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
