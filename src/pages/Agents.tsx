@@ -125,7 +125,8 @@ const Agents = () => {
   };
 
   const handleEditAgent = (agentId: string) => {
-    navigate(`/builder?edit=${agentId}`);
+    toast({ title: "Builder borttagen", description: "Redigering sker nu via Orchestrator.", });
+    navigate(`/orchestrator`);
   };
 
   const toggleTeamExpansion = (agentId: string) => {

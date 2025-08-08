@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { Bot, Layers, Settings, Plug, LayoutPanelLeft } from "lucide-react";
+import { Bot, Layers, Settings, Plug } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -15,7 +15,6 @@ import {
 const items = [
   { title: "Orchestrator", url: "/orchestrator", icon: Bot },
   { title: "Agents", url: "/agents", icon: Layers },
-  { title: "Builder", url: "/builder", icon: LayoutPanelLeft },
   { title: "Integrationer", url: "/integrations", icon: Plug },
   { title: "Inställningar", url: "/settings", icon: Settings },
 ];
