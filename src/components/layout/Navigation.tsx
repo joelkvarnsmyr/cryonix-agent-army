@@ -95,9 +95,9 @@ const Navigation = () => {
             <Button variant="outline" size="sm" onClick={() => navigate("/settings")}>
               <Settings className="w-4 h-4" />
             </Button>
-            <Button size="sm" className="gradient-primary shadow-primary" onClick={() => navigate("/coordinator")}>
+            <Button size="sm" className="gradient-primary shadow-primary" onClick={() => navigate("/orchestrator")}>
               <Brain className="w-4 h-4 mr-2" />
-              Coordinator
+              Orchestrator
             </Button>
             <Button variant="ghost" size="sm" onClick={handleSignOut}>
               <LogOut className="w-4 h-4" />

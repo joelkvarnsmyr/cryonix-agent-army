@@ -9,6 +9,7 @@ import Auth from "./pages/Auth";
 import AgentBuilder from "./pages/AgentBuilder";
 import AgentChat from "./pages/AgentChat";
 import AgentCoordinator from "./pages/AgentCoordinator";
+import AgentOrchestrator from "./pages/AgentOrchestrator";
 import Dashboard from "./pages/Dashboard";
 import Agents from "./pages/Agents";
 import Settings from "./pages/Settings";
@@ -31,6 +32,7 @@ const App = () => (
             <Route path="/builder" element={<AgentBuilder />} />
             <Route path="/chat" element={<AgentChat />} />
             <Route path="/coordinator" element={<AgentCoordinator />} />
+            <Route path="/orchestrator" element={<AgentOrchestrator />} />
             <Route path="/marketplace" element={<div className="pt-20 text-center">Marketplace kommer snart!</div>} />
             <Route path="/settings" element={<Settings />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

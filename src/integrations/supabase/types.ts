@@ -50,6 +50,39 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_memory: {
+        Row: {
+          agent_id: string | null
+          content: Json
+          created_at: string | null
+          expires_at: string | null
+          id: string
+          memory_type: string
+          metadata: Json | null
+          updated_at: string | null
+        }
+        Insert: {
+          agent_id?: string | null
+          content: Json
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string
+          memory_type: string
+          metadata?: Json | null
+          updated_at?: string | null
+        }
+        Update: {
+          agent_id?: string | null
+          content?: Json
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string
+          memory_type?: string
+          metadata?: Json | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       agent_templates: {
         Row: {
           agent_type: string
@@ -86,6 +119,75 @@ export type Database = {
           prompt_template?: string | null
           required_integrations?: string[] | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      agent_types: {
+        Row: {
+          capabilities: string[] | null
+          created_at: string | null
+          default_config: Json | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          required_integrations: string[] | null
+        }
+        Insert: {
+          capabilities?: string[] | null
+          created_at?: string | null
+          default_config?: Json | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          required_integrations?: string[] | null
+        }
+        Update: {
+          capabilities?: string[] | null
+          created_at?: string | null
+          default_config?: Json | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          required_integrations?: string[] | null
+        }
+        Relationships: []
+      }
+      agent_workflows: {
+        Row: {
+          agent_id: string | null
+          created_at: string | null
+          edges: Json | null
+          id: string
+          is_active: boolean | null
+          metadata: Json | null
+          nodes: Json | null
+          updated_at: string | null
+          workflow_name: string
+        }
+        Insert: {
+          agent_id?: string | null
+          created_at?: string | null
+          edges?: Json | null
+          id?: string
+          is_active?: boolean | null
+          metadata?: Json | null
+          nodes?: Json | null
+          updated_at?: string | null
+          workflow_name: string
+        }
+        Update: {
+          agent_id?: string | null
+          created_at?: string | null
+          edges?: Json | null
+          id?: string
+          is_active?: boolean | null
+          metadata?: Json | null
+          nodes?: Json | null
+          updated_at?: string | null
+          workflow_name?: string
         }
         Relationships: []
       }
@@ -201,6 +303,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      coordinator_sessions: {
+        Row: {
+          active_agents: string[] | null
+          context: Json | null
+          created_at: string | null
+          id: string
+          last_activity: string | null
+          session_id: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          active_agents?: string[] | null
+          context?: Json | null
+          created_at?: string | null
+          id?: string
+          last_activity?: string | null
+          session_id: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          active_agents?: string[] | null
+          context?: Json | null
+          created_at?: string | null
+          id?: string
+          last_activity?: string | null
+          session_id?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       profiles: {
         Row: {
