@@ -61,7 +61,7 @@ Skapa ett logiskt flöde med bra positionering (x: 0-800, y: 0-600) och använd 
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4.1-2025-04-14',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: `Skapa ett agent-flöde för: ${description}` }

@@ -113,20 +113,93 @@ const AgentChat = () => {
     return message;
   };
 
-  const saveConversation = async (message: Message) => {
-    try {
-      await supabase
-        .from('agent_conversations')
-        .insert({
-          user_id: user?.id,
-          session_id: sessionId,
-          message_type: message.type,
-          content: message.content,
-          metadata: message.metadata || {}
-        });
-    } catch (error) {
-      console.error('Error saving conversation:', error);
-    }
+  const generateDefaultFlow = (agentType: string) => {
+    const defaultFlows = {
+      cryptotrader: {
+        nodes: [
+          {
+            id: '1',
+            type: 'trigger',
+            position: { x: 100, y: 100 },
+            data: { label: 'Market Analysis', triggerType: 'schedule' }
+          },
+          {
+            id: '2', 
+            type: 'binance',
+            position: { x: 300, y: 100 },
+            data: { label: 'Get Market Data', action: 'get_price' }
+          },
+          {
+            id: '3',
+            type: 'gpt',
+            position: { x: 500, y: 100 },
+            data: { label: 'AI Trading Analysis', prompt: 'Analyze market and recommend trades' }
+          },
+          {
+            id: '4',
+            type: 'condition',
+            position: { x: 700, y: 100 },
+            data: { label: 'High Confidence?', condition: 'confidence > 80' }
+          },
+          {
+            id: '5',
+            type: 'binance',
+            position: { x: 500, y: 250 },
+            data: { label: 'Execute Trade', action: 'trade' }
+          }
+        ],
+        edges: [
+          { id: 'e1-2', source: '1', target: '2' },
+          { id: 'e2-3', source: '2', target: '3' },
+          { id: 'e3-4', source: '3', target: '4' },
+          { id: 'e4-5', source: '4', target: '5' }
+        ]
+      },
+      email_manager: {
+        nodes: [
+          {
+            id: '1',
+            type: 'trigger',
+            position: { x: 100, y: 100 },
+            data: { label: 'New Email', triggerType: 'webhook' }
+          },
+          {
+            id: '2',
+            type: 'email',
+            position: { x: 300, y: 100 },
+            data: { label: 'Read Email', action: 'read' }
+          },
+          {
+            id: '3',
+            type: 'gpt',
+            position: { x: 500, y: 100 },
+            data: { label: 'Analyze & Categorize', prompt: 'Analyze email priority and content' }
+          }
+        ],
+        edges: [
+          { id: 'e1-2', source: '1', target: '2' },
+          { id: 'e2-3', source: '2', target: '3' }
+        ]
+      }
+    };
+
+    return defaultFlows[agentType as keyof typeof defaultFlows] || {
+      nodes: [
+        {
+          id: '1',
+          type: 'trigger',
+          position: { x: 250, y: 100 },
+          data: { label: 'Start', triggerType: 'manual' }
+        },
+        {
+          id: '2',
+          type: 'gpt',
+          position: { x: 450, y: 100 },
+          data: { label: 'AI Processing', prompt: 'Process user input' }
+        }
+      ],
+      edges: [{ id: 'e1-2', source: '1', target: '2' }]
+    };
   };
 
   const handleTemplateSelection = (template: AgentTemplate) => {
@@ -148,20 +221,20 @@ const AgentChat = () => {
         setIsTyping(false);
         addMessage('assistant', `Perfekt! En ${template.name} är en utmärkt start. ${template.description}
 
-Vill du:
-🤖 Skapa en ensam agent som arbetar självständigt
-👥 Skapa en team-agent med flera specialiserade sub-agenter
-✨ Anpassa konfigurationen först`);
-        setCreationStep('customization');
+Ska jag skapa agenten nu?`);
+        setCreationStep('team_setup');
       }, 1000);
     }, 500);
   };
 
-  const createAgent = async (isTeam: boolean = false) => {
+  const createAgent = async () => {
     if (!selectedTemplate || !user) return;
     
     setIsCreating(true);
     try {
+      // Generate default flow for the agent
+      const defaultFlow = generateDefaultFlow(selectedTemplate.agent_type);
+      
       const agentData = {
         name: agentConfig.name,
         description: agentConfig.description,
@@ -171,7 +244,9 @@ Vill du:
           ...agentConfig.configuration,
           prompt_template: selectedTemplate.prompt_template,
           required_integrations: agentConfig.required_integrations,
-          is_team: isTeam
+          nodes: defaultFlow.nodes,
+          edges: defaultFlow.edges,
+          flowDescription: `Automatiskt genererat flöde för ${agentConfig.name}`
         },
         interaction_style: agentConfig.interaction_style,
         api_integrations: agentConfig.required_integrations || [],
@@ -187,11 +262,6 @@ Vill du:
 
       if (error) throw error;
 
-      // If it's a team agent and it's the ContextManagerAgent, create sub-agents
-      if (isTeam && selectedTemplate.agent_type === 'context_manager') {
-        await createTeamAgents(agent.id);
-      }
-
       addMessage('assistant', `🎉 Fantastiskt! Din ${agentConfig.name} har skapats och är redo att användas. 
 
 Agent-ID: ${agent.id}
@@ -199,7 +269,7 @@ Status: Inaktiv (aktivera när du är redo)
 
 Vill du:
 • Testa agenten direkt
-• Konfigurera API-integrations
+• Konfigurera API-integrations  
 • Skapa fler agenter
 • Gå till agent-översikten`);
       
@@ -222,87 +292,18 @@ Vill du:
     }
   };
 
-  const createTeamAgents = async (parentAgentId: string) => {
-    const teamAgents = templates.filter(t => t.agent_type !== 'context_manager');
-    
-    for (const template of teamAgents) {
-      try {
-        await supabase
-          .from('agents')
-          .insert([{
-            name: template.name,
-            description: template.description,
-            agent_type: template.agent_type,
-            status: 'inactive',
-            parent_agent_id: parentAgentId,
-            agent_role: template.agent_type,
-            configuration: {
-              ...template.default_configuration,
-              prompt_template: template.prompt_template,
-              required_integrations: template.required_integrations,
-              parent_context: true
-            },
-            interaction_style: template.interaction_style,
-            api_integrations: template.required_integrations || [],
-            user_id: user?.id
-          }]);
-      } catch (error) {
-        console.error(`Error creating team agent ${template.name}:`, error);
-      }
-    }
-  };
-
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
 
     const userMessage = addMessage('user', inputValue);
-    await saveConversation(userMessage);
     setInputValue("");
     
     // Handle different conversation flows based on current step
-    if (creationStep === 'customization') {
+    if (creationStep === 'team_setup') {
       const message = inputValue.toLowerCase();
       
-      setIsTyping(true);
-      setTimeout(() => {
-        setIsTyping(false);
-        
-        if (message.includes('team') || message.includes('flera')) {
-          addMessage('assistant', `Utmärkt! Jag skapar en team-baserad ${agentConfig.name} som koordinerar flera specialiserade agenter:
-
-🧠 **ContextManagerAgent** (Huvudagent)
-📅 **SchedulerAgent** - Kalender & planering  
-📧 **InboxAgent** - E-posthantering
-💬 **MessengerAgent** - Social kommunikation
-📱 **SMSAgent** - Textmeddelanden
-🔔 **ReminderAgent** - Påminnelser & uppgifter
-
-Teamet arbetar tillsammans för att ge dig en heltäckande assistent. Ska jag skapa hela teamet?`);
-          setCreationStep('team_setup');
-        } else if (message.includes('ensam') || message.includes('självständig')) {
-          addMessage('assistant', `Perfekt! Jag skapar en självständig ${agentConfig.name} för dig. Denna agent kommer att fokusera på sina kärnfunktioner utan sub-agenter.
-
-Ska jag skapa agenten nu?`);
-          setCreationStep('team_setup');
-        } else if (message.includes('anpassa') || message.includes('konfig')) {
-          addMessage('assistant', `Bra! Låt oss anpassa din ${agentConfig.name}:
-
-**Nuvarande konfiguration:**
-- Typ: ${agentConfig.agent_type}
-- Integrationer: ${agentConfig.required_integrations?.join(', ') || 'Inga'}
-- Stil: ${agentConfig.interaction_style?.tone || 'Standard'}
-
-Vad vill du ändra? Du kan justera namn, beskrivning, ton eller funktioner.`);
-        } else {
-          addMessage('assistant', 'Jag förstår inte riktigt vad du menar. Vill du skapa en ensam agent, en team-agent, eller anpassa konfigurationen först?');
-        }
-      }, 1000);
-    } else if (creationStep === 'team_setup') {
-      const message = inputValue.toLowerCase();
-      
-      if (message.includes('ja') || message.includes('skapa') || message.includes('team')) {
-        const isTeam = selectedTemplate?.agent_type === 'context_manager' || inputValue.toLowerCase().includes('team');
-        await createAgent(isTeam);
+      if (message.includes('ja') || message.includes('skapa')) {
+        await createAgent();
       } else {
         addMessage('assistant', 'Okej! Vill du ändra något eller återgå till huvudmenyn?');
       }

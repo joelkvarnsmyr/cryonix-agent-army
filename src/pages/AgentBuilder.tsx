@@ -186,8 +186,11 @@ const AgentBuilder = () => {
         
         // Load configuration if available
         if (agentToEdit.configuration) {
-          if (agentToEdit.configuration.nodes) {
+          if (agentToEdit.configuration.nodes && agentToEdit.configuration.nodes.length > 0) {
             setNodes(agentToEdit.configuration.nodes);
+          } else {
+            // Generate default flow if none exists
+            generateDefaultFlow(agentToEdit.agent_type);
           }
           if (agentToEdit.configuration.edges) {
             setEdges(agentToEdit.configuration.edges);
@@ -195,10 +198,128 @@ const AgentBuilder = () => {
           if (agentToEdit.configuration.flowDescription) {
             setFlowDescription(agentToEdit.configuration.flowDescription);
           }
+        } else {
+          // Generate default flow for agents without configuration
+          generateDefaultFlow(agentToEdit.agent_type);
         }
       }
     }
   }, [editingAgentId, agents, setNodes, setEdges]);
+
+  const generateDefaultFlow = (agentType: string) => {
+    const defaultFlows = {
+      cryptotrader: {
+        nodes: [
+          {
+            id: '1',
+            type: 'trigger',
+            position: { x: 100, y: 100 },
+            data: { label: 'Market Analysis Trigger', triggerType: 'schedule' }
+          },
+          {
+            id: '2', 
+            type: 'binance',
+            position: { x: 300, y: 100 },
+            data: { label: 'Get Market Data', action: 'get_price' }
+          },
+          {
+            id: '3',
+            type: 'gpt',
+            position: { x: 500, y: 100 },
+            data: { label: 'AI Analysis', prompt: 'Analyze market data and recommend action' }
+          },
+          {
+            id: '4',
+            type: 'condition',
+            position: { x: 700, y: 100 },
+            data: { label: 'Trade Decision', condition: 'confidence > 80' }
+          },
+          {
+            id: '5',
+            type: 'binance',
+            position: { x: 500, y: 250 },
+            data: { label: 'Execute Trade', action: 'buy_sell' }
+          }
+        ],
+        edges: [
+          { id: 'e1-2', source: '1', target: '2' },
+          { id: 'e2-3', source: '2', target: '3' },
+          { id: 'e3-4', source: '3', target: '4' },
+          { id: 'e4-5', source: '4', target: '5' }
+        ]
+      },
+      email_manager: {
+        nodes: [
+          {
+            id: '1',
+            type: 'trigger',
+            position: { x: 100, y: 100 },
+            data: { label: 'New Email Trigger', triggerType: 'webhook' }
+          },
+          {
+            id: '2',
+            type: 'email',
+            position: { x: 300, y: 100 },
+            data: { label: 'Read Email', action: 'read' }
+          },
+          {
+            id: '3',
+            type: 'gpt',
+            position: { x: 500, y: 100 },
+            data: { label: 'Analyze Email', prompt: 'Categorize and analyze this email' }
+          },
+          {
+            id: '4',
+            type: 'condition',
+            position: { x: 700, y: 100 },
+            data: { label: 'Needs Reply?', condition: 'priority == high' }
+          },
+          {
+            id: '5',
+            type: 'email',
+            position: { x: 500, y: 250 },
+            data: { label: 'Send Reply', action: 'reply' }
+          }
+        ],
+        edges: [
+          { id: 'e1-2', source: '1', target: '2' },
+          { id: 'e2-3', source: '2', target: '3' },
+          { id: 'e3-4', source: '3', target: '4' },
+          { id: 'e4-5', source: '4', target: '5' }
+        ]
+      },
+      scheduler: {
+        nodes: [
+          {
+            id: '1',
+            type: 'trigger',
+            position: { x: 100, y: 100 },
+            data: { label: 'Daily Schedule Check', triggerType: 'schedule' }
+          },
+          {
+            id: '2',
+            type: 'webhook',
+            position: { x: 300, y: 100 },
+            data: { label: 'Get Calendar Data', url: 'calendar_api' }
+          },
+          {
+            id: '3',
+            type: 'gpt',
+            position: { x: 500, y: 100 },
+            data: { label: 'Optimize Schedule', prompt: 'Analyze schedule and suggest optimizations' }
+          }
+        ],
+        edges: [
+          { id: 'e1-2', source: '1', target: '2' },
+          { id: 'e2-3', source: '2', target: '3' }
+        ]
+      }
+    };
+
+    const flow = defaultFlows[agentType as keyof typeof defaultFlows] || defaultFlows.scheduler;
+    setNodes(flow.nodes);
+    setEdges(flow.edges);
+  };
 
   const saveAgent = async () => {
     try {
