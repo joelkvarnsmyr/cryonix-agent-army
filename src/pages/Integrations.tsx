@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,24 @@ export default function Integrations() {
   const identities = useMemo(() => session?.user?.identities || [], [session]);
   const hasGoogle = identities.some((i) => i.provider === "google");
   const hasMicrosoft = identities.some((i) => i.provider?.includes("azure"));
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('imapConfig');
+      if (raw) {
+        const saved = JSON.parse(raw);
+        setImapConfig((prev) => ({ ...prev, ...saved }));
+        setShowImapConfig(true);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const { password, ...persistable } = imapConfig;
+    try {
+      localStorage.setItem('imapConfig', JSON.stringify(persistable));
+    } catch {}
+  }, [imapConfig.provider, imapConfig.email, imapConfig.customHost, imapConfig.customPort]);
 
   const connect = async (provider: "google" | "azure") => {
     const redirectTo = `${window.location.origin}/integrations`;
@@ -331,6 +349,9 @@ export default function Integrations() {
                       Skapa app-lösenord på: myaccount.google.com/apppasswords
                     </p>
                   )}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Av säkerhetsskäl sparas inte lösenord. Inställningarna (utan lösenord) sparas lokalt på den här enheten.
+                  </p>
                 </div>
 
                 {imapConfig.provider === 'imap' && (
