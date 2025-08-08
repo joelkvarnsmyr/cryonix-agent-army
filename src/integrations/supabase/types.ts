@@ -14,43 +14,136 @@ export type Database = {
   }
   public: {
     Tables: {
-      agents: {
+      agent_conversations: {
         Row: {
-          agent_type: string
-          configuration: Json | null
+          agent_id: string | null
+          content: string
           created_at: string
-          description: string | null
           id: string
-          last_activity: string | null
-          name: string
-          performance_data: Json | null
-          status: string | null
+          message_type: string
+          metadata: Json | null
+          session_id: string
           updated_at: string
           user_id: string
         }
         Insert: {
-          agent_type: string
-          configuration?: Json | null
+          agent_id?: string | null
+          content: string
           created_at?: string
-          description?: string | null
           id?: string
-          last_activity?: string | null
-          name: string
-          performance_data?: Json | null
-          status?: string | null
+          message_type: string
+          metadata?: Json | null
+          session_id: string
           updated_at?: string
           user_id: string
         }
         Update: {
+          agent_id?: string | null
+          content?: string
+          created_at?: string
+          id?: string
+          message_type?: string
+          metadata?: Json | null
+          session_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      agent_templates: {
+        Row: {
+          agent_type: string
+          created_at: string
+          default_configuration: Json | null
+          description: string | null
+          id: string
+          interaction_style: Json | null
+          name: string
+          prompt_template: string | null
+          required_integrations: string[] | null
+          updated_at: string
+        }
+        Insert: {
+          agent_type: string
+          created_at?: string
+          default_configuration?: Json | null
+          description?: string | null
+          id?: string
+          interaction_style?: Json | null
+          name: string
+          prompt_template?: string | null
+          required_integrations?: string[] | null
+          updated_at?: string
+        }
+        Update: {
           agent_type?: string
+          created_at?: string
+          default_configuration?: Json | null
+          description?: string | null
+          id?: string
+          interaction_style?: Json | null
+          name?: string
+          prompt_template?: string | null
+          required_integrations?: string[] | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      agents: {
+        Row: {
+          agent_role: string | null
+          agent_type: string
+          api_integrations: Json | null
+          configuration: Json | null
+          created_at: string
+          description: string | null
+          id: string
+          interaction_style: Json | null
+          last_activity: string | null
+          memory_context: Json | null
+          name: string
+          parent_agent_id: string | null
+          performance_data: Json | null
+          status: string | null
+          team_position: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          agent_role?: string | null
+          agent_type: string
+          api_integrations?: Json | null
           configuration?: Json | null
           created_at?: string
           description?: string | null
           id?: string
+          interaction_style?: Json | null
           last_activity?: string | null
-          name?: string
+          memory_context?: Json | null
+          name: string
+          parent_agent_id?: string | null
           performance_data?: Json | null
           status?: string | null
+          team_position?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          agent_role?: string | null
+          agent_type?: string
+          api_integrations?: Json | null
+          configuration?: Json | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          interaction_style?: Json | null
+          last_activity?: string | null
+          memory_context?: Json | null
+          name?: string
+          parent_agent_id?: string | null
+          performance_data?: Json | null
+          status?: string | null
+          team_position?: number | null
           updated_at?: string
           user_id?: string
         }
