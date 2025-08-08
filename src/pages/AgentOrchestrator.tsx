@@ -4,6 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useAgentSystem } from "@/hooks/useAgentSystem";
@@ -62,6 +68,26 @@ const AgentOrchestrator = () => {
   const [sessionId] = useState(() => uuidv4());
   const [isOrchestrating, setIsOrchestrating] = useState(false);
   const [orchestrationStatus, setOrchestrationStatus] = useState<'idle' | 'running' | 'paused'>('idle');
+
+  // Agent settings modal state
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [emailConfig, setEmailConfig] = useState({
+    systemPrompt: '',
+    objectives: '',
+    autoArchive: false,
+    autoMove: true,
+  });
+
+  const openSettings = (agentId: string) => {
+    setSelectedAgentId(agentId);
+    setIsSettingsOpen(true);
+  };
+
+  const handleSaveSettings = () => {
+    toast({ title: 'Inställningar sparade', description: 'Agentens inställningar uppdaterades.' });
+    setIsSettingsOpen(false);
+  };
 
   // React Flow state
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -405,7 +431,7 @@ const AgentOrchestrator = () => {
                         >
                           {agent.status === 'active' ? 'Pause' : 'Start'}
                         </Button>
-                        <Button size="sm" variant="ghost" className="text-xs h-6">
+                        <Button size="sm" variant="ghost" className="text-xs h-6" onClick={() => openSettings(agent.id)}>
                           <Settings className="w-3 h-3" />
                         </Button>
                       </div>
@@ -430,6 +456,98 @@ const AgentOrchestrator = () => {
             </Card>
           )}
         </div>
+        <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Agentinställningar</DialogTitle>
+            </DialogHeader>
+
+            <Tabs defaultValue="koppling" className="mt-2">
+              <TabsList className="grid grid-cols-4">
+                <TabsTrigger value="koppling">Koppling</TabsTrigger>
+                <TabsTrigger value="uppdrag">Uppdrag & Prompts</TabsTrigger>
+                <TabsTrigger value="regler">Regler/Mappar</TabsTrigger>
+                <TabsTrigger value="auto">Automatisering</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="koppling">
+                <p className="text-sm text-muted-foreground mb-3">
+                  Hantera e‑postkopplingar under Integrationer.
+                </p>
+                <Button onClick={() => (window.location.href = '/integrations')}>
+                  Öppna Integrationer
+                </Button>
+              </TabsContent>
+
+              <TabsContent value="uppdrag">
+                <div className="space-y-3">
+                  <div>
+                    <Label htmlFor="objectives">Uppdrag</Label>
+                    <Textarea
+                      id="objectives"
+                      placeholder="Beskriv agentens mål..."
+                      value={emailConfig.objectives}
+                      onChange={(e) => setEmailConfig({ ...emailConfig, objectives: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="systemPrompt">Systemprompt</Label>
+                    <Textarea
+                      id="systemPrompt"
+                      placeholder="Tonalitet, policy, stil..."
+                      value={emailConfig.systemPrompt}
+                      onChange={(e) => setEmailConfig({ ...emailConfig, systemPrompt: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="regler">
+                <p className="text-sm text-muted-foreground mb-3">Kommer: definiera mappar/labels och filtreringsregler.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Exempelregel</Label>
+                    <Input placeholder="Från: faktura@..., Label: Ekonomi" disabled />
+                  </div>
+                  <div>
+                    <Label>Exempelregel</Label>
+                    <Input placeholder="Ämne innehåller: möte → Label: Kalender" disabled />
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="auto">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label>Auto-arkivera hanterade trådar</Label>
+                      <p className="text-xs text-muted-foreground">Håll inkorgen ren automatiskt.</p>
+                    </div>
+                    <Switch
+                      checked={emailConfig.autoArchive}
+                      onCheckedChange={(v) => setEmailConfig({ ...emailConfig, autoArchive: v })}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label>Auto-flytta enligt regler</Label>
+                      <p className="text-xs text-muted-foreground">Flytta mail till mappar utan att fråga.</p>
+                    </div>
+                    <Switch
+                      checked={emailConfig.autoMove}
+                      onCheckedChange={(v) => setEmailConfig({ ...emailConfig, autoMove: v })}
+                    />
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="outline" onClick={() => setIsSettingsOpen(false)}>Avbryt</Button>
+              <Button onClick={handleSaveSettings}>Spara</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );
