@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bot, TrendingUp, Mail, Calendar, FileText, Mic, Play, Pause, Settings } from "lucide-react";
+import { Bot, TrendingUp, Mail, Calendar, FileText, Mic, Play, Pause, Settings, Heart, Dumbbell, Brain, DollarSign, BookOpen, Activity } from "lucide-react";
 
 const agents = [
   {
@@ -16,36 +16,96 @@ const agents = [
   },
   {
     id: 2,
+    name: "Life Coach",
+    description: "Personlig utveckling och målsättning",
+    status: "active",
+    icon: Heart,
+    performance: "3 mål uppnådda",
+    trades: 0,
+    color: "accent"
+  },
+  {
+    id: 3,
+    name: "Fitness Coach",
+    description: "Träningsplanering och näringsrådgivning",
+    status: "active",
+    icon: Dumbbell,
+    performance: "12 träningspass",
+    trades: 0,
+    color: "success"
+  },
+  {
+    id: 4,
+    name: "Mindfulness Guide",
+    description: "Meditation och stresshantering",
+    status: "active",
+    icon: Brain,
+    performance: "45 min/dag",
+    trades: 0,
+    color: "primary"
+  },
+  {
+    id: 5,
+    name: "Finance Advisor",
+    description: "Personlig ekonomi och investeringsrådgivning",
+    status: "active",
+    icon: DollarSign,
+    performance: "+8.2% avkastning",
+    trades: 15,
+    color: "warning"
+  },
+  {
+    id: 6,
+    name: "Learning Assistant",
+    description: "Kunskapsinhämtning och språkinlärning",
+    status: "active",
+    icon: BookOpen,
+    performance: "23 lektioner",
+    trades: 0,
+    color: "accent"
+  },
+  {
+    id: 7,
     name: "InboxTamer",
     description: "AI-driven e-posthantering och svar",
-    status: "active",
+    status: "paused",
     icon: Mail,
     performance: "234 emails",
     trades: 0,
     color: "primary"
   },
   {
-    id: 3,
+    id: 8,
+    name: "Health Monitor",
+    description: "Hälsouppföljning och symptomspårning",
+    status: "active",
+    icon: Activity,
+    performance: "7 dagar streak",
+    trades: 0,
+    color: "success"
+  },
+  {
+    id: 9,
     name: "CalGenius",
     description: "Intelligent kalenderplanering och schemaläggning",
-    status: "paused",
+    status: "active",
     icon: Calendar,
     performance: "15 meetings",
     trades: 0,
-    color: "warning"
+    color: "primary"
   },
   {
-    id: 4,
+    id: 10,
     name: "DocuBot",
     description: "Dokumentanalys och sammanfattning",
-    status: "active",
+    status: "inactive",
     icon: FileText,
     performance: "8 documents",
     trades: 0,
-    color: "accent"
+    color: "muted"
   },
   {
-    id: 5,
+    id: 11,
     name: "VoiceAgent",
     description: "Mötestranskription och anteckningar",
     status: "inactive",
@@ -55,10 +115,10 @@ const agents = [
     color: "muted"
   },
   {
-    id: 6,
+    id: 12,
     name: "ResumeBuilder AI",
     description: "Automatisk CV- och brevgenerering",
-    status: "active",
+    status: "paused",
     icon: Bot,
     performance: "2 documents",
     trades: 0,

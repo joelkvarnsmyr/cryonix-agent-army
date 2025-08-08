@@ -4,8 +4,8 @@ import { Bot, TrendingUp, Zap, Clock } from "lucide-react";
 const stats = [
   {
     title: "Aktiva Agenter",
-    value: "6",
-    change: "+2",
+    value: "9",
+    change: "+5",
     icon: Bot,
     color: "primary"
   },
@@ -18,8 +18,8 @@ const stats = [
   },
   {
     title: "Uppgifter Utförda",
-    value: "1,247",
-    change: "+89",
+    value: "2,847",
+    change: "+312",
     icon: Zap,
     color: "accent"
   },
