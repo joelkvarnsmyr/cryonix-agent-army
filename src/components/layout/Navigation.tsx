@@ -2,12 +2,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Bot, Zap, Settings, BarChart3, Plus, LogOut, User } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 
 const Navigation = () => {
   const { user, loading, signOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -47,18 +48,38 @@ const Navigation = () => {
 
           {/* Navigation Links */}
           <div className="hidden md:flex items-center space-x-6">
-            <a href="#dashboard" className="text-sm font-medium hover:text-primary transition-smooth">
+            <Link 
+              to="/dashboard" 
+              className={`text-sm font-medium hover:text-primary transition-smooth ${
+                location.pathname === '/dashboard' ? 'text-primary' : ''
+              }`}
+            >
               Dashboard
-            </a>
-            <a href="#agents" className="text-sm font-medium hover:text-primary transition-smooth">
+            </Link>
+            <Link 
+              to="/agents" 
+              className={`text-sm font-medium hover:text-primary transition-smooth ${
+                location.pathname === '/agents' ? 'text-primary' : ''
+              }`}
+            >
               Agents
-            </a>
-            <a href="#marketplace" className="text-sm font-medium hover:text-primary transition-smooth">
+            </Link>
+            <Link 
+              to="/marketplace" 
+              className={`text-sm font-medium hover:text-primary transition-smooth ${
+                location.pathname === '/marketplace' ? 'text-primary' : ''
+              }`}
+            >
               Marketplace
-            </a>
-            <a href="#analytics" className="text-sm font-medium hover:text-primary transition-smooth">
+            </Link>
+            <Link 
+              to="/" 
+              className={`text-sm font-medium hover:text-primary transition-smooth ${
+                location.pathname === '/' ? 'text-primary' : ''
+              }`}
+            >
               Analytics
-            </a>
+            </Link>
           </div>
 
           {/* Actions */}
@@ -71,7 +92,7 @@ const Navigation = () => {
               <User className="w-4 h-4 mr-2" />
               {user?.email?.split('@')[0]}
             </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => navigate("/settings")}>
               <Settings className="w-4 h-4" />
             </Button>
             <Button size="sm" className="gradient-primary shadow-primary" onClick={() => navigate("/builder")}>

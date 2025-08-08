@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   ReactFlow,
   addEdge,
@@ -21,8 +21,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Save, Play, Eye, Bot, ArrowLeft, Sparkles, Loader2 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAgents } from "@/hooks/useAgents";
 
 // Custom node types
 import TriggerNode from "@/components/flow/nodes/TriggerNode";
@@ -67,6 +68,10 @@ const AgentBuilder = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { createAgent, updateAgent, agents } = useAgents();
+  const editingAgentId = searchParams.get('edit');
+  const [isEditing, setIsEditing] = useState(false);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -170,27 +175,75 @@ const AgentBuilder = () => {
     });
   };
 
+  // Load existing agent data when editing
+  useEffect(() => {
+    if (editingAgentId && agents.length > 0) {
+      const agentToEdit = agents.find(agent => agent.id === editingAgentId);
+      if (agentToEdit) {
+        setIsEditing(true);
+        setAgentName(agentToEdit.name);
+        setAgentDescription(agentToEdit.description || "");
+        
+        // Load configuration if available
+        if (agentToEdit.configuration) {
+          if (agentToEdit.configuration.nodes) {
+            setNodes(agentToEdit.configuration.nodes);
+          }
+          if (agentToEdit.configuration.edges) {
+            setEdges(agentToEdit.configuration.edges);
+          }
+          if (agentToEdit.configuration.flowDescription) {
+            setFlowDescription(agentToEdit.configuration.flowDescription);
+          }
+        }
+      }
+    }
+  }, [editingAgentId, agents, setNodes, setEdges]);
+
   const saveAgent = async () => {
     try {
-      // Save the flow configuration
       const flowData = {
         name: agentName,
         description: agentDescription,
-        nodes,
-        edges,
+        agent_type: 'custom',
+        status: 'inactive',
+        configuration: {
+          nodes,
+          edges,
+          flowDescription
+        }
       };
 
-      // In real implementation, save to Supabase
-      localStorage.setItem(`agent_${Date.now()}`, JSON.stringify(flowData));
-      
-      toast({
-        title: "Agent sparad!",
-        description: `${agentName} har sparats framgångsrikt.`,
-      });
+      if (isEditing && editingAgentId) {
+        // Update existing agent
+        const updatedAgent = await updateAgent(editingAgentId, {
+          configuration: flowData.configuration
+        });
+        
+        if (updatedAgent) {
+          toast({
+            title: "Agent uppdaterad! ✨",
+            description: `${agentName} har uppdaterats framgångsrikt.`,
+          });
+          navigate("/agents");
+        }
+      } else {
+        // Create new agent
+        const savedAgent = await createAgent(flowData);
+        
+        if (savedAgent) {
+          toast({
+            title: "Agent sparad! ✨",
+            description: `${agentName} har sparats och kan nu användas.`,
+          });
+          navigate("/agents");
+        }
+      }
     } catch (error) {
+      console.error('Save error:', error);
       toast({
         title: "Fel",
-        description: "Kunde inte spara agenten.",
+        description: `Kunde inte ${isEditing ? 'uppdatera' : 'spara'} agenten.`,
         variant: "destructive",
       });
     }
@@ -349,7 +402,7 @@ const AgentBuilder = () => {
         <div className="mt-6 space-y-3">
           <Button onClick={saveAgent} className="w-full" variant="outline">
             <Save className="w-4 h-4 mr-2" />
-            Spara Agent
+            {isEditing ? 'Uppdatera Agent' : 'Spara Agent'}
           </Button>
           <Button onClick={previewMode} className="w-full" variant="outline">
             <Eye className="w-4 h-4 mr-2" />

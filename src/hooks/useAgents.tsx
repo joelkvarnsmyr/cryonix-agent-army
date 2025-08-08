@@ -39,7 +39,7 @@ export const useAgents = () => {
     }
   };
 
-  const createAgent = async (agentData: { name: string; description: string; agent_type: string; status?: string }) => {
+  const createAgent = async (agentData: { name: string; description: string; agent_type: string; status?: string; configuration?: any }) => {
     if (!user) return null;
 
     try {
@@ -50,6 +50,7 @@ export const useAgents = () => {
           description: agentData.description,
           agent_type: agentData.agent_type,
           status: agentData.status || 'inactive',
+          configuration: agentData.configuration || {},
           user_id: user.id,
         }])
         .select()
