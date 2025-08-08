@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,17 +9,17 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { 
-  User, 
-  Bell, 
-  Shield, 
-  Key, 
-  Palette, 
+import {
+  User,
+  Bell,
+  Shield,
+  Palette,
   Database,
   Download,
   Trash2,
   Save,
-  AlertTriangle
+  AlertTriangle,
+  Plug,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -35,7 +36,7 @@ import {
 const Settings = () => {
   const { user, signOut } = useAuth();
   const { toast } = useToast();
-  
+  const navigate = useNavigate();
   const [settings, setSettings] = useState({
     // Profile
     displayName: user?.user_metadata?.display_name || "",
@@ -49,10 +50,6 @@ const Settings = () => {
     // Privacy & Security
     twoFactorAuth: false,
     sessionTimeout: "24",
-    
-    // API Keys
-    openaiKey: "",
-    binanceKey: "",
     
     // Theme
     darkMode: true,
@@ -209,41 +206,23 @@ const Settings = () => {
             </CardContent>
           </Card>
 
-          {/* API Keys */}
+          {/* Integrationer */}
           <Card className="glass">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Key className="h-5 w-5" />
-                API-nycklar
+                <Plug className="h-5 w-5" />
+                Integrationer
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="flex items-center justify-between">
               <div>
-                <Label htmlFor="openaiKey">OpenAI API-nyckel</Label>
-                <Input
-                  id="openaiKey"
-                  type="password"
-                  placeholder="sk-..."
-                  value={settings.openaiKey}
-                  onChange={(e) => setSettings({...settings, openaiKey: e.target.value})}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Krävs för AI-funktionalitet
+                <p className="text-sm text-muted-foreground">
+                  API-nycklar och kopplingar hanteras nu under Integrationer.
                 </p>
               </div>
-              <div>
-                <Label htmlFor="binanceKey">Binance API-nyckel</Label>
-                <Input
-                  id="binanceKey"
-                  type="password"
-                  placeholder="Binance API key..."
-                  value={settings.binanceKey}
-                  onChange={(e) => setSettings({...settings, binanceKey: e.target.value})}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  För kryptovaluta-trading
-                </p>
-              </div>
+              <Button onClick={() => navigate("/integrations")} className="gradient-primary shadow-primary">
+                Öppna Integrationer
+              </Button>
             </CardContent>
           </Card>
 
