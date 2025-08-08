@@ -46,23 +46,30 @@ export default function Integrations() {
     setConnectionStatus('idle');
 
     try {
+      const requestBody = {
+        provider: imapConfig.provider,
+        email: imapConfig.email,
+        password: imapConfig.password,
+        customConfig: imapConfig.customHost ? {
+          imapHost: imapConfig.customHost,
+          imapPort: parseInt(imapConfig.customPort) || 993,
+        } : undefined,
+      };
+
+      console.log('Testing IMAP connection with:', requestBody);
+
       const response = await supabase.functions.invoke('email-service', {
-        body: {
-          provider: imapConfig.provider,
-          email: imapConfig.email,
-          password: imapConfig.password,
-          customConfig: imapConfig.customHost ? {
-            imapHost: imapConfig.customHost,
-            imapPort: parseInt(imapConfig.customPort) || 993,
-          } : undefined,
-        },
+        body: requestBody,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
       });
 
+      console.log('Supabase response:', response);
+
       if (response.error) {
+        console.error('Supabase error:', response.error);
         throw new Error(response.error.message);
       }
 

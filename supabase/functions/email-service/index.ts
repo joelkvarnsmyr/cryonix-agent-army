@@ -99,7 +99,19 @@ serve(async (req) => {
     const action = url.searchParams.get('action');
     
     if (req.method === 'POST') {
-      const body = await req.json();
+      let body;
+      try {
+        const text = await req.text();
+        console.log('Raw request body:', text);
+        body = text ? JSON.parse(text) : {};
+      } catch (error) {
+        console.error('JSON parsing error:', error);
+        return new Response(
+          JSON.stringify({ error: 'Invalid JSON in request body' }),
+          { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        );
+      }
+      
       console.log('Email service request:', { action, body });
 
       switch (action) {
@@ -110,6 +122,13 @@ serve(async (req) => {
             password: string;
             customConfig?: Partial<EmailConfig>;
           };
+
+          if (!provider || !email || !password) {
+            return new Response(
+              JSON.stringify({ error: 'Missing required fields: provider, email, password' }),
+              { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            );
+          }
 
           const config: EmailConfig = {
             provider: provider as EmailConfig['provider'],
