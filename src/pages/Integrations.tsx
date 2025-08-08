@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -31,6 +32,11 @@ export default function Integrations() {
   const [gmailEmails, setGmailEmails] = useState<Array<{ id: string; from: string; subject: string; date: string; snippet: string }>>([]);
   const [isFetchingImap, setIsFetchingImap] = useState(false);
   const [imapEmails, setImapEmails] = useState<Array<{ id: string; from: string; subject: string; date: string; snippet: string; isRead?: boolean }>>([]);
+  // Secure credentials & CalDAV
+  const [isSavingImap, setIsSavingImap] = useState(false);
+  const [isSavingCalDav, setIsSavingCalDav] = useState(false);
+  const [credentials, setCredentials] = useState<any[]>([]);
+  const [caldavConfig, setCaldavConfig] = useState({ baseUrl: '', username: '', password: '' });
   
 
   const identities = useMemo(() => session?.user?.identities || [], [session]);
@@ -222,6 +228,76 @@ export default function Integrations() {
       toast({ title: 'Kunde inte hämta IMAP', description: err.message || String(err), variant: 'destructive' });
     } finally {
       setIsFetchingImap(false);
+    }
+  };
+
+  const loadCredentials = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('credentials-service', { body: { action: 'list' } });
+      if (error) throw error;
+      setCredentials(data?.credentials || []);
+    } catch (e: any) {
+      console.error('List credentials error', e);
+    }
+  };
+
+  useEffect(() => {
+    loadCredentials();
+  }, []);
+
+  const saveImapCredentials = async () => {
+    if (!imapConfig.email || !imapConfig.password) {
+      toast({ title: 'Saknas uppgifter', description: 'Ange e‑post och lösenord', variant: 'destructive' });
+      return;
+    }
+    let host = imapConfig.customHost;
+    let port = parseInt(imapConfig.customPort) || 993;
+    if (imapConfig.provider === 'onecom') { host = 'imap.one.com'; port = 993; }
+    if (imapConfig.provider === 'gmail') { host = 'imap.gmail.com'; port = 993; }
+    if (imapConfig.provider === 'outlook') { host = 'imap-mail.outlook.com'; port = 993; }
+
+    try {
+      setIsSavingImap(true);
+      const { data, error } = await supabase.functions.invoke('credentials-service', {
+        body: {
+          action: 'save',
+          payload: {
+            service: 'imap',
+            username: imapConfig.email,
+            email: imapConfig.email,
+            host,
+            port,
+            secret: imapConfig.password,
+            config: { provider: imapConfig.provider },
+          },
+        },
+      });
+      if (error) throw error;
+      toast({ title: 'Sparat säkert', description: 'IMAP-inloggning sparad krypterat' });
+      loadCredentials();
+    } catch (e: any) {
+      console.error('Save IMAP credential error', e);
+      toast({ title: 'Kunde inte spara', description: e.message || String(e), variant: 'destructive' });
+    } finally {
+      setIsSavingImap(false);
+    }
+  };
+
+  const testCalDav = async () => {
+    try {
+      if (!caldavConfig.baseUrl || !caldavConfig.username || !caldavConfig.password) {
+        toast({ title: 'Saknas CalDAV-uppgifter', description: 'Fyll i URL, användarnamn och lösenord', variant: 'destructive' });
+        return;
+      }
+      const { data, error } = await supabase.functions.invoke('caldav-service', {
+        body: { action: 'caldav-list-calendars', baseUrl: caldavConfig.baseUrl, username: caldavConfig.username, password: caldavConfig.password },
+      });
+      if (error) throw error;
+      toast({ title: 'CalDAV OK', description: 'Kalendrar hittade' });
+      console.log('CalDAV response XML:', data?.xml?.slice(0, 500));
+    } catch (e: any) {
+      console.error('CalDAV test error', e);
+      toast({ title: 'CalDAV fel', description: e.message || String(e), variant: 'destructive' });
     }
   };
 
@@ -486,6 +562,19 @@ export default function Integrations() {
                       </ul>
                     </div>
                   )}
+                </div>
+                <Separator />
+                <div className="flex gap-2">
+                  <Button onClick={saveImapCredentials} disabled={isSavingImap || !imapConfig.email || !imapConfig.password}>
+                    {isSavingImap ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Sparar...
+                      </>
+                    ) : (
+                      'Spara säkert (IMAP)'
+                    )}
+                  </Button>
                 </div>
               </div>
             )}
