@@ -26,6 +26,10 @@ export default function Integrations() {
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
+  // Gmail fetching state
+  const [isFetchingGmail, setIsFetchingGmail] = useState(false);
+  const [gmailEmails, setGmailEmails] = useState<Array<{ id: string; from: string; subject: string; date: string; snippet: string }>>([]);
+
   const identities = useMemo(() => session?.user?.identities || [], [session]);
   const hasGoogle = identities.some((i) => i.provider === "google");
   const hasMicrosoft = identities.some((i) => i.provider?.includes("azure"));
@@ -108,6 +112,43 @@ export default function Integrations() {
     });
   };
 
+  const fetchGmailEmails = async (count = 200) => {
+    if (!hasGoogle) {
+      toast({ title: 'Inte ansluten till Google', description: 'Anslut Google först', variant: 'destructive' });
+      return;
+    }
+
+    const accessToken = (session as any)?.provider_token as string | undefined;
+    if (!accessToken) {
+      toast({ title: 'Saknar åtkomsttoken', description: 'Återanslut Google för att hämta token', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      setIsFetchingGmail(true);
+      setGmailEmails([]);
+
+      const { data, error } = await supabase.functions.invoke('email-service', {
+        body: { action: 'gmail-list', accessToken, maxResults: count },
+      });
+
+      if (error) throw error;
+      const emails = (data?.emails || []).map((e: any) => ({
+        id: e.id,
+        from: e.from,
+        subject: e.subject,
+        date: e.date,
+        snippet: e.body,
+      }));
+      setGmailEmails(emails);
+      toast({ title: 'Hämtat e‑post', description: `Visar ${emails.length} konversationer` });
+    } catch (err: any) {
+      console.error('Gmail fetch error:', err);
+      toast({ title: 'Kunde inte hämta Gmail', description: err.message || String(err), variant: 'destructive' });
+    } finally {
+      setIsFetchingGmail(false);
+    }
+  };
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <div className="flex items-center gap-2">
@@ -145,7 +186,38 @@ export default function Integrations() {
               <Button variant="outline" onClick={disconnectInfo} disabled={!hasGoogle}>
                 Koppla från
               </Button>
+              <Button 
+                variant="secondary" 
+                onClick={() => fetchGmailEmails(200)} 
+                disabled={!hasGoogle || isFetchingGmail}
+              >
+                {isFetchingGmail ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Hämtar...
+                  </>
+                ) : (
+                  'Hämta 200 mail'
+                )}
+              </Button>
             </div>
+
+            {gmailEmails.length > 0 && (
+              <div className="mt-2 max-h-64 overflow-auto rounded-md border">
+                <ul className="divide-y">
+                  {gmailEmails.slice(0, 200).map((m) => (
+                    <li key={m.id} className="p-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="font-medium">{m.subject}</span>
+                        <span className="text-muted-foreground">{new Date(m.date).toLocaleString()}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{m.from}</div>
+                      <div className="text-xs text-muted-foreground truncate">{m.snippet}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </CardContent>
         </Card>
 

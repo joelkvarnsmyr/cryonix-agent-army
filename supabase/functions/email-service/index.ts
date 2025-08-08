@@ -206,6 +206,74 @@ serve(async (req) => {
           );
         }
 
+        case 'gmail-list': {
+          const { accessToken, maxResults } = body as {
+            accessToken: string;
+            maxResults?: number;
+          };
+
+          if (!accessToken) {
+            return new Response(
+              JSON.stringify({ error: 'Missing accessToken for Gmail API' }),
+              { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            );
+          }
+
+          const limit = Math.min(Math.max(maxResults || 50, 1), 200);
+
+          const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${limit}&labelIds=INBOX`;
+          const listResp = await fetch(listUrl, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          });
+
+          const listJson = await listResp.json();
+          if (!listResp.ok) {
+            console.error('Gmail list error:', listJson);
+            return new Response(
+              JSON.stringify({ error: listJson.error?.message || 'Failed to list Gmail messages' }),
+              { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            );
+          }
+
+          const messages: { id: string }[] = listJson.messages || [];
+
+          const getHeader = (headers: any[], name: string) => {
+            const h = headers?.find((x) => x.name?.toLowerCase() === name.toLowerCase());
+            return h?.value || '';
+          };
+
+          const results = await Promise.allSettled(
+            messages.map(async (m) => {
+              const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date`;
+              const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+              const j = await r.json();
+              if (!r.ok) throw new Error(j.error?.message || 'Failed to fetch message');
+              const headers = j.payload?.headers || [];
+              const email: EmailMessage = {
+                id: j.id,
+                from: getHeader(headers, 'From'),
+                to: getHeader(headers, 'To'),
+                subject: getHeader(headers, 'Subject') || '(ingen ämnesrad)',
+                body: j.snippet || '',
+                date: getHeader(headers, 'Date') || new Date(parseInt(j.internalDate || '0', 10)).toISOString(),
+                isRead: !(j.labelIds || []).includes('UNREAD'),
+              };
+              return email;
+            })
+          );
+
+          const emails: EmailMessage[] = results
+            .filter((r) => r.status === 'fulfilled')
+            .map((r: any) => r.value);
+
+          return new Response(
+            JSON.stringify({ success: true, count: emails.length, emails }),
+            { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+          );
+        }
+
         default:
           return new Response(
             JSON.stringify({ error: 'Invalid action' }),
