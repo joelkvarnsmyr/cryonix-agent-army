@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bot, Zap, Settings, BarChart3, Plus, LogOut, User } from "lucide-react";
+import { Bot, Zap, Settings, BarChart3, Plus, LogOut, User, Brain } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useEffect } from "react";
@@ -95,9 +95,9 @@ const Navigation = () => {
             <Button variant="outline" size="sm" onClick={() => navigate("/settings")}>
               <Settings className="w-4 h-4" />
             </Button>
-            <Button size="sm" className="gradient-primary shadow-primary" onClick={() => navigate("/chat")}>
-              <Plus className="w-4 h-4 mr-2" />
-              New Agent
+            <Button size="sm" className="gradient-primary shadow-primary" onClick={() => navigate("/coordinator")}>
+              <Brain className="w-4 h-4 mr-2" />
+              Coordinator
             </Button>
             <Button variant="ghost" size="sm" onClick={handleSignOut}>
               <LogOut className="w-4 h-4" />
