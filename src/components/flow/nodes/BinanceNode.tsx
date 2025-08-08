@@ -48,7 +48,7 @@ const BinanceNode = memo(({ data }: { data: BinanceNodeData }) => {
       
       const { data: result, error } = await supabase.functions.invoke('autonomous-trading-loop', {
         body: {
-          botId: 'demo-bot-123', // In real app, get from node config
+          botId: 'demo-bot-123',
           symbols: symbols.split(',').map(s => s.trim()),
           interval: parseInt(interval) * 1000
         }
