@@ -56,6 +56,59 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_sessions: {
+        Row: {
+          bot_id: string | null
+          created_at: string
+          failed_trades: number | null
+          id: string
+          interval_ms: number | null
+          last_cycle_at: string | null
+          status: string | null
+          successful_trades: number | null
+          symbols: string[] | null
+          total_cycles: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          bot_id?: string | null
+          created_at?: string
+          failed_trades?: number | null
+          id?: string
+          interval_ms?: number | null
+          last_cycle_at?: string | null
+          status?: string | null
+          successful_trades?: number | null
+          symbols?: string[] | null
+          total_cycles?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          bot_id?: string | null
+          created_at?: string
+          failed_trades?: number | null
+          id?: string
+          interval_ms?: number | null
+          last_cycle_at?: string | null
+          status?: string | null
+          successful_trades?: number | null
+          symbols?: string[] | null
+          total_cycles?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_sessions_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -85,6 +138,68 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      trades: {
+        Row: {
+          bot_id: string | null
+          confidence: number | null
+          created_at: string
+          executed_at: string | null
+          id: string
+          price: number
+          quantity: number
+          risk_score: number | null
+          side: string
+          status: string | null
+          stop_loss: number | null
+          symbol: string
+          take_profit: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          bot_id?: string | null
+          confidence?: number | null
+          created_at?: string
+          executed_at?: string | null
+          id?: string
+          price: number
+          quantity: number
+          risk_score?: number | null
+          side: string
+          status?: string | null
+          stop_loss?: number | null
+          symbol: string
+          take_profit?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          bot_id?: string | null
+          confidence?: number | null
+          created_at?: string
+          executed_at?: string | null
+          id?: string
+          price?: number
+          quantity?: number
+          risk_score?: number | null
+          side?: string
+          status?: string | null
+          stop_loss?: number | null
+          symbol?: string
+          take_profit?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trades_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
