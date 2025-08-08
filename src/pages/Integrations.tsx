@@ -47,6 +47,7 @@ export default function Integrations() {
 
     try {
       const requestBody = {
+        action: 'test-connection',
         provider: imapConfig.provider,
         email: imapConfig.email,
         password: imapConfig.password,

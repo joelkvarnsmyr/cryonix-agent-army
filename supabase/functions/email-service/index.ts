@@ -95,8 +95,8 @@ serve(async (req) => {
   }
 
   try {
-    const url = new URL(req.url);
-    const action = url.searchParams.get('action');
+    console.log('Request method:', req.method);
+    console.log('Request headers:', Object.fromEntries(req.headers.entries()));
     
     if (req.method === 'POST') {
       let body;
@@ -112,6 +112,7 @@ serve(async (req) => {
         );
       }
       
+      const action = body.action;
       console.log('Email service request:', { action, body });
 
       switch (action) {
