@@ -18,9 +18,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/components/ui/use-toast";
-import { Save, Play, Eye, Bot, ArrowLeft } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { Save, Play, Eye, Bot, ArrowLeft, Sparkles, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 
 // Custom node types
 import TriggerNode from "@/components/flow/nodes/TriggerNode";
@@ -59,7 +61,9 @@ const AgentBuilder = () => {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [agentName, setAgentName] = useState("Min Nya Agent");
   const [agentDescription, setAgentDescription] = useState("");
+  const [flowDescription, setFlowDescription] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -104,6 +108,67 @@ const AgentBuilder = () => {
     },
     [setNodes],
   );
+
+  const generateFlowWithAI = async () => {
+    if (!flowDescription.trim()) {
+      toast({
+        title: "Beskrivning saknas",
+        description: "Beskriv vad din agent ska göra.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsGenerating(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-flow', {
+        body: {
+          description: flowDescription,
+          agentType: 'custom',
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        // Replace current flow with AI-generated flow
+        setNodes(data.flow.nodes);
+        setEdges(data.flow.edges);
+        
+        // Update agent name if not already set
+        if (agentName === "Min Nya Agent") {
+          setAgentName(data.flow.nodes[0]?.data?.label || "AI Genererad Agent");
+        }
+        
+        toast({
+          title: "Flöde genererat! ✨",
+          description: "AI har skapat ett komplett flöde baserat på din beskrivning.",
+        });
+      } else {
+        throw new Error(data.error || 'Unknown error');
+      }
+    } catch (error: any) {
+      console.error('Error generating flow:', error);
+      toast({
+        title: "Fel vid generering",
+        description: error.message || "Kunde inte generera flödet. Kontrollera att OpenAI API-nyckeln är konfigurerad.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const clearFlow = () => {
+    setNodes(initialNodes);
+    setEdges(initialEdges);
+    setFlowDescription("");
+    toast({
+      title: "Flöde rensad",
+      description: "Canvas har återställts till starttillstånd.",
+    });
+  };
 
   const saveAgent = async () => {
     try {
@@ -227,6 +292,58 @@ const AgentBuilder = () => {
           </div>
         </div>
 
+        {/* AI Flow Generator */}
+        <Card className="glass mb-6">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-500" />
+              AI Flödes-Generator
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Label htmlFor="flow-description">Beskriv vad din agent ska göra</Label>
+              <Textarea
+                id="flow-description"
+                value={flowDescription}
+                onChange={(e) => setFlowDescription(e.target.value)}
+                placeholder="T.ex: 'Läs nya emails, analysera dem med AI och svara automatiskt på enkla frågor'"
+                rows={3}
+                className="resize-none"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button 
+                onClick={generateFlowWithAI} 
+                className="flex-1 gradient-primary shadow-primary"
+                disabled={isGenerating}
+              >
+                {isGenerating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Genererar...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Skapa Flöde med AI
+                  </>
+                )}
+              </Button>
+              <Button 
+                onClick={clearFlow} 
+                variant="outline"
+                disabled={isGenerating}
+              >
+                Rensa
+              </Button>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              💡 AI skapar ett komplett flöde som du sedan kan granska och justera
+            </div>
+          </CardContent>
+        </Card>
+
         <NodeToolbox />
 
         <div className="mt-6 space-y-3">
@@ -241,7 +358,7 @@ const AgentBuilder = () => {
           <Button 
             onClick={executeFlow} 
             className="w-full gradient-primary shadow-primary"
-            disabled={isExecuting}
+            disabled={isExecuting || isGenerating}
           >
             <Play className="w-4 h-4 mr-2" />
             {isExecuting ? "Kör..." : "Kör Agent"}
