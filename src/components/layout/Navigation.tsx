@@ -74,7 +74,7 @@ const Navigation = () => {
             <Button variant="outline" size="sm">
               <Settings className="w-4 h-4" />
             </Button>
-            <Button size="sm" className="gradient-primary shadow-primary">
+            <Button size="sm" className="gradient-primary shadow-primary" onClick={() => navigate("/builder")}>
               <Plus className="w-4 h-4 mr-2" />
               New Agent
             </Button>
