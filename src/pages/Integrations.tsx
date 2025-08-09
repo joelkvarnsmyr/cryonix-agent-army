@@ -36,7 +36,7 @@ export default function Integrations() {
   const [isSavingImap, setIsSavingImap] = useState(false);
   const [isSavingCalDav, setIsSavingCalDav] = useState(false);
   const [credentials, setCredentials] = useState<any[]>([]);
-  const [caldavConfig, setCaldavConfig] = useState({ baseUrl: '', username: '', password: '' });
+  const [caldavConfig, setCaldavConfig] = useState({ server: '', baseUrl: '', username: '', password: '', description: '' });
   
 
   const identities = useMemo(() => session?.user?.identities || [], [session]);
@@ -285,12 +285,16 @@ export default function Integrations() {
 
   const testCalDav = async () => {
     try {
-      if (!caldavConfig.baseUrl || !caldavConfig.username || !caldavConfig.password) {
-        toast({ title: 'Saknas CalDAV-uppgifter', description: 'Fyll i URL, användarnamn och lösenord', variant: 'destructive' });
+      const baseUrl = (caldavConfig.baseUrl || caldavConfig.server || '').trim();
+      const urlForTest = baseUrl
+        ? (baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`)
+        : '';
+      if (!urlForTest || !caldavConfig.username || !caldavConfig.password) {
+        toast({ title: 'Saknas CalDAV-uppgifter', description: 'Fyll i server/URL, användarnamn och lösenord', variant: 'destructive' });
         return;
       }
       const { data, error } = await supabase.functions.invoke('caldav-service', {
-        body: { action: 'caldav-list-calendars', baseUrl: caldavConfig.baseUrl, username: caldavConfig.username, password: caldavConfig.password },
+        body: { action: 'caldav-list-calendars', baseUrl: urlForTest, username: caldavConfig.username, password: caldavConfig.password },
       });
       if (error) throw error;
       toast({ title: 'CalDAV OK', description: 'Kalendrar hittade' });
@@ -298,6 +302,40 @@ export default function Integrations() {
     } catch (e: any) {
       console.error('CalDAV test error', e);
       toast({ title: 'CalDAV fel', description: e.message || String(e), variant: 'destructive' });
+    }
+  };
+
+  const saveCalDavCredentials = async () => {
+    try {
+      const server = (caldavConfig.server || caldavConfig.baseUrl || '').trim();
+      if (!server || !caldavConfig.username || !caldavConfig.password) {
+        toast({ title: 'Saknas uppgifter', description: 'Fyll i server, användarnamn och lösenord', variant: 'destructive' });
+        return;
+      }
+      const host = server.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const computedBaseUrl = server.startsWith('http') ? server : `https://${host}`;
+      setIsSavingCalDav(true);
+      const { data, error } = await supabase.functions.invoke('credentials-service', {
+        body: {
+          action: 'save',
+          payload: {
+            service: 'caldav',
+            username: caldavConfig.username,
+            email: caldavConfig.username,
+            host,
+            secret: caldavConfig.password,
+            config: { description: caldavConfig.description || 'CalDAV', baseUrl: computedBaseUrl },
+          },
+        },
+      });
+      if (error) throw error;
+      toast({ title: 'Sparat säkert', description: 'CalDAV-inloggning sparad krypterat' });
+      loadCredentials();
+    } catch (e: any) {
+      console.error('Save CalDAV credential error', e);
+      toast({ title: 'Kunde inte spara', description: e.message || String(e), variant: 'destructive' });
+    } finally {
+      setIsSavingCalDav(false);
     }
   };
 
@@ -578,6 +616,78 @@ export default function Integrations() {
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* CalDAV */}
+        <Card className="glass">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="w-4 h-4" /> CalDAV Kalender
+              <Badge variant="outline">One.com m.fl.</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="caldavServer">Server</Label>
+                <Input
+                  id="caldavServer"
+                  placeholder="caldav.one.com"
+                  value={caldavConfig.server}
+                  onChange={(e) => setCaldavConfig({ ...caldavConfig, server: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground mt-1">Exempel: caldav.one.com (vi använder https:// automatiskt)</p>
+              </div>
+              <div>
+                <Label htmlFor="caldavUsername">Username (email)</Label>
+                <Input
+                  id="caldavUsername"
+                  type="email"
+                  placeholder="din@email.com"
+                  value={caldavConfig.username}
+                  onChange={(e) => setCaldavConfig({ ...caldavConfig, username: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="caldavPassword">Password</Label>
+                <Input
+                  id="caldavPassword"
+                  type="password"
+                  placeholder="Lösenord (samma som Webmail)"
+                  value={caldavConfig.password}
+                  onChange={(e) => setCaldavConfig({ ...caldavConfig, password: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="caldavDescription">Description</Label>
+                <Input
+                  id="caldavDescription"
+                  placeholder="Namn på kontot (t.ex. One.com)"
+                  value={caldavConfig.description}
+                  onChange={(e) => setCaldavConfig({ ...caldavConfig, description: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button onClick={testCalDav} disabled={!caldavConfig.username || !caldavConfig.password || !(caldavConfig.server || caldavConfig.baseUrl)}>
+                Testa CalDAV
+              </Button>
+              <Button onClick={saveCalDavCredentials} disabled={isSavingCalDav || !caldavConfig.username || !caldavConfig.password || !caldavConfig.server}>
+                {isSavingCalDav ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Sparar...
+                  </>
+                ) : (
+                  'Spara säkert (CalDAV)'
+                )}
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
