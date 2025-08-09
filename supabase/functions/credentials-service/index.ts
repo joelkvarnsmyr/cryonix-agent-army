@@ -48,11 +48,19 @@ serve(async (req) => {
   );
 
   try {
-    const { data: userRes, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !userRes.user) {
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const { data: userRes } = await supabase.auth.getUser();
+    let userId: string | undefined = userRes?.user?.id;
+    if (!userId && authHeader) {
+      try {
+        const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
+        const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        userId = payload.sub as string | undefined;
+      } catch {}
+    }
+    if (!userId) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
-    const userId = userRes.user.id;
 
     const { action, payload } = await req.json();
 
