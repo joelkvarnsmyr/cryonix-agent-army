@@ -42,32 +42,118 @@ serve(async (req) => {
     const { action } = body as { action: string };
 
     if (action === "caldav-list-calendars") {
-      // Requires: baseUrl, username, password OR Authorization header (one.com supports basic)
       const { baseUrl, username, password } = body as { baseUrl: string; username: string; password: string };
       if (!baseUrl || !username || !password) return new Response(JSON.stringify({ error: "Missing parameters" }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
 
-      const headers: HeadersInit = {
-        Authorization: basicAuthHeader(username, password),
-        Depth: "1",
-        "Content-Type": "application/xml; charset=utf-8",
-      };
+      const normBase = ((): string => {
+        const b = baseUrl.trim();
+        if (!/^https?:\/\//i.test(b)) return `https://${b}`;
+        return b;
+      })();
 
-      const propfind = xml`
+      const auth = basicAuthHeader(username, password);
+      const headersBase: HeadersInit = { Authorization: auth, "Content-Type": "application/xml; charset=utf-8" };
+
+      async function propfind(url: string, depth: "0" | "1" = "0", bodyXml: string) {
+        const h = new Headers(headersBase);
+        h.set("Depth", depth);
+        const resp = await fetch(url, { method: "PROPFIND", headers: h, body: bodyXml });
+        const text = await resp.text();
+        return { resp, text };
+      }
+
+      // Step 1: discover current-user-principal
+      const principalBody = xml`
+        <?xml version="1.0" encoding="utf-8"?>
+        <d:propfind xmlns:d="DAV:">
+          <d:prop>
+            <d:current-user-principal/>
+          </d:prop>
+        </d:propfind>
+      `;
+      const { resp: principalResp, text: principalXml } = await propfind(normBase, "0", principalBody);
+      if (!principalResp.ok && principalResp.status !== 207) {
+        // Try well-known fallback
+        const fallback = normBase.replace(/\/$/, "") + "/.well-known/caldav";
+        const alt = await propfind(fallback, "0", principalBody);
+        if (!alt.resp.ok && alt.resp.status !== 207) {
+          return new Response(JSON.stringify({ error: `CalDAV discovery failed ${alt.resp.status}`, details: alt.text }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+        }
+        // Use alt
+        const hrefMatch = alt.text.match(/<\w*:href>([^<]+)<\/\w*:href>/i);
+        const principalUrl = hrefMatch ? new URL(hrefMatch[1], fallback).toString() : fallback;
+
+        // Step 2: get calendar-home-set
+        const homeBody = xml`
+          <?xml version="1.0" encoding="utf-8"?>
+          <d:propfind xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+            <d:prop>
+              <cal:calendar-home-set/>
+            </d:prop>
+          </d:propfind>
+        `;
+        const home = await propfind(principalUrl, "0", homeBody);
+        if (!home.resp.ok && home.resp.status !== 207) {
+          return new Response(JSON.stringify({ error: `CalDAV home failed ${home.resp.status}`, details: home.text }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+        }
+        const homeHref = home.text.match(/<cal:calendar-home-set[^>]*>\s*<\w*:href>([^<]+)<\/\w*:href>/i)?.[1]
+          || home.text.match(/<\w*:href>([^<]+)<\/\w*:href>/i)?.[1];
+        const homeUrl = homeHref ? new URL(homeHref, principalUrl).toString() : principalUrl;
+
+        // Step 3: list calendars (depth 1)
+        const listBody = xml`
+          <?xml version="1.0" encoding="UTF-8"?>
+          <d:propfind xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+            <d:prop>
+              <d:displayname />
+              <cal:supported-calendar-component-set />
+            </d:prop>
+          </d:propfind>
+        `;
+        const list = await propfind(homeUrl, "1", listBody);
+        if (!list.resp.ok && list.resp.status !== 207) {
+          return new Response(JSON.stringify({ error: `CalDAV list failed ${list.resp.status}`, details: list.text }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+        }
+        return new Response(JSON.stringify({ success: true, principalUrl, homeUrl, xml: list.text }), { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+
+      // Principal OK
+      const principalHref = principalXml.match(/<\w*:href>([^<]+)<\/\w*:href>/i)?.[1];
+      const principalUrl = principalHref ? new URL(principalHref, normBase).toString() : normBase;
+
+      // Step 2
+      const homeBody = xml`
+        <?xml version="1.0" encoding="utf-8"?>
+        <d:propfind xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+          <d:prop>
+            <cal:calendar-home-set/>
+          </d:prop>
+        </d:propfind>
+      `;
+      const { resp: homeResp, text: homeXml } = await propfind(principalUrl, "0", homeBody);
+      if (!homeResp.ok && homeResp.status !== 207) {
+        return new Response(JSON.stringify({ error: `CalDAV home failed ${homeResp.status}`, details: homeXml }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      const homeHref = homeXml.match(/<cal:calendar-home-set[^>]*>\s*<\w*:href>([^<]+)<\/\w*:href>/i)?.[1]
+        || homeXml.match(/<\w*:href>([^<]+)<\/\w*:href>/i)?.[1];
+      const homeUrl = homeHref ? new URL(homeHref, principalUrl).toString() : principalUrl;
+
+      // Step 3: list calendars
+      const listBody = xml`
         <?xml version="1.0" encoding="UTF-8"?>
-        <d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+        <d:propfind xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
           <d:prop>
             <d:displayname />
             <cal:supported-calendar-component-set />
           </d:prop>
         </d:propfind>
       `;
+      const { resp: listResp, text: listXml } = await propfind(homeUrl, "1", listBody);
+      if (!listResp.ok && listResp.status !== 207) {
+        return new Response(JSON.stringify({ error: `CalDAV list failed ${listResp.status}`, details: listXml }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
 
-      const resp = await fetch(baseUrl, { method: "PROPFIND", headers, body: propfind });
-      const text = await resp.text();
-      if (!resp.ok) return new Response(JSON.stringify({ error: `CalDAV error ${resp.status}`, details: text }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
-
-      // Simple parse: return raw XML (UI can parse); production would parse properly
-      return new Response(JSON.stringify({ success: true, xml: text }), { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      return new Response(JSON.stringify({ success: true, principalUrl, homeUrl, xml: listXml }), { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
     if (action === "caldav-events") {
