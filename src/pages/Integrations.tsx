@@ -232,6 +232,7 @@ export default function Integrations() {
   };
 
   const loadCredentials = async () => {
+    if (!session) return;
     try {
       const { data, error } = await supabase.functions.invoke('credentials-service', { body: { action: 'list' } });
       if (error) throw error;
@@ -243,7 +244,7 @@ export default function Integrations() {
 
   useEffect(() => {
     loadCredentials();
-  }, []);
+  }, [session]);
 
   const saveImapCredentials = async () => {
     if (!imapConfig.email || !imapConfig.password) {

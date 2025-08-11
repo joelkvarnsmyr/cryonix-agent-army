@@ -90,10 +90,14 @@ const AgentCoordinator = () => {
 
   const fetchAgents = async () => {
     try {
+      if (!user?.id) {
+        // Wait for authenticated user before fetching to avoid invalid UUID errors
+        return;
+      }
       const { data, error } = await supabase
         .from('agents')
         .select('*')
-        .eq('user_id', user?.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
       
       if (error) throw error;
