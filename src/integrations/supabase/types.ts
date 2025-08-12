@@ -337,6 +337,105 @@ export type Database = {
         }
         Relationships: []
       }
+      email_messages: {
+        Row: {
+          body_preview: string | null
+          created_at: string
+          grant_id: string | null
+          id: string
+          is_read: boolean | null
+          message_date: string | null
+          provider: string
+          raw: Json | null
+          recipients: Json | null
+          sender: string | null
+          snippet: string | null
+          subject: string | null
+          thread_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body_preview?: string | null
+          created_at?: string
+          grant_id?: string | null
+          id: string
+          is_read?: boolean | null
+          message_date?: string | null
+          provider?: string
+          raw?: Json | null
+          recipients?: Json | null
+          sender?: string | null
+          snippet?: string | null
+          subject?: string | null
+          thread_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body_preview?: string | null
+          created_at?: string
+          grant_id?: string | null
+          id?: string
+          is_read?: boolean | null
+          message_date?: string | null
+          provider?: string
+          raw?: Json | null
+          recipients?: Json | null
+          sender?: string | null
+          snippet?: string | null
+          subject?: string | null
+          thread_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      email_sync_state: {
+        Row: {
+          created_at: string
+          cursor: string | null
+          error: string | null
+          grant_id: string
+          id: string
+          last_synced_at: string
+          metadata: Json
+          provider: string
+          status: string
+          total_synced: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          cursor?: string | null
+          error?: string | null
+          grant_id: string
+          id?: string
+          last_synced_at?: string
+          metadata?: Json
+          provider?: string
+          status?: string
+          total_synced?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          cursor?: string | null
+          error?: string | null
+          grant_id?: string
+          id?: string
+          last_synced_at?: string
+          metadata?: Json
+          provider?: string
+          status?: string
+          total_synced?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
