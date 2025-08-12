@@ -32,6 +32,11 @@ export default function Integrations() {
   const [gmailEmails, setGmailEmails] = useState<Array<{ id: string; from: string; subject: string; date: string; snippet: string }>>([]);
   const [isFetchingImap, setIsFetchingImap] = useState(false);
   const [imapEmails, setImapEmails] = useState<Array<{ id: string; from: string; subject: string; date: string; snippet: string; isRead?: boolean }>>([]);
+  // Nylas
+  const [nylasGrantId, setNylasGrantId] = useState('');
+  const [nylasEmail, setNylasEmail] = useState('');
+  const [isFetchingNylas, setIsFetchingNylas] = useState(false);
+  const [nylasEmails, setNylasEmails] = useState<Array<{ id: string; from: string; subject: string; date: string; snippet: string; isRead?: boolean }>>([]);
   // Secure credentials & CalDAV
   const [isSavingImap, setIsSavingImap] = useState(false);
   const [isSavingCalDav, setIsSavingCalDav] = useState(false);
@@ -52,6 +57,15 @@ export default function Integrations() {
         setImapConfig((prev) => ({ ...prev, ...saved }));
         setShowImapConfig(true);
       }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      const savedGrant = localStorage.getItem('nylasGrantId') || '';
+      const savedEmail = localStorage.getItem('nylasEmail') || '';
+      if (savedGrant) setNylasGrantId(savedGrant);
+      if (savedEmail) setNylasEmail(savedEmail);
     } catch {}
   }, []);
 
@@ -246,6 +260,58 @@ export default function Integrations() {
     loadCredentials();
   }, [session]);
 
+  const fetchNylasEmails = async (count = 200) => {
+    if (!nylasGrantId) {
+      toast({ title: 'Saknar Nylas Grant ID', description: 'Ange ditt Nylas grantId först', variant: 'destructive' });
+      return;
+    }
+    try {
+      setIsFetchingNylas(true);
+      setNylasEmails([]);
+      const { data, error } = await supabase.functions.invoke('email-service', {
+        body: { action: 'nylas-list', grantId: nylasGrantId, limit: count },
+      });
+      if (error) throw error;
+      const emails = (data?.emails || []).map((e: any) => ({
+        id: e.id,
+        from: e.from,
+        subject: e.subject,
+        date: e.date,
+        snippet: e.body,
+        isRead: e.isRead,
+      }));
+      setNylasEmails(emails);
+      const unread = emails.filter((e) => !e.isRead).length;
+      const summary = { total: emails.length, unread, lastCheck: new Date().toISOString() };
+      try { localStorage.setItem('mailStats', JSON.stringify(summary)); } catch {}
+      toast({ title: 'Hämtat e‑post (Nylas)', description: `Visar ${emails.length} konversationer` });
+    } catch (e: any) {
+      console.error('Nylas fetch error', e);
+      toast({ title: 'Kunde inte hämta via Nylas', description: e.message || String(e), variant: 'destructive' });
+    } finally {
+      setIsFetchingNylas(false);
+    }
+  };
+
+  const saveNylasGrant = async () => {
+    try {
+      if (!nylasGrantId || !nylasEmail) {
+        toast({ title: 'Saknas uppgifter', description: 'Ange e‑post och Nylas grantId', variant: 'destructive' });
+        return;
+      }
+      localStorage.setItem('nylasGrantId', nylasGrantId);
+      localStorage.setItem('nylasEmail', nylasEmail);
+      // Optionally store securely
+      await supabase.functions.invoke('credentials-service', {
+        body: { action: 'save', payload: { service: 'nylas', username: nylasEmail, email: nylasEmail, secret: nylasGrantId, config: {} } }
+      });
+      toast({ title: 'Sparat', description: 'Nylas Grant ID sparat' });
+    } catch (e: any) {
+      console.error('Save Nylas grant error', e);
+      toast({ title: 'Kunde inte spara', description: e.message || String(e), variant: 'destructive' });
+    }
+  };
+
   const saveImapCredentials = async () => {
     if (!imapConfig.email || !imapConfig.password) {
       toast({ title: 'Saknas uppgifter', description: 'Ange e‑post och lösenord', variant: 'destructive' });
@@ -439,6 +505,58 @@ export default function Integrations() {
                 Koppla från
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Nylas Email API */}
+        <Card className="glass">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Mail className="w-4 h-4" /> Nylas Email API
+              <Badge variant="outline">IMAP via API</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="nylasEmail">Email</Label>
+                <Input id="nylasEmail" type="email" placeholder="din@email.com" value={nylasEmail} onChange={(e) => setNylasEmail(e.target.value)} />
+              </div>
+              <div>
+                <Label htmlFor="nylasGrant">Nylas Grant ID</Label>
+                <Input id="nylasGrant" placeholder="grant_..." value={nylasGrantId} onChange={(e) => setNylasGrantId(e.target.value)} />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={saveNylasGrant}>Spara (lokalt + säkert)</Button>
+              <Button variant="secondary" onClick={() => fetchNylasEmails(200)} disabled={!nylasGrantId || isFetchingNylas}>
+                {isFetchingNylas ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Hämtar (Nylas)...
+                  </>
+                ) : (
+                  'Hämta 200 mail (Nylas)'
+                )}
+              </Button>
+            </div>
+
+            {nylasEmails.length > 0 && (
+              <div className="mt-2 max-h-64 overflow-auto rounded-md border">
+                <ul className="divide-y">
+                  {nylasEmails.slice(0, 200).map((m) => (
+                    <li key={m.id} className="p-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="font-medium">{m.subject}</span>
+                        <span className="text-muted-foreground">{new Date(m.date).toLocaleString()}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{m.from}</div>
+                      <div className="text-xs text-muted-foreground truncate">{m.snippet}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </CardContent>
         </Card>
 

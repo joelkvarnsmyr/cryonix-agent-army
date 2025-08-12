@@ -299,6 +299,62 @@ serve(async (req) => {
           );
         }
 
+        case 'nylas-list': {
+          const { grantId, limit: maxResults } = body as { grantId: string; limit?: number };
+          const clientId = Deno.env.get('NYLAS_CLIENT_ID');
+          const apiKey = Deno.env.get('NYLAS_API_KEY');
+          const baseUrl = Deno.env.get('NYLAS_API_BASE') || 'https://api.us.nylas.com';
+
+          if (!clientId || !apiKey) {
+            return new Response(
+              JSON.stringify({ error: 'Missing NYLAS_CLIENT_ID or NYLAS_API_KEY' }),
+              { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            );
+          }
+
+          if (!grantId) {
+            return new Response(
+              JSON.stringify({ error: 'Missing grantId' }),
+              { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            );
+          }
+
+          const limit = Math.min(Math.max(maxResults || 50, 1), 200);
+
+          const resp = await fetch(`${baseUrl}/v3/messages?limit=${limit}`, {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'X-Nylas-Client-Id': clientId,
+              'X-Nylas-Grant-Id': grantId,
+              'Content-Type': 'application/json',
+            },
+          });
+          const json = await resp.json();
+          if (!resp.ok) {
+            console.error('Nylas list error:', json);
+            return new Response(
+              JSON.stringify({ error: json?.message || 'Failed to list messages via Nylas' }),
+              { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            );
+          }
+
+          const items = (json?.data || json?.messages || []) as any[];
+          const emails: EmailMessage[] = items.map((m: any) => ({
+            id: m.id,
+            from: Array.isArray(m.from) && m.from.length ? (m.from[0].email || m.from[0].name || '') : (m.from || ''),
+            to: Array.isArray(m.to) && m.to.length ? (m.to[0].email || m.to[0].name || '') : (m.to || ''),
+            subject: m.subject || '(ingen ämnesrad)',
+            body: m.snippet || m.preview || '',
+            date: m.date || m.received_at || new Date().toISOString(),
+            isRead: m.unread === false,
+          }));
+
+          return new Response(
+            JSON.stringify({ success: true, count: emails.length, emails }),
+            { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+          );
+        }
+
         default:
           return new Response(
             JSON.stringify({ error: 'Invalid action' }),

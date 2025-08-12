@@ -116,28 +116,47 @@ const AgentOrchestrator = () => {
     }
   }, [agents, mailStats, memoryCount, isOrchestrating]);
 
-  // Fetch Gmail stats (first 200) if connected
+  // Fetch mail stats: prefer Gmail via OAuth; fallback to Nylas grant if present
   useEffect(() => {
     const hasGoogle = session?.user?.identities?.some((i: any) => i.provider === 'google');
     const accessToken = (session as any)?.provider_token as string | undefined;
-    if (!hasGoogle || !accessToken) return;
 
-    (async () => {
+    const run = async () => {
       try {
-        const { data, error } = await supabase.functions.invoke('email-service', {
-          body: { action: 'gmail-list', accessToken, maxResults: 200 },
-        });
-        if (error) throw error;
-        const emails = (data?.emails || []) as any[];
-        setMailStats({
-          total: emails.length,
-          priority: emails.filter((e) => !e.isRead).length,
-          lastCheck: new Date().toLocaleTimeString(),
-        });
+        if (hasGoogle && accessToken) {
+          const { data, error } = await supabase.functions.invoke('email-service', {
+            body: { action: 'gmail-list', accessToken, maxResults: 200 },
+          });
+          if (error) throw error;
+          const emails = (data?.emails || []) as any[];
+          setMailStats({
+            total: emails.length,
+            priority: emails.filter((e) => !e.isRead).length,
+            lastCheck: new Date().toLocaleTimeString(),
+          });
+          return;
+        }
+
+        // Fallback to Nylas if configured
+        const grantId = (() => { try { return localStorage.getItem('nylasGrantId') || ''; } catch { return ''; } })();
+        if (grantId) {
+          const { data, error } = await supabase.functions.invoke('email-service', {
+            body: { action: 'nylas-list', grantId, limit: 200 },
+          });
+          if (error) throw error;
+          const emails = (data?.emails || []) as any[];
+          setMailStats({
+            total: emails.length,
+            priority: emails.filter((e) => !e.isRead).length,
+            lastCheck: new Date().toLocaleTimeString(),
+          });
+        }
       } catch (err) {
-        console.error('Failed to fetch Gmail emails for stats', err);
+        console.error('Failed to fetch mail stats', err);
       }
-    })();
+    };
+
+    run();
   }, [session]);
 
   // Fallback: read last mail stats from localStorage (e.g., IMAP fetch on Integrations page)
