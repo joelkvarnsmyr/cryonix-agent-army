@@ -1,0 +1,39 @@
+{
+  "name": "@cryonix/web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "^15.1.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@cryonix/ui": "workspace:*",
+    "@cryonix/agents": "workspace:*",
+    "@cryonix/database": "workspace:*",
+    "@cryonix/types": "workspace:*",
+    "@vercel/postgres": "^0.10.0",
+    "@vercel/kv": "^3.0.0",
+    "openai": "^4.77.3",
+    "ccxt": "^4.4.50",
+    "zod": "^3.25.76",
+    "date-fns": "^4.1.0",
+    "recharts": "^2.15.4",
+    "next-themes": "^0.4.4",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.6",
+    "@types/react-dom": "^19.0.2",
+    "typescript": "^5.8.3",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17"
+  }
+}
