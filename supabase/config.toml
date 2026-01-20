@@ -1,4 +1,0 @@
-project_id = "qyvozzpblhgfapaykfje"
-
-[functions.nylas-webhook]
-verify_jwt = false
