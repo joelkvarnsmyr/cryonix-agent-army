@@ -1,0 +1,158 @@
+version: '3.8'
+
+services:
+  # ============================================================
+  # Infrastructure
+  # ============================================================
+
+  postgres:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: cryonix
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cryonix-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - cryonix-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # Python Engine (Market Scanner + Analysis)
+  # ============================================================
+
+  engine:
+    build:
+      context: ./packages/engine
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      - PYTHONUNBUFFERED=1
+      - KV_URL=redis://redis:6379
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ============================================================
+  # Next.js Web App (Dashboard + API)
+  # ============================================================
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - KV_URL=redis://redis:6379
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+      - POSTGRES_PRISMA_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+      - POSTGRES_URL_NON_POOLING=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+      - POSTGRES_USER=postgres
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DATABASE=cryonix
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET}
+      - BINANCE_TESTNET=false
+      - XAI_API_KEY=${XAI_API_KEY}
+      - ENABLE_AUTO_TRADING=true
+      - NEXT_PUBLIC_APP_URL=http://localhost:${WEB_PORT:-3000}
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ============================================================
+  # Auto-Trader (Background polling loop)
+  # ============================================================
+
+  auto-trader:
+    build:
+      context: .
+      dockerfile: Dockerfile.scripts
+    restart: always
+    command: ["node", "scripts/auto-trader.mjs"]
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_APP_URL=http://web:3000
+    networks:
+      - cryonix-net
+    depends_on:
+      - web
+
+  # ============================================================
+  # WebSocket Server (Real-time dashboard updates)
+  # ============================================================
+
+  ws-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.scripts
+    restart: always
+    command: ["node", "scripts/ws-server.mjs"]
+    ports:
+      - "${WS_PORT:-3004}:3004"
+    environment:
+      - NODE_ENV=production
+      - KV_URL=redis://redis:6379
+      - WS_PORT=3004
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ============================================================
+  # Caddy Reverse Proxy (Handles HTTPS and routing)
+  # ============================================================
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    network_mode: host
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+
+networks:
+  cryonix-net:
+    driver: bridge

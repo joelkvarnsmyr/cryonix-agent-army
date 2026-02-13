@@ -1,0 +1,21 @@
+# Dependencies
+**/node_modules
+
+# Build outputs
+.next
+dist
+.turbo
+
+# Git
+.git
+.gitignore
+
+# Env
+.env*
+
+# Documentation & misc
+*.md
+.vscode
+*.log
+.DS_Store
+coverage

@@ -1,0 +1,88 @@
+"""
+Market Data Fetcher using CCXT
+Fetches real OHLCV data from Binance (testnet or live)
+"""
+import ccxt
+import asyncio
+from typing import List, Dict, Any, Optional
+from src.core.config import settings
+
+class MarketDataFetcher:
+    """
+    Fetches real market data from exchanges via CCXT.
+    Supports both sync and async operations.
+    """
+
+    def __init__(self):
+        self.exchange = ccxt.binance({
+            'apiKey': settings.BINANCE_API_KEY or None,
+            'secret': settings.BINANCE_API_SECRET or None,
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': 'spot',
+            }
+        })
+
+        # Use testnet if configured
+        if settings.BINANCE_TESTNET:
+            self.exchange.set_sandbox_mode(True)
+
+        # Cache for rate limiting
+        self._cache: Dict[str, Any] = {}
+        self._cache_ttl = 5  # seconds
+
+    def fetch_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = '15m',
+        limit: int = 100
+    ) -> List[list]:
+        """
+        Fetch OHLCV candles for a symbol.
+        Returns: [[timestamp, open, high, low, close, volume], ...]
+        """
+        try:
+            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            return ohlcv
+        except Exception as e:
+            print(f"[MarketData] Error fetching {symbol}: {e}")
+            return []
+
+    def fetch_ticker(self, symbol: str) -> Dict[str, Any]:
+        """
+        Fetch current ticker data for a symbol.
+        Returns: {last, high, low, volume, change, ...}
+        """
+        try:
+            ticker = self.exchange.fetch_ticker(symbol)
+            return {
+                'symbol': symbol,
+                'price': ticker['last'],
+                'high': ticker['high'],
+                'low': ticker['low'],
+                'volume': ticker['baseVolume'],
+                'change': ticker['percentage'],
+                'timestamp': ticker['timestamp'],
+            }
+        except Exception as e:
+            print(f"[MarketData] Error fetching ticker {symbol}: {e}")
+            return {'symbol': symbol, 'price': 0, 'error': str(e)}
+
+    def fetch_order_book(self, symbol: str, limit: int = 10) -> Dict[str, Any]:
+        """
+        Fetch order book for a symbol.
+        Returns: {bids: [[price, amount], ...], asks: [[price, amount], ...]}
+        """
+        try:
+            book = self.exchange.fetch_order_book(symbol, limit)
+            return {
+                'bids': book['bids'][:limit],
+                'asks': book['asks'][:limit],
+                'spread': book['asks'][0][0] - book['bids'][0][0] if book['bids'] and book['asks'] else 0,
+            }
+        except Exception as e:
+            print(f"[MarketData] Error fetching order book {symbol}: {e}")
+            return {'bids': [], 'asks': [], 'spread': 0}
+
+# Singleton instance
+market_data = MarketDataFetcher()

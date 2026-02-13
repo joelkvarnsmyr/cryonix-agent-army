@@ -1,0 +1,52 @@
+{
+  "name": "@cryonix/web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"next dev\" \"pnpm run ws:dev\"",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "ws:dev": "ts-node scripts/ws-server.ts",
+    "simulate": "ts-node scripts/simulate-signal.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cryonix/agents": "workspace:*",
+    "@cryonix/database": "workspace:*",
+    "@cryonix/types": "workspace:*",
+    "@cryonix/ui": "workspace:*",
+    "@vercel/kv": "^3.0.0",
+    "@vercel/postgres": "^0.10.0",
+    "ccxt": "^4.4.50",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "drizzle-orm": "^0.36.4",
+    "ioredis": "^5.9.2",
+    "lucide-react": "^0.462.0",
+    "next": "^15.1.6",
+    "next-themes": "^0.4.4",
+    "openai": "^4.77.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.15.4",
+    "sonner": "^2.0.7",
+    "swr": "^2.3.8",
+    "tailwind-merge": "^2.6.0",
+    "ws": "^8.19.0",
+    "zod": "^3.25.76",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.6",
+    "@types/react-dom": "^19.0.2",
+    "@types/ws": "^8.18.1",
+    "autoprefixer": "^10.4.21",
+    "concurrently": "^8.0.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  }
+}

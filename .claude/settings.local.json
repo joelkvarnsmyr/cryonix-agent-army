@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Read",
+      "Write",
+      "WebSearch",
+      "WebFetch(domain:*)",
+      "Bash(pnpm test:*)",
+      "Bash(netstat:*)",
+      "mcp__claude_ai_Crypto_com__get_ticker",
+      "mcp__claude_ai_Crypto_com__get_tickers"
+    ]
+  }
+}

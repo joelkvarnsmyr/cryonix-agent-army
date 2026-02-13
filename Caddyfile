@@ -1,0 +1,42 @@
+# Caddyfile for Cryonix Production Environment
+
+{
+    # Enable automatic HTTPS for local development with a self-signed certificate
+    # This allows using a local domain like https://cryonix.local
+    acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+    email your_email@example.com
+}
+
+cryonix.local {
+    # Reverse proxy Next.js application (the 'web' service in docker-compose)
+    reverse_proxy web:3000
+
+    # The Next.js app itself handles API routes, so we just proxy everything to it.
+    # The WebSocket connection for the dashboard is handled by the Next.js server's
+    # API routes in this setup, so a separate websocket proxy is not needed if
+    # the ws-server logic is integrated into the Next.js app.
+    #
+    # However, our ws-server is a separate service. Let's assume the client
+    # connects to the main domain for websockets. We can proxy a specific path.
+    # Let's say the client connects to wss://cryonix.local/ws
+    
+    # After re-reading the ws-server.mjs, it doesn't use a path.
+    # It just opens a port. The client will connect to ws://cryonix.local:3004
+    # or something similar. For a clean setup, we should proxy a path.
+    # Let's handle this in the docker-compose by adding a path for the ws-server.
+    #
+    # For now, let's keep it simple. Caddy will only proxy the main web app.
+    # The WebSocket will be exposed on its own port.
+    # A more advanced setup would route a path like /ws to the ws-server.
+    
+    # Example of WebSocket proxying if needed later:
+    # @ws {
+    #     header Connection *Upgrade*
+    #     header Upgrade websocket
+    # }
+    # reverse_proxy @ws ws-server:3004
+}
+
+openclaw.local {
+    reverse_proxy localhost:18789
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@cryonix/agents",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cryonix/types": "workspace:*",
+    "@cryonix/database": "workspace:*",
+    "ccxt": "^4.4.50",
+    "openai": "^4.77.3",
+    "technicalindicators": "^3.1.0",
+    "zod": "^3.25.76",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.8.3"
+  }
+}

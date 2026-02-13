@@ -1,0 +1,46 @@
+services:
+  engine:
+    build:
+      context: ./packages/engine
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./packages/engine/src:/app/src
+    environment:
+      - PYTHONUNBUFFERED=1
+      - KV_URL=redis://redis:6379
+    networks:
+      - cryonix-net
+    depends_on:
+      - redis
+      - postgres
+    restart: always
+
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: cryonix
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cryonix-net
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - cryonix-net
+
+volumes:
+  postgres_data:
+
+
+networks:
+  cryonix-net:
+    driver: bridge

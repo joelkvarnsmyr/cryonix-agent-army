@@ -1,0 +1,20 @@
+# Dockerfile for running background Node.js scripts
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install pnpm for dependency management
+RUN npm install -g pnpm
+
+# Copy only the necessary files for installing production dependencies
+COPY package.json pnpm-lock.yaml .npmrc ./
+
+# Install production dependencies. This assumes the scripts' dependencies
+# are listed in the root package.json.
+RUN pnpm install --prod --frozen-lockfile
+
+# Copy the scripts themselves
+COPY scripts/ ./scripts/
+
+# The command to run will be specified in the docker-compose.prod.yml file
+# For example: CMD ["node", "scripts/auto-trader.mjs"]

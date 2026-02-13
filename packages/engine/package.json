@@ -1,0 +1,14 @@
+{
+    "name": "@cryonix/engine",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "dev": "uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload",
+        "build": "echo 'Python engine runs in Docker - skipping host build'",
+        "lint": "poetry run black . && poetry run isort .",
+        "start": "uvicorn src.main:app --host 0.0.0.0 --port 8000"
+    },
+    "devDependencies": {
+        "concurrently": "^8.0.0"
+    }
+}

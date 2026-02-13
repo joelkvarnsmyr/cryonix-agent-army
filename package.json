@@ -1,0 +1,37 @@
+{
+  "name": "cryonix-agent-army",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Trading Dashboard - Multi-Agent System",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "type-check": "turbo run type-check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.0.17",
+    "@vitest/ui": "^4.0.17",
+    "turbo": "^2.3.3",
+    "typescript": "^5.8.3",
+    "vitest": "^4.0.17"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "protobufjs": "^8.0.0"
+  }
+}
