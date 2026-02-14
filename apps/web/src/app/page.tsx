@@ -8,6 +8,7 @@ import { TradingChart } from '@/components/dashboard/trading-chart';
 import { HealthGrid } from '@/components/dashboard/health-grid';
 import { ConfigCard } from '@/components/dashboard/config-card';
 import { TradeActivity } from '@/components/dashboard/trade-activity';
+import { ProcessViewer } from '@/components/dashboard/process-viewer';
 
 export default function HomePage() {
   return (
@@ -39,12 +40,13 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Row 4: Bottom strip */}
+        {/* Row 4: Process Log - full width */}
         <div className="grid grid-cols-12 gap-3">
-          <div className="col-span-12 lg:col-span-6">
-            <TradeActivity />
+          <div className="col-span-12 lg:col-span-8">
+            <ProcessViewer />
           </div>
-          <div className="col-span-12 lg:col-span-6">
+          <div className="col-span-12 lg:col-span-4 space-y-3">
+            <TradeActivity />
             <HealthGrid />
           </div>
         </div>
