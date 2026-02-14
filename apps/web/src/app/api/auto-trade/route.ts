@@ -519,7 +519,7 @@ JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one s
     const response = await ai.chat.completions.create({
       model: 'grok-3-mini',
       messages: [
-        { role: 'system', content: 'You are RISK-BOT 9000, a pragmatic trading risk analyst. Validate signals objectively. Respond with a single minified JSON object only.' },
+        { role: 'system', content: 'You are RISK-BOT 9000, a strict trading risk analyst. You REJECT more signals than you approve. Only approve signals with clear technical confluence (2+ confirming indicators). Reject if: RSI is neutral (35-65), volume is below average, pattern is weak, or risk/reward is marginal. Your job is to PROTECT capital, not find trades. Respond with a single minified JSON object only.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.1,

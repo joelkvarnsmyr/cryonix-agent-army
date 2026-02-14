@@ -5,10 +5,16 @@ from src.core.state_sync import state_manager
 import asyncio
 import httpx
 import os
+import time
 
 # Next.js API base URL for persisting signals to Postgres
 # In docker-compose prod, use service name "web"; in dev, use host.docker.internal
 NEXTJS_API_URL = os.getenv("NEXTJS_API_URL", "http://host.docker.internal:3000")
+SPOT_ONLY = os.getenv("SPOT_ONLY", "true").lower() == "true"
+
+# Signal cooldown: max 1 signal per symbol per 15 min
+_signal_cooldown: Dict[str, float] = {}
+COOLDOWN_SECONDS = 900  # 15 minutes
 
 class TankState(TypedDict, total=False):
     """Tank state - using total=False to make all fields optional for incremental updates"""
@@ -77,6 +83,19 @@ class BaseTank:
         signal = state.get("signal", {})
         indicators = state.get("indicators", {})
 
+        # SPOT_ONLY: skip SELL signals entirely (saves 95% of signal noise)
+        if SPOT_ONLY and signal.get("action") == "SELL":
+            return {"decision": "HOLD", "status": "spot_only_skip"}
+
+        # Cooldown: max 1 signal per symbol per 15 min
+        symbol = state.get("symbol", "")
+        cooldown_key = f"{symbol}:{signal.get('action','')}"
+        now = time.time()
+        last_signal = _signal_cooldown.get(cooldown_key, 0)
+        if now - last_signal < COOLDOWN_SECONDS:
+            remaining = int(COOLDOWN_SECONDS - (now - last_signal))
+            return {"decision": "HOLD", "status": f"cooldown_{remaining}s"}
+
         # Build market data for risk manager
         market_data = {
             "atr": indicators.get("atr", 0),
@@ -89,6 +108,9 @@ class BaseTank:
         risk_result = await risk_gate.check_risk(signal, market_data)
 
         if risk_result["approved"]:
+            # Record cooldown timestamp
+            _signal_cooldown[cooldown_key] = now
+
             # Apply any adjustments from risk manager
             adjustments = risk_result.get("adjustments", {})
             if adjustments:
