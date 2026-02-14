@@ -212,6 +212,16 @@ export const validationHistory = pgTable('validation_history', {
   agentId: varchar('agent_id', { length: 50 }),
 });
 
+export const evolutionRuns = pgTable('evolution_runs', {
+  runId: varchar('run_id', { length: 100 }).primaryKey(),
+  startedAt: timestamp('started_at').notNull(),
+  endedAt: timestamp('ended_at'),
+  durationSeconds: doublePrecision('duration_seconds'),
+  status: varchar('status', { length: 50 }),
+  performanceData: jsonb('performance_data'),
+  changesMade: jsonb('changes_made'),
+});
+
 // ============================================================================
 // POSITION HISTORY TABLE
 // ============================================================================
