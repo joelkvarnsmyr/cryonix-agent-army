@@ -52,6 +52,12 @@ services:
       - KV_URL=redis://redis:6379
       - NEXTJS_API_URL=http://web:3000
       - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET}
+      - BINANCE_TESTNET=false
+      - TRADING_MODE=${TRADING_MODE:-margin}
+      - MARGIN_TYPE=${MARGIN_TYPE:-cross}
+      - DEFAULT_LEVERAGE=${DEFAULT_LEVERAGE:-3}
     networks:
       - cryonix-net
     depends_on:
@@ -87,6 +93,9 @@ services:
       - BINANCE_API_SECRET=${BINANCE_API_SECRET}
       - BINANCE_TESTNET=false
       - XAI_API_KEY=${XAI_API_KEY}
+      - TRADING_MODE=${TRADING_MODE:-margin}
+      - MARGIN_TYPE=${MARGIN_TYPE:-cross}
+      - DEFAULT_LEVERAGE=${DEFAULT_LEVERAGE:-3}
       - ENABLE_AUTO_TRADING=true
       - ENGINE_URL=http://engine:8000
       - NEXT_PUBLIC_APP_URL=http://localhost:${WEB_PORT:-3000}

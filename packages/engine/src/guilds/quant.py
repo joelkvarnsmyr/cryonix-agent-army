@@ -326,7 +326,7 @@ class QuantGuild:
             return {
                 "pattern": "EMA_BULLISH_CROSS",
                 "action": "BUY",
-                "confidence": 0.74,
+                "confidence": 0.76,
                 "reason": "EMA 9/21 bullish crossover",
             }
         # Bearish crossover
@@ -334,7 +334,7 @@ class QuantGuild:
             return {
                 "pattern": "EMA_BEARISH_CROSS",
                 "action": "SELL",
-                "confidence": 0.74,
+                "confidence": 0.76,
                 "reason": "EMA 9/21 bearish crossover",
             }
 
@@ -516,6 +516,9 @@ class QuantGuild:
         """
         price = indicators['price']
         atr = indicators['atr']
+        # Smart rounding: more decimals for low-price coins
+        decimals = 2 if price >= 1 else (4 if price >= 0.01 else 6)
+        def rp(v): return round(v, decimals)
 
         if not patterns:
             return {
@@ -524,8 +527,8 @@ class QuantGuild:
                 "reason": "No clear pattern detected",
                 "patterns": [],
                 "entry_price": price,
-                "stop_loss": round(price * 0.98, 2),
-                "target_price": round(price * 1.02, 2),
+                "stop_loss": rp(price * 0.98),
+                "target_price": rp(price * 1.02),
                 "consensus_score": 0,
             }
 
@@ -604,8 +607,8 @@ class QuantGuild:
                 "reason": " | ".join(reasons),
                 "patterns": [p['pattern'] for p in buy_signals],
                 "entry_price": price,
-                "stop_loss": round(price - 2 * atr, 2),
-                "target_price": round(price + 3 * atr, 2),
+                "stop_loss": rp(price - 2 * atr),
+                "target_price": rp(price + 3 * atr),
                 "consensus_score": len(buy_signals),
                 "consensus_boosts": boosts,
                 "trend_aligned": trend_bullish,
@@ -622,8 +625,8 @@ class QuantGuild:
                 "reason": " | ".join(reasons),
                 "patterns": [p['pattern'] for p in sell_signals],
                 "entry_price": price,
-                "stop_loss": round(price + 2 * atr, 2),
-                "target_price": round(price - 3 * atr, 2),
+                "stop_loss": rp(price + 2 * atr),
+                "target_price": rp(price - 3 * atr),
                 "consensus_score": len(sell_signals),
                 "consensus_boosts": boosts,
                 "trend_aligned": trend_bearish,
@@ -635,30 +638,33 @@ class QuantGuild:
             buy_strength = sum(p['confidence'] for p in buy_signals)
             sell_strength = sum(p['confidence'] for p in sell_signals)
 
-            # If one side is significantly stronger (>1.5x), go with it but reduce confidence
+            # If one side is significantly stronger (>1.5x), go with it
+            # Use max individual confidence from winning side (don't average down strong single patterns)
             if buy_strength > sell_strength * 1.5:
-                confidence = (buy_strength / (buy_strength + sell_strength)) * 0.6  # Max 60% on conflict
+                best_buy = max(p['confidence'] for p in buy_signals)
+                confidence = max(best_buy * 0.85, (buy_strength / (buy_strength + sell_strength)) * 0.7)
                 return {
                     "action": "BUY",
-                    "confidence": round(confidence, 4),
-                    "reason": f"Weak BUY (conflicting: {len(buy_signals)} buy vs {len(sell_signals)} sell)",
+                    "confidence": round(min(0.85, confidence), 4),
+                    "reason": f"BUY (conflicting: {len(buy_signals)} buy vs {len(sell_signals)} sell)",
                     "patterns": [p['pattern'] for p in buy_signals],
                     "entry_price": price,
-                    "stop_loss": round(price - 1.5 * atr, 2),  # Tighter stop on conflict
-                    "target_price": round(price + 2 * atr, 2),
+                    "stop_loss": rp(price - 1.5 * atr),
+                    "target_price": rp(price + 2 * atr),
                     "consensus_score": 0,
                     "conflicting": True,
                 }
             elif sell_strength > buy_strength * 1.5:
-                confidence = (sell_strength / (buy_strength + sell_strength)) * 0.6
+                best_sell = max(p['confidence'] for p in sell_signals)
+                confidence = max(best_sell * 0.85, (sell_strength / (buy_strength + sell_strength)) * 0.7)
                 return {
                     "action": "SELL",
-                    "confidence": round(confidence, 4),
-                    "reason": f"Weak SELL (conflicting: {len(sell_signals)} sell vs {len(buy_signals)} buy)",
+                    "confidence": round(min(0.85, confidence), 4),
+                    "reason": f"SELL (conflicting: {len(sell_signals)} sell vs {len(buy_signals)} buy)",
                     "patterns": [p['pattern'] for p in sell_signals],
                     "entry_price": price,
-                    "stop_loss": round(price + 1.5 * atr, 2),
-                    "target_price": round(price - 2 * atr, 2),
+                    "stop_loss": rp(price + 1.5 * atr),
+                    "target_price": rp(price - 2 * atr),
                     "consensus_score": 0,
                     "conflicting": True,
                 }
@@ -670,8 +676,8 @@ class QuantGuild:
                     "reason": f"Conflicting signals ({len(buy_signals)} buy vs {len(sell_signals)} sell)",
                     "patterns": [p['pattern'] for p in patterns],
                     "entry_price": price,
-                    "stop_loss": round(price * 0.98, 2),
-                    "target_price": round(price * 1.02, 2),
+                    "stop_loss": rp(price * 0.98),
+                    "target_price": rp(price * 1.02),
                     "consensus_score": 0,
                     "conflicting": True,
                 }

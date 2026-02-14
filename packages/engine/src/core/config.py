@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     BINANCE_API_SECRET: str = ""
     BINANCE_TESTNET: bool = True
     
+    # Trading mode: 'spot', 'margin', 'future'
+    TRADING_MODE: str = "margin"
+    MARGIN_TYPE: str = "cross"        # 'cross' or 'isolated'
+    DEFAULT_LEVERAGE: int = 3          # Conservative 3x leverage
+    
     # AI (Optional for now)
     XAI_API_KEY: str = ""
 

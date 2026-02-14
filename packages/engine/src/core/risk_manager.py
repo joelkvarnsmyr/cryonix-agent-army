@@ -17,11 +17,13 @@ class RiskLimits:
     max_weekly_loss_pct: float = 0.10         # 10% max weekly loss (~$1.70)
     max_position_size_pct: float = 0.35       # 35% max per position (~$6)
     max_total_exposure_pct: float = 0.70      # 70% max total exposure (~$12)
-    min_confidence: float = 0.75              # 75% min signal confidence
+    min_confidence: float = 0.65              # 65% min signal confidence (lowered to allow more BUY entries)
     max_correlation: float = 0.70             # Max position correlation
     volatility_pause_atr_pct: float = 5.0     # Pause if ATR > 5%
-    max_trades_per_day: int = 3               # Max 3 trades per day
-    max_consecutive_losses: int = 3           # Pause after 3 losses
+    max_trades_per_day: int = 5               # Max 5 trades per day (increased for margin)
+    max_consecutive_losses: int = 4           # Pause after 4 losses
+    max_leverage: int = 3                     # Max leverage for margin trading
+    liquidation_buffer_pct: float = 0.15      # 15% buffer before liquidation price
 
 
 @dataclass
@@ -266,6 +268,27 @@ class RiskManager:
             result["adjustments"]["stop_loss"] = round(dynamic_stop, 2)
             result["adjustments"]["take_profit"] = round(dynamic_target, 2)
             result["adjustments"]["risk_reward_ratio"] = 1.5  # 3:2 ratio
+
+        # 11. Margin/Leverage safety check
+        leverage = self.limits.max_leverage
+        if leverage > 1 and market_data:
+            atr_pct = market_data.get("atr_percent", 0)
+            # Liquidation distance: at 3x leverage, ~33% move liquidates
+            liquidation_dist = 100 / leverage
+            # Stop-loss must be well inside liquidation distance
+            entry_price = signal.get("entry_price", 0)
+            stop_loss = result["adjustments"].get("stop_loss", signal.get("stop_loss", 0))
+            if entry_price > 0 and stop_loss > 0:
+                sl_dist_pct = abs(entry_price - stop_loss) / entry_price * 100
+                if sl_dist_pct > liquidation_dist * (1 - self.limits.liquidation_buffer_pct):
+                    # Tighten stop-loss to stay inside liquidation zone
+                    safe_dist = entry_price * liquidation_dist * 0.7 / 100
+                    if signal.get("action") == "BUY":
+                        result["adjustments"]["stop_loss"] = round(entry_price - safe_dist, 2)
+                    else:
+                        result["adjustments"]["stop_loss"] = round(entry_price + safe_dist, 2)
+                    result["warnings"].append(f"SL tightened for {leverage}x leverage safety")
+            result["adjustments"]["leverage"] = leverage
 
         await self._save_state()
         return result

@@ -13,12 +13,15 @@ export const dynamic = 'force-dynamic';
 const CONFIG = {
   TOTAL_CAPITAL: 17,
   MAX_POSITION_SIZE_PCT: 0.35,     // 35% per position (~$6 max)
-  MIN_CONFIDENCE: 0.75,
+  MIN_CONFIDENCE: 0.65,
   MAX_DAILY_LOSS_PCT: 0.05,        // 5% (~$0.85)
-  MAX_OPEN_POSITIONS: 2,
-  MAX_TRADES_PER_DAY: 3,
+  MAX_OPEN_POSITIONS: 3,
+  MAX_TRADES_PER_DAY: 5,
   MAX_SLIPPAGE_PCT: 0.3,
-  SPOT_ONLY: true,
+  SPOT_ONLY: false,                // Margin trading enabled
+  TRADING_MODE: (process.env.TRADING_MODE || 'margin') as 'spot' | 'margin' | 'future',
+  MARGIN_TYPE: (process.env.MARGIN_TYPE || 'cross') as 'cross' | 'isolated',
+  DEFAULT_LEVERAGE: parseInt(process.env.DEFAULT_LEVERAGE || '3'),
   MIN_ORDER_VALUE: 5.5,
   TRAILING_STOP_PCT: 1.0,          // 1% trailing stop after profit
   MAX_PENDING_QUEUE: 20,           // Auto-trim queue beyond this
@@ -50,11 +53,15 @@ let exchange: Exchange | null = null;
 function getExchange(): Exchange {
   if (exchange) return exchange;
   const isTestnet = process.env.BINANCE_TESTNET === 'true';
+  const defaultType = CONFIG.TRADING_MODE === 'future' ? 'future' : 'spot';
   const config: any = {
     apiKey: process.env.BINANCE_API_KEY,
     secret: process.env.BINANCE_API_SECRET,
     enableRateLimit: true,
-    options: { defaultType: 'spot' },
+    options: {
+      defaultType,
+      defaultMarginMode: CONFIG.TRADING_MODE === 'margin' ? CONFIG.MARGIN_TYPE : undefined,
+    },
   };
   if (isTestnet) {
     config.urls = {
@@ -65,6 +72,7 @@ function getExchange(): Exchange {
     };
   }
   exchange = new ccxt.binance(config);
+  console.log(`[Exchange] Initialized: mode=${CONFIG.TRADING_MODE}, leverage=${CONFIG.DEFAULT_LEVERAGE}x`);
   return exchange;
 }
 
@@ -406,41 +414,33 @@ Consider:
 For a micro-account ($17), we can ONLY afford REAL opportunities. Be EXTRA skeptical of falling knives.
 
 JSON: {"approve": boolean, "confidence": number(0-100), "reasoning": "one sentence", "sl": number|null, "tp": number|null}`
-      : `You are "RISK-BOT 9000", a hyper-skeptical, cynical, and world-weary crypto trading risk analyst. Your job is to find reasons NOT to make a trade. You only approve trades that are exceptionally obvious.
+      : `You are "RISK-BOT 9000", a pragmatic crypto trading risk analyst. Your job is to quickly validate trading signals. Approve signals with clear technical backing; reject only obvious traps.
 
-**EVALUATE THE FOLLOWING BUY SIGNAL:**
+**EVALUATE THIS ${signal.action} SIGNAL:**
 
-**1. Technical Analysis (The Chart Story):**
-- **Symbol:** ${signal.symbol}
+**Technical Analysis:**
+- **Symbol:** ${signal.symbol} | **Action:** ${signal.action}
 - **TA Confidence:** ${(signal.confidence * 100).toFixed(0)}%
 - **Patterns:** ${signal.patterns.join(', ')}
 - **Reason:** ${signal.reason}
-- **Signal Price Points:** Entry: $${signal.entry_price.toFixed(2)}, SL: $${signal.stop_loss.toFixed(2)}, TP: $${signal.target_price.toFixed(2)}
+- **Entry:** $${signal.entry_price.toFixed(4)}, SL: $${signal.stop_loss.toFixed(4)}, TP: $${signal.target_price.toFixed(4)}
 
-**2. Live Market Data (The Reality):**
-- **Current Price:** $${ticker.last?.toFixed(2)}
-- **24h Change:** ${ticker.percentage?.toFixed(2)}%
-- **24h Volume (Base):** ${ticker.baseVolume?.toFixed(0)}
-- **Key Indicators:** RSI=${signal.indicators.rsi}, BB Width=${signal.indicators.bb_width_pct}%, Volume Ratio=${signal.indicators.volume_ratio}x
+**Live Market:**
+- **Price:** $${ticker.last?.toFixed(4)} | **24h:** ${ticker.percentage?.toFixed(2)}%
+- **RSI:** ${signal.indicators.rsi} | **Vol Ratio:** ${signal.indicators.volume_ratio}x
+- **Sentiment:** ${sentimentLabel} (${sentimentScore})
 
-**3. News Sentiment (The Word on the Street):**
-- **Recent Sentiment:** ${sentimentLabel} (Score: ${sentimentScore})
+**Context:** ${CONFIG.TRADING_MODE} trading with ${CONFIG.DEFAULT_LEVERAGE}x leverage, $17 capital.
+${signal.action === 'SELL' ? 'This is a SHORT/SELL signal via margin trading - evaluate if bearish setup is valid.' : 'This is a BUY signal - evaluate if bullish setup is valid.'}
 
-**4. Constraints (The Rules):**
-- **Capital:** Micro-account ($17 total).
-- **Position Size:** Max ~$6 per trade.
-- **Rules:** Spot trading only.
+Approve if the technical pattern is valid and not contradicted by price action. Be practical, not paranoid.
 
-**YOUR TASK:**
-Critically analyze this. Is the TA story confirmed or contradicted by the live market reality and the news sentiment? Is this signal good enough for a micro-account where every penny counts? Be cynical.
-
-Respond ONLY with a single, minified JSON object:
-{"approve": boolean, "confidence": number(0-100), "reasoning": "Your cynical, one-sentence takedown or grudging approval.", "sl": number|null, "tp": number|null}`;
+JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one sentence", "sl": number|null, "tp": number|null}`;
 
     const response = await ai.chat.completions.create({
       model: 'grok-3-mini-fast',
       messages: [
-        { role: 'system', content: 'You are a cynical trading risk analyst named RISK-BOT 9000. Respond with a single, minified JSON object and nothing else.' },
+        { role: 'system', content: 'You are RISK-BOT 9000, a pragmatic trading risk analyst. Validate signals objectively. Respond with a single minified JSON object only.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.1,
@@ -569,6 +569,83 @@ async function executeBuy(signal: Signal): Promise<{
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error(`[AUTO-TRADE] BUY failed:`, errMsg);
+    return { success: false, error: errMsg };
+  }
+}
+
+// ============================================================================
+// EXECUTE MARGIN SELL (SHORT) + STORE POSITION
+// ============================================================================
+
+async function executeMarginSell(signal: Signal): Promise<{
+  success: boolean;
+  orderId?: string;
+  executedPrice?: number;
+  quantity?: number;
+  error?: string;
+}> {
+  if (CONFIG.TRADING_MODE === 'spot') {
+    return { success: false, error: 'Margin sell not available in spot mode' };
+  }
+
+  const ex = getExchange();
+  const quantity = calculatePositionSize(signal);
+
+  if (quantity <= 0) {
+    return { success: false, error: 'Position size too small' };
+  }
+
+  const positionValue = quantity * signal.entry_price;
+  if (positionValue < CONFIG.MIN_ORDER_VALUE) {
+    return { success: false, error: `Value $${positionValue.toFixed(2)} < $${CONFIG.MIN_ORDER_VALUE} min` };
+  }
+
+  console.log(`[AUTO-TRADE] MARGIN SELL ${signal.symbol}: qty=${quantity.toFixed(6)}, ~$${positionValue.toFixed(2)}, leverage=${CONFIG.DEFAULT_LEVERAGE}x`);
+
+  try {
+    const ticker = await ex.fetchTicker(signal.symbol);
+    const currentPrice = ticker.last || signal.entry_price;
+
+    const slippage = Math.abs(currentPrice - signal.entry_price) / signal.entry_price * 100;
+    if (slippage > CONFIG.MAX_SLIPPAGE_PCT) {
+      return { success: false, error: `Slippage ${slippage.toFixed(2)}%` };
+    }
+
+    // For margin trading, use createMarketOrder with margin params
+    const params: any = {};
+    if (CONFIG.TRADING_MODE === 'margin') {
+      params.marginMode = CONFIG.MARGIN_TYPE;
+      params.type = 'margin';
+    }
+
+    const order = await ex.createMarketOrder(signal.symbol, 'sell', quantity, undefined, params);
+    const executedPrice = order.average || order.price || currentPrice;
+    const executedQty = order.filled || quantity;
+
+    // Store short position in Redis for monitoring
+    await addPosition({
+      symbol: signal.symbol,
+      side: 'SELL',
+      entryPrice: executedPrice,
+      quantity: executedQty,
+      stopLoss: signal.stop_loss,
+      takeProfit: signal.target_price,
+      trailingStop: signal.stop_loss,
+      highWaterMark: executedPrice,
+      orderId: order.id,
+      openedAt: new Date().toISOString(),
+      pattern: signal.patterns?.join(', ') || '',
+      confidence: signal.confidence,
+    });
+
+    dailyState.tradesExecuted++;
+
+    console.log(`[AUTO-TRADE] SHORT Filled ${order.id} @ $${executedPrice}`);
+
+    return { success: true, orderId: order.id, executedPrice, quantity: executedQty };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error(`[AUTO-TRADE] MARGIN SELL failed:`, errMsg);
     return { success: false, error: errMsg };
   }
 }
@@ -782,11 +859,13 @@ export async function POST() {
       const riskCheck = await passesRiskChecks(signal);
 
       if (!riskCheck.pass) {
-        // Clean non-BUY signals from queue
-        if (signal.action !== 'BUY') {
-          await redis.lrem('trades:pending', 1, raw);
-          rejected++;
-        }
+        await redis.lrem('trades:pending', 1, raw);
+        rejected++;
+        buyResults.push({
+          symbol: signal.symbol,
+          status: 'RISK_REJECTED',
+          reason: riskCheck.reason,
+        });
         continue;
       }
 
@@ -838,8 +917,10 @@ export async function POST() {
       // Blend TA + AI confidence (50% TA, 50% AI)
       signal.confidence = signal.confidence * 0.5 + aiResult.aiConfidence * 0.5;
 
-      // Execute BUY
-      const execution = await executeBuy(signal);
+      // Execute based on signal action
+      const execution = signal.action === 'SELL'
+        ? await executeMarginSell(signal)
+        : await executeBuy(signal);
       await redis.lrem('trades:pending', 1, raw);
 
       if (execution.success) {
@@ -855,7 +936,7 @@ export async function POST() {
 
         await logTrade({
           symbol: signal.symbol,
-          side: 'BUY',
+          side: signal.action as 'BUY' | 'SELL',
           quantity: String(execution.quantity),
           entryPrice: String(execution.executedPrice),
           confidence: String(signal.confidence),

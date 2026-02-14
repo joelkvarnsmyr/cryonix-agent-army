@@ -14,12 +14,16 @@ class MarketDataFetcher:
     """
 
     def __init__(self):
+        trading_mode = settings.TRADING_MODE  # 'spot', 'margin', or 'future'
+        print(f"[MarketData] Initializing CCXT with mode: {trading_mode}")
+        
         self.exchange = ccxt.binance({
             'apiKey': settings.BINANCE_API_KEY or None,
             'secret': settings.BINANCE_API_SECRET or None,
             'enableRateLimit': True,
             'options': {
-                'defaultType': 'spot',
+                'defaultType': trading_mode if trading_mode != 'margin' else 'spot',
+                'defaultMarginMode': settings.MARGIN_TYPE if trading_mode == 'margin' else None,
             }
         })
 
@@ -27,6 +31,8 @@ class MarketDataFetcher:
         if settings.BINANCE_TESTNET:
             self.exchange.set_sandbox_mode(True)
 
+        self.trading_mode = trading_mode
+        
         # Cache for rate limiting
         self._cache: Dict[str, Any] = {}
         self._cache_ttl = 5  # seconds

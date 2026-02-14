@@ -117,12 +117,24 @@ class BaseTank:
     async def execute_order(self, state: TankState) -> TankState:
         # In Glass Tank architecture, we don't execute immediately.
         # We Request Approval via Redis.
-        await state_manager.request_approval(state['signal'])
+        redis_ok = False
+        for attempt in range(3):
+            try:
+                await state_manager.request_approval(state['signal'])
+                redis_ok = True
+                break
+            except Exception as e:
+                print(f"[{self.name}] Redis push attempt {attempt+1}/3 failed: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(1)
+
+        if not redis_ok:
+            print(f"[{self.name}] WARNING: Signal NOT queued in Redis after 3 attempts")
 
         # Also persist signal to Postgres via Next.js API
         await self._persist_signal(state)
 
-        return {"status": "pending_approval"}
+        return {"status": "pending_approval" if redis_ok else "redis_failed"}
 
     async def _persist_signal(self, state: TankState):
         """Persist signal to Postgres via Next.js /api/signals"""
