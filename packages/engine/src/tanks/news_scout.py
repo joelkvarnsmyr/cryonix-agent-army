@@ -62,7 +62,7 @@ class NewsScoutTank(BaseTank):
     """
 
     def __init__(self, kv_url: str):
-        super().__init__(name="NewsScout")
+        super().__init__(name="NewsScout", symbols=[])
         self.redis_client = Redis.from_url(kv_url, decode_responses=True)
         self.last_run_time = 0
         self.run_interval = 900  # Run every 15 minutes

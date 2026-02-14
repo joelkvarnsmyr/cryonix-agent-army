@@ -13,7 +13,7 @@ kv_url = os.getenv("KV_URL", "redis://localhost:6379")
 
 # Initialize Tanks
 scout_tank = MarketScoutTank()
-news_tank = NewsScoutTank(kv_url=kv_url, symbols=[])
+news_tank = NewsScoutTank(kv_url=kv_url)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

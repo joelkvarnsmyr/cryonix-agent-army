@@ -4,9 +4,11 @@ from src.core.risk_gate import risk_gate
 from src.core.state_sync import state_manager
 import asyncio
 import httpx
+import os
 
 # Next.js API base URL for persisting signals to Postgres
-NEXTJS_API_URL = "http://host.docker.internal:3000"
+# In docker-compose prod, use service name "web"; in dev, use host.docker.internal
+NEXTJS_API_URL = os.getenv("NEXTJS_API_URL", "http://host.docker.internal:3000")
 
 class TankState(TypedDict, total=False):
     """Tank state - using total=False to make all fields optional for incremental updates"""

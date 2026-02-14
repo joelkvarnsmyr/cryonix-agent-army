@@ -48,6 +48,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - KV_URL=redis://redis:6379
+      - NEXTJS_API_URL=http://web:3000
       - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
     networks:
       - cryonix-net
