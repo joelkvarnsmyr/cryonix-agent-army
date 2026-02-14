@@ -13,13 +13,16 @@ apps/web/                    # Next.js 15 (dashboard + API routes + trade execut
 packages/
   engine/                    # Python 3.11 FastAPI (Docker) - scanning + analysis
   agents/                    # TypeScript agent system (Orchestrator, MarketScout, ClaudeAssistant)
-  database/                  # Drizzle ORM schema (13 tables, Postgres)
+  database/                  # Drizzle ORM schema (15 tables, Postgres)
   types/                     # Shared TypeScript types + Zod schemas
   ui/                        # shadcn/ui component library
   intelligence/              # Python ML module (Docker, stub)
 scripts/
   auto-trader.mjs            # ESM auto-trader for Docker
   ws-server.mjs              # ESM WebSocket server for Docker
+  telegram-interactive.mjs   # Interactive Telegram bot (@cryptonixis_bot)
+  telegram-bot.mjs           # Evolution report bot (@cryonixEvolution_bot)
+  copilot-evolution.mjs      # GROK→Copilot CLI evolution engine
 ```
 
 ## Commands
@@ -80,6 +83,9 @@ Legacy agent system. Key classes:
 
 - `scripts/auto-trader.mjs` - Polls `/api/auto-trade` every 30s
 - `scripts/ws-server.mjs` - WebSocket server for real-time dashboard updates
+- `scripts/telegram-interactive.mjs` - Interactive Telegram bot (@cryptonixis_bot)
+- `scripts/telegram-bot.mjs` - Evolution report bot (@cryonixEvolution_bot)
+- `scripts/copilot-evolution.mjs` - GROK→Copilot CLI autonomous evolution engine
 
 ## Data Flow
 
