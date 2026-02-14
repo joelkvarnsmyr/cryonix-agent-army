@@ -15,7 +15,7 @@ class RiskLimits:
     """Configurable risk limits - tuned for $17 USDC micro-budget, diversified"""
     max_daily_loss_pct: float = 0.05          # 5% max daily loss (~$0.85)
     max_weekly_loss_pct: float = 0.10         # 10% max weekly loss (~$1.70)
-    max_position_size_pct: float = 0.15       # 15% max per position (~$2.55)
+    max_position_size_pct: float = 0.12       # 12% max per position (~$2) — diversify
     max_total_exposure_pct: float = 0.85      # 85% max total exposure (~$14.50)
     min_confidence: float = 0.65              # 65% min signal confidence
     max_correlation: float = 0.70             # Max position correlation

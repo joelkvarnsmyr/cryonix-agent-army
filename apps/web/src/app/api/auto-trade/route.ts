@@ -12,17 +12,17 @@ export const dynamic = 'force-dynamic';
 
 const CONFIG = {
   TOTAL_CAPITAL: 17,
-  MAX_POSITION_SIZE_PCT: 0.35,     // 35% per position (~$5.95 — above Binance $5 NOTIONAL)
+  MAX_POSITION_SIZE_PCT: 0.12,     // 12% per position (~$2) — diversify across many positions
   MIN_CONFIDENCE: 0.65,
   MAX_DAILY_LOSS_PCT: 0.05,        // 5% (~$0.85)
-  MAX_OPEN_POSITIONS: 3,
+  MAX_OPEN_POSITIONS: 10,          // Spread across up to 10 positions
   MAX_TRADES_PER_DAY: 15,
   MAX_SLIPPAGE_PCT: 0.5,
   SPOT_ONLY: true,                  // Margin account not available — spot only
   TRADING_MODE: 'spot' as 'spot' | 'margin' | 'future',
   MARGIN_TYPE: (process.env.MARGIN_TYPE || 'cross') as 'cross' | 'isolated',
   DEFAULT_LEVERAGE: parseInt(process.env.DEFAULT_LEVERAGE || '3'),
-  MIN_ORDER_VALUE: 5.0,            // Binance NOTIONAL filter minimum (~$5 for most pairs)
+  MIN_ORDER_VALUE: 1.0,            // Global floor — actual minimum fetched per-pair from Binance
   TRAILING_STOP_PCT: 1.0,          // 1% trailing stop after profit
   MAX_PENDING_QUEUE: 30,           // Auto-trim queue beyond this
   AI_VALIDATION: true,             // Use GROK AI for signal validation
@@ -369,6 +369,20 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     return { pass: false, reason: `Already in ${signal.symbol}` };
   }
 
+  // Check available cash before burning AI tokens
+  try {
+    const ex = getExchange();
+    await ex.loadMarkets();
+    const bal = await ex.fetchBalance({ recvWindow: 10000 });
+    const usdc = (bal as any)?.free?.USDC || 0;
+    if (usdc < CONFIG.MIN_ORDER_VALUE) {
+      return { pass: false, reason: `Low cash $${usdc.toFixed(2)} < $${CONFIG.MIN_ORDER_VALUE} min` };
+    }
+  } catch (e) {
+    // Don't block trading on balance check failure
+    console.warn('[RISK] Balance check failed, proceeding:', (e as Error).message);
+  }
+
   const risk = Math.abs(signal.entry_price - signal.stop_loss);
   const reward = Math.abs(signal.target_price - signal.entry_price);
   if (risk > 0 && reward / risk < 1.3) {
@@ -473,7 +487,7 @@ JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one s
         { role: 'user', content: prompt },
       ],
       temperature: 0.1,
-      max_tokens: 250,
+      max_tokens: 150,
     });
 
     const content = response.choices[0]?.message?.content || '';
@@ -511,8 +525,8 @@ JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one s
 function calculatePositionSize(signal: Signal): number {
   const isDeepValue = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
 
-  // Deep value: 25% max, normal: 15%
-  const maxPct = isDeepValue ? 0.25 : CONFIG.MAX_POSITION_SIZE_PCT;
+  // Deep value: 20% max, normal: 12%
+  const maxPct = isDeepValue ? 0.20 : CONFIG.MAX_POSITION_SIZE_PCT;
   const maxPositionValue = CONFIG.TOTAL_CAPITAL * maxPct;
 
   // Deep value requires 80%+ confidence after AI blending
@@ -563,8 +577,10 @@ async function executeBuy(signal: Signal): Promise<{
     const qty = parseFloat(quantity);
 
     const positionValue = qty * signal.entry_price;
-    if (positionValue < CONFIG.MIN_ORDER_VALUE) {
-      return { success: false, error: `Value $${positionValue.toFixed(2)} < $${CONFIG.MIN_ORDER_VALUE} min` };
+    // Use pair's actual Binance NOTIONAL minimum (not hardcoded)
+    const pairMinNotional = market.limits?.cost?.min || CONFIG.MIN_ORDER_VALUE;
+    if (positionValue < pairMinNotional) {
+      return { success: false, error: `Value $${positionValue.toFixed(2)} < $${pairMinNotional} min (${signal.symbol})` };
     }
 
     console.log(`[AUTO-TRADE] BUY ${signal.symbol}: qty=${quantity}, ~$${positionValue.toFixed(2)}, minNotional=${market.limits?.cost?.min || '?'}`);
@@ -882,15 +898,24 @@ export async function POST() {
     // STEP 2.5: Check grid triggers (priority over normal signals)
     const gridResults = await checkGridTriggers();
 
-    // STEP 3: Process new BUY signals
+    // STEP 3: Process new BUY signals (top 5 by confidence to save AI tokens)
     const rawList = await redis.lrange('trades:pending', 0, 49);
+    const parsed: { signal: Signal; raw: string }[] = [];
+    for (const raw of rawList) {
+      try { parsed.push({ signal: JSON.parse(raw), raw }); } catch { continue; }
+    }
+    parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
+    const topSignals = parsed.slice(0, 5);
+    // Remove low-quality signals we won't process
+    for (const p of parsed.slice(5)) {
+      await redis.lrem('trades:pending', 1, p.raw);
+    }
+
     let executed = 0;
     let rejected = 0;
     const buyResults: any[] = [];
 
-    for (const raw of rawList) {
-      let signal: Signal;
-      try { signal = JSON.parse(raw); } catch { continue; }
+    for (const { signal, raw } of topSignals) {
 
       const riskCheck = await passesRiskChecks(signal);
 
