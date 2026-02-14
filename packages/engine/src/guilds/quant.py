@@ -25,16 +25,19 @@ class QuantGuild:
     Responsibilities:
     - Calculate Technical Indicators (RSI, MACD, BB, ATR)
     - Detect Chart Patterns (Bollinger Squeeze, Volume Spike, RSI Divergence)
+    - Detect Deep Value crashes (multi-timeframe analysis)
     - Generate trading signals with confidence scores
     """
 
     def __init__(self):
         self.min_candles = 50  # Minimum candles needed for analysis
+        self.deep_value_threshold = 0.08  # 8% drawdown triggers deep value analysis
 
-    def analyze(self, ohlcv: List[list], symbol: str) -> Dict[str, Any]:
+    def analyze(self, ohlcv: List[list], symbol: str, multi_tf_data: Optional[Dict[str, List[list]]] = None) -> Dict[str, Any]:
         """
         Main analysis entry point.
         Takes OHLCV data and returns comprehensive analysis with signals.
+        multi_tf_data: optional dict of {'1h': [...], '4h': [...], '1d': [...]} for deep value
         """
         if not ohlcv or len(ohlcv) < self.min_candles:
             return {
@@ -55,6 +58,11 @@ class QuantGuild:
 
         # Run pattern detectors
         patterns = self._detect_patterns(df, indicators)
+
+        # Deep value crash detection (multi-timeframe)
+        deep_value = self._detect_deep_value(df, indicators, multi_tf_data)
+        if deep_value:
+            patterns.append(deep_value)
 
         # Generate final signal
         signal = self._generate_signal(patterns, indicators, df)
@@ -284,11 +292,11 @@ class QuantGuild:
         if high_20 <= 0:
             return None
 
-        # Price is 3%+ below recent high AND current candle is green (recovering)
+        # Price is 5%+ below recent high AND current candle is green (recovering)
         drawdown = (high_20 - current) / high_20
         is_recovering = current > prev
 
-        if drawdown >= 0.03 and is_recovering:
+        if drawdown >= 0.05 and is_recovering:
             # RSI should be below 50 (not overbought)
             rsi = indicators.get('rsi', 50)
             if rsi < 50:
@@ -332,6 +340,164 @@ class QuantGuild:
 
         return None
 
+    def _detect_deep_value(
+        self,
+        df: pd.DataFrame,
+        indicators: Dict,
+        multi_tf_data: Optional[Dict[str, List[list]]] = None
+    ) -> Optional[Dict]:
+        """
+        Deep Value / Fat Pitch Detector.
+        Detects significant crashes (8%+) that represent buying opportunities.
+
+        Pre-filter on 15m data (cheap), then uses multi-timeframe confirmation.
+        Distinguishes panic selling (opportunity) from sustained collapse (avoid).
+        """
+        close = df['close']
+        high = df['high']
+        volume = df['volume']
+
+        # --- Pre-filter: check drawdown from recent high ---
+        high_20 = close.rolling(20).max().iloc[-1]
+        current_price = close.iloc[-1]
+
+        if high_20 <= 0:
+            return None
+
+        drawdown = (high_20 - current_price) / high_20
+
+        if drawdown < self.deep_value_threshold:
+            return None  # Not a deep enough drop
+
+        # --- Calculate drop velocity (% per hour) ---
+        # Find when the high occurred and calculate time elapsed
+        high_idx = close.rolling(20).max().iloc[-20:].idxmax() if len(close) >= 20 else 0
+        bars_since_high = len(close) - 1 - high_idx if high_idx > 0 else 20
+        # Assuming 15m bars: bars * 0.25 = hours
+        hours_elapsed = max(bars_since_high * 0.25, 0.25)
+        drop_velocity = (drawdown * 100) / hours_elapsed  # %/hour
+
+        # --- Volume analysis: capitulation = 3x+ average ---
+        vol_sma = volume.rolling(20).mean()
+        vol_ratio = volume.iloc[-1] / vol_sma.iloc[-1] if vol_sma.iloc[-1] > 0 else 1
+        # Also check if recent bars had sustained high volume (not just a single spike)
+        recent_vol_avg = volume.iloc[-5:].mean()
+        sustained_vol_ratio = recent_vol_avg / vol_sma.iloc[-1] if vol_sma.iloc[-1] > 0 else 1
+
+        # --- 15m RSI (already calculated) ---
+        rsi_15m = indicators['rsi']
+
+        # --- Multi-timeframe confirmation ---
+        rsi_1h = None
+        rsi_4h = None
+        support_level = None
+
+        if multi_tf_data:
+            # Calculate RSI on 1h data
+            if multi_tf_data.get('1h') and len(multi_tf_data['1h']) >= 20:
+                df_1h = pd.DataFrame(multi_tf_data['1h'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                rsi_1h_series = self._calculate_rsi(df_1h['close'], 14)
+                rsi_1h = round(rsi_1h_series.iloc[-1], 2) if not pd.isna(rsi_1h_series.iloc[-1]) else None
+
+            # Calculate RSI on 4h data
+            if multi_tf_data.get('4h') and len(multi_tf_data['4h']) >= 20:
+                df_4h = pd.DataFrame(multi_tf_data['4h'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                rsi_4h_series = self._calculate_rsi(df_4h['close'], 14)
+                rsi_4h = round(rsi_4h_series.iloc[-1], 2) if not pd.isna(rsi_4h_series.iloc[-1]) else None
+
+            # Find support level from 1d data (lowest low in last 14 days)
+            if multi_tf_data.get('1d') and len(multi_tf_data['1d']) >= 7:
+                df_1d = pd.DataFrame(multi_tf_data['1d'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                support_level = round(df_1d['low'].min(), 2)
+
+        # --- Confidence scoring ---
+        # Base confidence by drawdown magnitude
+        if drawdown >= 0.18:
+            base_confidence = 0.82
+        elif drawdown >= 0.12:
+            base_confidence = 0.78
+        else:
+            base_confidence = 0.72
+
+        boosts = []
+
+        # Capitulation volume boost (3x+ average)
+        if vol_ratio >= 3.0 or sustained_vol_ratio >= 2.0:
+            base_confidence += 0.05
+            boosts.append(f"capitulation volume ({vol_ratio:.1f}x)")
+
+        # Multi-TF RSI oversold boost (all < 35)
+        mtf_oversold = rsi_15m < 35
+        if rsi_1h is not None and rsi_1h < 35:
+            mtf_oversold = mtf_oversold and True
+        if rsi_4h is not None and rsi_4h < 35:
+            mtf_oversold = mtf_oversold and True
+
+        if mtf_oversold and (rsi_1h is not None or rsi_4h is not None):
+            base_confidence += 0.05
+            boosts.append(f"multi-TF RSI oversold (15m:{rsi_15m:.0f}, 1h:{rsi_1h}, 4h:{rsi_4h})")
+
+        # Near support level boost
+        if support_level and support_level > 0:
+            distance_to_support = (current_price - support_level) / support_level
+            if distance_to_support < 0.03:  # Within 3% of support
+                base_confidence += 0.05
+                boosts.append(f"near support ${support_level}")
+
+        confidence = min(0.95, base_confidence)
+
+        # --- Reject if drop is too fast (potential rug pull / flash crash artifact) ---
+        if drop_velocity > 20:  # >20% per hour is suspicious
+            confidence *= 0.7  # Heavy penalty
+            boosts.append(f"WARNING: extreme velocity ({drop_velocity:.1f}%/h)")
+
+        # --- Recovery check: is price showing any sign of bounce? ---
+        is_recovering = current_price > close.iloc[-2]  # Green candle
+        if not is_recovering:
+            confidence *= 0.9  # Slight penalty if still falling
+            boosts.append("no recovery candle yet")
+
+        # --- SL/TP: wider than normal (3*ATR SL, 4*ATR TP) ---
+        atr = indicators['atr']
+        entry_price = current_price
+        stop_loss = round(entry_price - 3 * atr, 2)
+        target_price = round(entry_price + 4 * atr, 2)
+
+        reason_parts = [
+            f"Deep value crash: {drawdown:.1%} drawdown from recent high",
+            f"velocity {drop_velocity:.1f}%/h",
+            f"vol {vol_ratio:.1f}x",
+            f"RSI 15m:{rsi_15m:.0f}",
+        ]
+        if rsi_1h is not None:
+            reason_parts.append(f"1h:{rsi_1h:.0f}")
+        if rsi_4h is not None:
+            reason_parts.append(f"4h:{rsi_4h:.0f}")
+        if boosts:
+            reason_parts.append(f"[{', '.join(boosts)}]")
+
+        return {
+            "pattern": "DEEP_VALUE_CRASH",
+            "action": "BUY",
+            "confidence": round(confidence, 4),
+            "reason": " | ".join(reason_parts),
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "target_price": target_price,
+            "deep_value_metrics": {
+                "drawdown_pct": round(drawdown * 100, 2),
+                "drop_velocity": round(drop_velocity, 2),
+                "volume_ratio": round(vol_ratio, 2),
+                "sustained_vol_ratio": round(sustained_vol_ratio, 2),
+                "rsi_15m": round(rsi_15m, 1),
+                "rsi_1h": rsi_1h,
+                "rsi_4h": rsi_4h,
+                "support_level": support_level,
+                "recent_high": round(high_20, 2),
+                "is_recovering": is_recovering,
+            },
+        }
+
     def _generate_signal(
         self,
         patterns: List[Dict],
@@ -362,6 +528,29 @@ class QuantGuild:
                 "target_price": round(price * 1.02, 2),
                 "consensus_score": 0,
             }
+
+        # Check for deep value crash - it overrides normal consensus logic
+        deep_value = next((p for p in patterns if p['pattern'] == 'DEEP_VALUE_CRASH'), None)
+        if deep_value:
+            # Deep value uses its own wider SL/TP and confidence
+            signal = {
+                "action": "BUY",
+                "confidence": deep_value['confidence'],
+                "reason": deep_value['reason'],
+                "patterns": [p['pattern'] for p in patterns],
+                "entry_price": deep_value['entry_price'],
+                "stop_loss": deep_value['stop_loss'],
+                "target_price": deep_value['target_price'],
+                "consensus_score": len(patterns),
+                "is_deep_value": True,
+                "deep_value_metrics": deep_value.get('deep_value_metrics', {}),
+            }
+            # Boost confidence if other patterns also confirm BUY
+            other_buys = [p for p in patterns if p['action'] == 'BUY' and p['pattern'] != 'DEEP_VALUE_CRASH']
+            if other_buys:
+                signal['confidence'] = min(0.95, signal['confidence'] + 0.05 * len(other_buys))
+                signal['reason'] += f" | +{len(other_buys)} confirming patterns"
+            return signal
 
         # Aggregate signals
         buy_signals = [p for p in patterns if p['action'] == 'BUY']
@@ -490,12 +679,19 @@ class QuantGuild:
     # === Helper Methods ===
 
     def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate RSI"""
+        """Calculate RSI (handles zero-loss and zero-gain edge cases)"""
         delta = prices.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        return 100 - (100 / (1 + rs))
+        # Avoid division by zero: when loss=0 -> RSI=100, when gain=0 -> RSI=0
+        # Clamp to [1, 99] since true 0/100 are unrealistic in real markets
+        rs = gain / loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        # Where loss was 0 (all gains), RSI should be near 100
+        rsi = rsi.fillna(99.0)
+        # Where gain was 0 (all losses), rs=0, RSI=0 -> clamp to 1
+        rsi = rsi.clip(lower=1.0, upper=99.0)
+        return rsi
 
     def _calculate_bollinger(
         self, prices: pd.Series, period: int = 20, std: int = 2

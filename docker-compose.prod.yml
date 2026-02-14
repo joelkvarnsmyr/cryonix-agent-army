@@ -86,6 +86,7 @@ services:
       - BINANCE_TESTNET=false
       - XAI_API_KEY=${XAI_API_KEY}
       - ENABLE_AUTO_TRADING=true
+      - ENGINE_URL=http://engine:8000
       - NEXT_PUBLIC_APP_URL=http://localhost:${WEB_PORT:-3000}
     networks:
       - cryonix-net

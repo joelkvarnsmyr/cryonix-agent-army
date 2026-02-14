@@ -56,7 +56,8 @@ async function checkPythonEngine(): Promise<ServiceStatus> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
-    const response = await fetch('http://localhost:8000/', {
+    const engineUrl = process.env.ENGINE_URL || 'http://localhost:8000';
+    const response = await fetch(`${engineUrl}/`, {
       signal: controller.signal,
     });
     clearTimeout(timeout);
