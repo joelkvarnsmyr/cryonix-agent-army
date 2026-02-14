@@ -187,8 +187,12 @@ async function monitorPositions(): Promise<MonitorResult[]> {
       const currentPrice = ticker.last || 0;
       if (currentPrice === 0) continue;
 
-      const pnl = (currentPrice - pos.entryPrice) * pos.quantity;
-      const pnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+      const pnl = pos.side === 'SELL'
+        ? (pos.entryPrice - currentPrice) * pos.quantity  // SHORT: profit when price drops
+        : (currentPrice - pos.entryPrice) * pos.quantity;  // LONG: profit when price rises
+      const pnlPct = pos.side === 'SELL'
+        ? ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100
+        : ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
 
       // Update high water mark and trailing stop
       if (currentPrice > pos.highWaterMark) {
@@ -204,35 +208,60 @@ async function monitorPositions(): Promise<MonitorResult[]> {
       let shouldSell = false;
       let exitReason = '';
 
-      // 1. Take-profit hit
-      if (currentPrice >= pos.takeProfit) {
-        shouldSell = true;
-        exitReason = `Take-profit hit: $${currentPrice.toFixed(2)} >= $${pos.takeProfit.toFixed(2)}`;
-      }
-      // 2. Stop-loss hit
-      else if (currentPrice <= pos.stopLoss) {
-        shouldSell = true;
-        exitReason = `Stop-loss hit: $${currentPrice.toFixed(2)} <= $${pos.stopLoss.toFixed(2)}`;
-      }
-      // 3. Trailing stop hit (only active when in profit)
-      else if (pnl > 0 && currentPrice <= pos.trailingStop && pos.trailingStop > pos.entryPrice) {
-        shouldSell = true;
-        exitReason = `Trailing stop hit: $${currentPrice.toFixed(2)} <= $${pos.trailingStop.toFixed(2)} (high: $${pos.highWaterMark.toFixed(2)})`;
+      if (pos.side === 'SELL') {
+        // SHORT position: exit by buying back
+        // TP hit when price drops below target
+        if (currentPrice <= pos.takeProfit) {
+          shouldSell = true;
+          exitReason = `Short TP hit: $${currentPrice.toFixed(4)} <= $${pos.takeProfit.toFixed(4)}`;
+        }
+        // SL hit when price rises above stop
+        else if (currentPrice >= pos.stopLoss) {
+          shouldSell = true;
+          exitReason = `Short SL hit: $${currentPrice.toFixed(4)} >= $${pos.stopLoss.toFixed(4)}`;
+        }
+      } else {
+        // LONG position: exit by selling
+        // 1. Take-profit hit
+        if (currentPrice >= pos.takeProfit) {
+          shouldSell = true;
+          exitReason = `Take-profit hit: $${currentPrice.toFixed(4)} >= $${pos.takeProfit.toFixed(4)}`;
+        }
+        // 2. Stop-loss hit
+        else if (currentPrice <= pos.stopLoss) {
+          shouldSell = true;
+          exitReason = `Stop-loss hit: $${currentPrice.toFixed(4)} <= $${pos.stopLoss.toFixed(4)}`;
+        }
+        // 3. Trailing stop hit (only active when in profit)
+        else if (pnl > 0 && currentPrice <= pos.trailingStop && pos.trailingStop > pos.entryPrice) {
+          shouldSell = true;
+          exitReason = `Trailing stop hit: $${currentPrice.toFixed(4)} <= $${pos.trailingStop.toFixed(4)} (high: $${pos.highWaterMark.toFixed(4)})`;
+        }
       }
 
       if (shouldSell) {
-        // SELL the position
-        console.log(`[MONITOR] Selling ${pos.symbol}: ${exitReason}`);
+        // Close the position (sell for LONG, buy-back for SHORT)
+        const closeSide = pos.side === 'SELL' ? 'buy' : 'sell';
+        console.log(`[MONITOR] Closing ${pos.side} ${pos.symbol}: ${exitReason}`);
         try {
-          const sellOrder = await ex.createMarketOrder(
+          const closeParams: any = {};
+          if (pos.side === 'SELL' && CONFIG.TRADING_MODE === 'margin') {
+            closeParams.marginMode = CONFIG.MARGIN_TYPE;
+            closeParams.type = 'margin';
+          }
+          const closeOrder = await ex.createMarketOrder(
             pos.symbol,
-            'sell',
-            pos.quantity
+            closeSide,
+            pos.quantity,
+            undefined,
+            closeParams
           );
 
-          const sellPrice = sellOrder.average || sellOrder.price || currentPrice;
-          const realizedPnl = (sellPrice - pos.entryPrice) * pos.quantity;
-          const fees = (sellOrder.fee?.cost || 0);
+          const closePrice = closeOrder.average || closeOrder.price || currentPrice;
+          const realizedPnl = pos.side === 'SELL'
+            ? (pos.entryPrice - closePrice) * pos.quantity
+            : (closePrice - pos.entryPrice) * pos.quantity;
+          const fees = (closeOrder.fee?.cost || 0);
 
           // Remove from open positions
           await removePosition(pos.symbol);
@@ -243,10 +272,10 @@ async function monitorPositions(): Promise<MonitorResult[]> {
           // Log to database
           await logTrade({
             symbol: pos.symbol,
-            side: 'SELL',
+            side: closeSide.toUpperCase() as 'BUY' | 'SELL',
             quantity: String(pos.quantity),
             entryPrice: String(pos.entryPrice),
-            exitPrice: String(sellPrice),
+            exitPrice: String(closePrice),
             pnl: String(realizedPnl - fees),
             confidence: String(pos.confidence),
             pattern: pos.pattern,
@@ -263,15 +292,15 @@ async function monitorPositions(): Promise<MonitorResult[]> {
           results.push({
             symbol: pos.symbol,
             action: exitType,
-            currentPrice: sellPrice,
+            currentPrice: closePrice,
             pnl: realizedPnl - fees,
             pnlPct,
             reason: exitReason,
-            orderId: sellOrder.id,
+            orderId: closeOrder.id,
           });
-        } catch (sellError) {
-          const errMsg = sellError instanceof Error ? sellError.message : String(sellError);
-          console.error(`[MONITOR] Failed to sell ${pos.symbol}:`, errMsg);
+        } catch (closeError) {
+          const errMsg = closeError instanceof Error ? closeError.message : String(closeError);
+          console.error(`[MONITOR] Failed to close ${pos.symbol}:`, errMsg);
           results.push({
             symbol: pos.symbol,
             action: 'ERROR',
