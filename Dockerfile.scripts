@@ -1,20 +1,11 @@
-# Dockerfile for running background Node.js scripts
+# Lightweight container for background scripts (auto-trader, ws-server)
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Install pnpm for dependency management
-RUN npm install -g pnpm
+# ws-server.mjs needs the ws package, auto-trader.mjs only uses native fetch
+RUN npm install --no-save ws@8
 
-# Copy only the necessary files for installing production dependencies
-COPY package.json pnpm-lock.yaml .npmrc ./
+COPY scripts/auto-trader.mjs scripts/ws-server.mjs ./scripts/
 
-# Install production dependencies. This assumes the scripts' dependencies
-# are listed in the root package.json.
-RUN pnpm install --prod --frozen-lockfile
-
-# Copy the scripts themselves
-COPY scripts/ ./scripts/
-
-# The command to run will be specified in the docker-compose.prod.yml file
-# For example: CMD ["node", "scripts/auto-trader.mjs"]
+USER node

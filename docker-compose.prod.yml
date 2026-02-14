@@ -67,7 +67,8 @@ services:
       dockerfile: Dockerfile
     restart: always
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "3000:3000"
+
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -142,11 +143,14 @@ services:
     restart: always
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
-    network_mode: host
+    networks:
+      - cryonix-net
+    depends_on:
+      - web
+      - ws-server
 
 volumes:
   postgres_data:
