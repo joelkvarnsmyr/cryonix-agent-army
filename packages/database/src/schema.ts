@@ -208,6 +208,7 @@ export const validationHistory = pgTable('validation_history', {
   riskLevel: varchar('risk_level', { length: 20 }), // 'LOW', 'MEDIUM', 'HIGH'
   approved: boolean('approved').notNull(),
   reasoning: text('reasoning'),
+  usage: jsonb('usage'), // Token usage data { prompt_tokens, completion_tokens, total_tokens, model }
   agentId: varchar('agent_id', { length: 50 }),
 });
 

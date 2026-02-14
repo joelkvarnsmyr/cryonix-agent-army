@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
-import { logTrade } from '@cryonix/database';
+import { logTrade, saveValidation } from '@cryonix/database';
 import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
 
@@ -248,7 +248,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
           });
 
           const exitType = currentPrice >= pos.takeProfit ? 'SOLD_TP' :
-                          currentPrice <= pos.stopLoss ? 'SOLD_SL' : 'SOLD_TRAILING';
+            currentPrice <= pos.stopLoss ? 'SOLD_SL' : 'SOLD_TRAILING';
 
           console.log(`[MONITOR] ${pos.symbol} ${exitType}: PnL $${(realizedPnl - fees).toFixed(4)} (${pnlPct.toFixed(2)}%)`);
 
@@ -351,6 +351,12 @@ interface AIValidation {
   reasoning: string;
   adjustedSL?: number;
   adjustedTP?: number;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    model: string;
+  };
 }
 
 async function getAIValidation(signal: Signal): Promise<AIValidation> {
@@ -454,6 +460,12 @@ Respond ONLY with a single, minified JSON object:
       reasoning: result.reasoning || 'No reasoning',
       adjustedSL: result.sl || undefined,
       adjustedTP: result.tp || undefined,
+      usage: {
+        prompt_tokens: response.usage?.prompt_tokens || 0,
+        completion_tokens: response.usage?.completion_tokens || 0,
+        total_tokens: response.usage?.total_tokens || 0,
+        model: response.model,
+      },
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -780,6 +792,33 @@ export async function POST() {
 
       // STEP 3b: AI Validation (Information Edge)
       const aiResult = await getAIValidation(signal);
+
+      // Log validation attempt (regardless of outcome)
+      try {
+        await saveValidation({
+          signalId: undefined, // Linked if we had a signal ID
+          symbol: signal.symbol,
+          action: signal.action,
+          originalConfidence: String(signal.confidence),
+          adjustedConfidence: String(aiResult.aiConfidence),
+          consensusLevel: 'UNKNOWN',
+          sourceVotes: [],
+          technicalIndicators: signal.indicators,
+          priceTargets: {
+            original: { entry: signal.entry_price, sl: signal.stop_loss, tp: signal.target_price },
+            adjusted: { sl: aiResult.adjustedSL, tp: aiResult.adjustedTP }
+          },
+          entryTiming: 'IMMEDIATE',
+          riskLevel: 'UNKNOWN',
+          approved: aiResult.approved,
+          reasoning: aiResult.reasoning,
+          agentId: 'grok-validator',
+          usage: aiResult.usage,
+        });
+      } catch (err) {
+        console.error('[AUTO-TRADE] Failed to save validation:', err);
+      }
+
       if (!aiResult.approved) {
         await redis.lrem('trades:pending', 1, raw);
         rejected++;
