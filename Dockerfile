@@ -1,4 +1,6 @@
 FROM node:20-alpine AS base
+# Build tools for native modules (bufferutil, etc)
+RUN apk add --no-cache python3 make g++
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
 # --- Dependencies stage ---
