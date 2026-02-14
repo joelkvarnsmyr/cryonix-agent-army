@@ -77,6 +77,41 @@ function getExchange(): Exchange {
 }
 
 // ============================================================================
+// DYNAMIC CAPITAL — fetch actual account value from Binance
+// ============================================================================
+
+let cachedCapital = CONFIG.TOTAL_CAPITAL;
+let capitalLastFetched = 0;
+const CAPITAL_CACHE_MS = 5 * 60 * 1000; // refresh every 5 min
+
+async function getTotalCapital(): Promise<number> {
+  const now = Date.now();
+  if (now - capitalLastFetched < CAPITAL_CACHE_MS) return cachedCapital;
+  try {
+    const ex = getExchange();
+    await ex.loadMarkets();
+    const bal = (await ex.fetchBalance({ recvWindow: 10000 })) as any;
+    let total = 0;
+    for (const [coin, qty] of Object.entries(bal.total as Record<string, number>)) {
+      if (!qty || qty <= 0) continue;
+      if (coin === 'USDC' || coin === 'USDT') { total += qty; continue; }
+      try {
+        const t = await ex.fetchTicker(`${coin}/USDC`);
+        total += qty * (t.last || 0);
+      } catch { /* pair not found — skip dust */ }
+    }
+    if (total > 0) {
+      cachedCapital = total;
+      capitalLastFetched = now;
+      console.log(`[CAPITAL] Dynamic total: $${total.toFixed(2)}`);
+    }
+  } catch (e) {
+    console.warn('[CAPITAL] Fetch failed, using cached:', (e as Error).message);
+  }
+  return cachedCapital;
+}
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -355,7 +390,8 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     return { pass: false, reason: `Daily limit (${CONFIG.MAX_TRADES_PER_DAY})` };
   }
 
-  if (dailyState.dailyPnl <= -(CONFIG.TOTAL_CAPITAL * CONFIG.MAX_DAILY_LOSS_PCT)) {
+  const capital = await getTotalCapital();
+  if (dailyState.dailyPnl <= -(capital * CONFIG.MAX_DAILY_LOSS_PCT)) {
     return { pass: false, reason: `Daily loss limit ($${Math.abs(dailyState.dailyPnl).toFixed(2)})` };
   }
 
@@ -522,12 +558,13 @@ JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one s
 // POSITION SIZING (Half-Kelly)
 // ============================================================================
 
-function calculatePositionSize(signal: Signal): number {
+async function calculatePositionSize(signal: Signal): Promise<number> {
+  const capital = await getTotalCapital();
   const isDeepValue = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
 
   // Deep value: 20% max, normal: 12%
   const maxPct = isDeepValue ? 0.20 : CONFIG.MAX_POSITION_SIZE_PCT;
-  const maxPositionValue = CONFIG.TOTAL_CAPITAL * maxPct;
+  const maxPositionValue = capital * maxPct;
 
   // Deep value requires 80%+ confidence after AI blending
   if (isDeepValue && signal.confidence < 0.80) {
@@ -541,7 +578,7 @@ function calculatePositionSize(signal: Signal): number {
   const p = signal.confidence;
   const q = 1 - p;
   const kellyFraction = Math.max(0, ((p * b - q) / b) * 0.5);
-  const positionValue = Math.min(CONFIG.TOTAL_CAPITAL * kellyFraction, maxPositionValue);
+  const positionValue = Math.min(capital * kellyFraction, maxPositionValue);
 
   if (isDeepValue) {
     console.log(`[SIZING] Deep value ${signal.symbol}: Kelly=${(kellyFraction * 100).toFixed(1)}%, value=$${positionValue.toFixed(2)} (max $${maxPositionValue.toFixed(2)})`);
@@ -563,7 +600,7 @@ async function executeBuy(signal: Signal): Promise<{
   error?: string;
 }> {
   const ex = getExchange();
-  const rawQuantity = calculatePositionSize(signal);
+  const rawQuantity = await calculatePositionSize(signal);
 
   if (rawQuantity <= 0) {
     return { success: false, error: 'Position size too small' };
@@ -641,7 +678,7 @@ async function executeMarginSell(signal: Signal): Promise<{
   }
 
   const ex = getExchange();
-  const quantity = calculatePositionSize(signal);
+  const quantity = await calculatePositionSize(signal);
 
   if (quantity <= 0) {
     return { success: false, error: 'Position size too small' };
