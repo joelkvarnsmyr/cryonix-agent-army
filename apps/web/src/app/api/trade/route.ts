@@ -159,7 +159,14 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const symbol = searchParams.get('symbol');
 
-    const openOrders = await exchange.fetchOpenOrders(symbol || undefined);
+    if (!symbol) {
+      return NextResponse.json(
+        { success: false, error: 'Missing symbol query parameter' },
+        { status: 400 }
+      );
+    }
+
+    const openOrders = await exchange.fetchOpenOrders(symbol);
 
     return NextResponse.json({
       success: true,

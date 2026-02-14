@@ -603,7 +603,7 @@ export class OrchestratorAgent extends BaseAgent {
 
   private connectToWebSocket(): void {
     try {
-      const WS_URL = 'ws://localhost:3004';
+      const WS_URL = process.env.WS_SERVER_URL || process.env.WS_URL || 'ws://ws-server:3004';
       this.ws = new WebSocket(WS_URL);
 
       this.ws.on('open', () => {

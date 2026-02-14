@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const PYTHON_ENGINE_URL = process.env.PYTHON_ENGINE_URL || 'http://localhost:8000';
+const PYTHON_ENGINE_URL =
+  process.env.PYTHON_ENGINE_URL ||
+  process.env.ENGINE_URL ||
+  'http://engine:8000';
 
 export async function GET() {
   try {
@@ -8,6 +11,13 @@ export async function GET() {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
+
+    if (!response.ok) {
+      return NextResponse.json(
+        { error: 'Risk engine returned error', status: response.status },
+        { status: response.status }
+      );
+    }
 
     const data = await response.json();
     return NextResponse.json(data);
@@ -50,6 +60,13 @@ export async function POST(request: NextRequest) {
       headers: { 'Content-Type': 'application/json' },
       body: Object.keys(requestBody).length > 0 ? JSON.stringify(requestBody) : undefined,
     });
+
+    if (!response.ok) {
+      return NextResponse.json(
+        { error: 'Risk engine returned error', status: response.status },
+        { status: response.status }
+      );
+    }
 
     const data = await response.json();
     return NextResponse.json(data);
