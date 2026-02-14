@@ -173,7 +173,7 @@ ssh azureuser@openclaw-vm "cd ~/cryonix && docker compose -f docker-compose.prod
 
 # Check Redis queue
 ssh azureuser@openclaw-vm "docker exec cryonix-redis-1 redis-cli KEYS '*'"
-ssh azureuser@openclaw-vm "docker exec cryonix-redis-1 redis-cli LRANGE pending_signals 0 -1"
+ssh azureuser@openclaw-vm "docker exec cryonix-redis-1 redis-cli LRANGE trades:pending 0 -1"
 
 # Check system health
 curl http://openclaw-vm/api/health
@@ -308,8 +308,11 @@ cryonix-agent-army/
 
 ## Known Issues
 
-1. **Postgres schema not pushed on VM** - `/api/health` shows `relation "signals" does not exist`. The Drizzle schema needs to be pushed to the Docker Postgres. This affects signal persistence to DB but NOT the core trading loop (which uses Redis).
+All previously documented issues have been resolved (2026-02-14):
+- Postgres schema: pushed (13 tables created)
+- Health check: fixed (`ENGINE_URL` env var, 4/4 healthy)
+- RSI calculation: fixed (clamped to [1, 99], no more false 0/100)
 
-2. **Engine health check fails** - The `/api/health` endpoint tries to reach the engine at `localhost:8000` but in Docker it's on `engine:8000`. The engine IS running (scanning 15 pairs) despite the health check failure.
-
-3. **VM resources** - The `openclaw` container uses ~97% CPU and 839MB RAM. Cryonix is lightweight (mostly idle between 30s polls) but monitor memory if both systems are active.
+**Notes:**
+- VM runs `openclaw` alongside Cryonix. Total memory ~870MB / 3.8GB available.
+- Low-liquidity USDC pairs (OP, ARB, SUI) may show RSI at 1 or 99 due to thin candle data. This is real market data, not a bug.

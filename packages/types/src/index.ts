@@ -15,6 +15,8 @@ export type PatternType =
   | 'momentum_shift'
   | 'volume_spike'
   | 'whale_movement'
+  | 'deep_value_crash'
+  | 'grid_buy'
   | 'custom';
 
 // ============================================================================

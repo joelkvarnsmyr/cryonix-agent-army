@@ -68,6 +68,43 @@ class MarketDataFetcher:
             print(f"[MarketData] Error fetching ticker {symbol}: {e}")
             return {'symbol': symbol, 'price': 0, 'error': str(e)}
 
+    def fetch_multi_timeframe(
+        self,
+        symbol: str,
+        timeframes: Optional[Dict[str, int]] = None
+    ) -> Dict[str, List[list]]:
+        """
+        Fetch OHLCV data across multiple timeframes for deep value analysis.
+        Returns: {'15m': [[...], ...], '1h': [...], '4h': [...], '1d': [...]}
+        Uses per-timeframe caching to avoid excessive API calls.
+        """
+        if timeframes is None:
+            timeframes = {'15m': 100, '1h': 48, '4h': 24, '1d': 14}
+
+        import time
+        result = {}
+        # TTL per timeframe (seconds)
+        ttl_map = {'15m': 60, '1h': 300, '4h': 900, '1d': 3600}
+
+        for tf, limit in timeframes.items():
+            cache_key = f"mtf:{symbol}:{tf}"
+            cached = self._cache.get(cache_key)
+            now = time.time()
+
+            if cached and (now - cached['ts']) < ttl_map.get(tf, 300):
+                result[tf] = cached['data']
+                continue
+
+            try:
+                ohlcv = self.exchange.fetch_ohlcv(symbol, tf, limit=limit)
+                result[tf] = ohlcv
+                self._cache[cache_key] = {'data': ohlcv, 'ts': now}
+            except Exception as e:
+                print(f"[MarketData] Error fetching {symbol} {tf}: {e}")
+                result[tf] = []
+
+        return result
+
     def fetch_order_book(self, symbol: str, limit: int = 10) -> Dict[str, Any]:
         """
         Fetch order book for a symbol.

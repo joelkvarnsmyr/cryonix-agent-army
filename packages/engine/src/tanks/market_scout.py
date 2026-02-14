@@ -85,7 +85,8 @@ class MarketScoutTank(BaseTank):
     async def analyze_signal(self, state: TankState) -> TankState:
         """
         Run technical analysis via QuantGuild.
-        Detects patterns: RSI extremes, Bollinger squeeze, Volume spikes, MACD crossovers
+        Detects patterns: RSI extremes, Bollinger squeeze, Volume spikes, MACD crossovers,
+        and Deep Value crashes (multi-timeframe).
         """
         symbol = state['symbol']
         ohlcv = state.get('ohlcv', [])
@@ -104,8 +105,21 @@ class MarketScoutTank(BaseTank):
         print(f"[{self.name}] Analyzing {symbol} with QuantGuild...")
 
         try:
-            # Run full technical analysis
-            analysis = quant.analyze(ohlcv, symbol)
+            # Pre-filter: check for potential deep value crash (8%+ drawdown)
+            # This is cheap - just check last 20 candles before fetching multi-TF data
+            multi_tf_data = None
+            if len(ohlcv) >= 20:
+                closes = [c[4] for c in ohlcv[-20:]]  # Close prices
+                recent_high = max(closes)
+                current = closes[-1]
+                drawdown = (recent_high - current) / recent_high if recent_high > 0 else 0
+
+                if drawdown >= 0.08:  # 8% threshold
+                    print(f"[{self.name}] {symbol} DEEP VALUE pre-filter triggered: {drawdown:.1%} drawdown")
+                    multi_tf_data = market_data.fetch_multi_timeframe(symbol)
+
+            # Run full technical analysis (with optional multi-TF data for deep value)
+            analysis = quant.analyze(ohlcv, symbol, multi_tf_data=multi_tf_data)
 
             if analysis['status'] != 'success':
                 print(f"[{self.name}] Analysis failed: {analysis.get('status')}")
@@ -146,6 +160,18 @@ class MarketScoutTank(BaseTank):
                     "atr_pct": indicators['atr_percent'],
                 }
             }
+
+            # Include deep value metrics if present
+            if signal.get('is_deep_value') and signal.get('deep_value_metrics'):
+                trading_signal['is_deep_value'] = True
+                trading_signal['indicators'].update({
+                    'drawdown_pct': signal['deep_value_metrics']['drawdown_pct'],
+                    'drop_velocity': signal['deep_value_metrics']['drop_velocity'],
+                    'rsi_1h': signal['deep_value_metrics'].get('rsi_1h'),
+                    'rsi_4h': signal['deep_value_metrics'].get('rsi_4h'),
+                    'support_level': signal['deep_value_metrics'].get('support_level'),
+                    'recent_high': signal['deep_value_metrics'].get('recent_high'),
+                })
 
             action_emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⏸️"}.get(signal['action'], "❓")
             print(f"[{self.name}] {symbol} {action_emoji} {signal['action']} "

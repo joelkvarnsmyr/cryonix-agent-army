@@ -81,8 +81,10 @@ interface Signal {
   entry_price: number;
   stop_loss: number;
   target_price: number;
-  indicators: Record<string, number>;
+  indicators: Record<string, number | null>;
   position_size: number;
+  is_deep_value?: boolean;
+  is_grid_buy?: boolean;
 }
 
 interface OpenPosition {
@@ -367,7 +369,38 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
     if (sentimentScore > 0) sentimentLabel = 'Positive';
     if (sentimentScore < 0) sentimentLabel = 'Negative';
 
-    const prompt = `You are "RISK-BOT 9000", a hyper-skeptical, cynical, and world-weary crypto trading risk analyst. Your job is to find reasons NOT to make a trade. You only approve trades that are exceptionally obvious.
+    // Use specialized prompt for deep value crash signals
+    const isDeepValue = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
+
+    const prompt = isDeepValue
+      ? `You are "CRASH ORACLE", analyzing a POTENTIAL MARKET CRASH BUY OPPORTUNITY. This is about catching "fat pitches" - rare deep value moments.
+
+**CRASH DATA:**
+- **Symbol:** ${signal.symbol}
+- **Drawdown:** ${signal.indicators.drawdown_pct}% from recent high ($${signal.indicators.recent_high})
+- **Drop Velocity:** ${signal.indicators.drop_velocity}%/hour
+- **Volume Spike:** ${signal.indicators.volume_ratio}x average
+- **Multi-TF RSI:** 15m=${signal.indicators.rsi}, 1h=${signal.indicators.rsi_1h ?? 'N/A'}, 4h=${signal.indicators.rsi_4h ?? 'N/A'}
+- **Support Level:** $${signal.indicators.support_level ?? 'N/A'}
+
+**LIVE MARKET:**
+- **Current Price:** $${ticker.last?.toFixed(2)}
+- **24h Change:** ${ticker.percentage?.toFixed(2)}%
+- **Sentiment:** ${sentimentLabel} (${sentimentScore})
+
+**CRITICAL ANALYSIS:**
+Is this PANIC SELLING (opportunity - people overreacting) or a FALLING KNIFE (fundamental breakdown, rug pull, continued collapse)?
+
+Consider:
+1. Drop velocity: Too fast (>15%/h = potential rug pull) or healthy correction pace?
+2. Volume: Capitulation (good - sellers exhausted) or distribution (bad - smart money leaving)?
+3. Multi-TF RSI: All oversold = stronger signal. Only 15m oversold = weak.
+4. Is this an isolated crash or broader market selloff?
+
+For a micro-account ($17), we can ONLY afford REAL opportunities. Be EXTRA skeptical of falling knives.
+
+JSON: {"approve": boolean, "confidence": number(0-100), "reasoning": "one sentence", "sl": number|null, "tp": number|null}`
+      : `You are "RISK-BOT 9000", a hyper-skeptical, cynical, and world-weary crypto trading risk analyst. Your job is to find reasons NOT to make a trade. You only approve trades that are exceptionally obvious.
 
 **EVALUATE THE FOLLOWING BUY SIGNAL:**
 
@@ -435,7 +468,18 @@ Respond ONLY with a single, minified JSON object:
 // ============================================================================
 
 function calculatePositionSize(signal: Signal): number {
-  const maxPositionValue = CONFIG.TOTAL_CAPITAL * CONFIG.MAX_POSITION_SIZE_PCT;
+  const isDeepValue = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
+
+  // Deep value: 50% max position, normal: 35%
+  const maxPct = isDeepValue ? 0.50 : CONFIG.MAX_POSITION_SIZE_PCT;
+  const maxPositionValue = CONFIG.TOTAL_CAPITAL * maxPct;
+
+  // Deep value requires 80%+ confidence after AI blending
+  if (isDeepValue && signal.confidence < 0.80) {
+    console.log(`[SIZING] Deep value ${signal.symbol} rejected: confidence ${(signal.confidence * 100).toFixed(1)}% < 80%`);
+    return 0;
+  }
+
   const risk = Math.abs(signal.entry_price - signal.stop_loss);
   const reward = Math.abs(signal.target_price - signal.entry_price);
   const b = risk > 0 ? reward / risk : 1.5;
@@ -443,6 +487,11 @@ function calculatePositionSize(signal: Signal): number {
   const q = 1 - p;
   const kellyFraction = Math.max(0, ((p * b - q) / b) * 0.5);
   const positionValue = Math.min(CONFIG.TOTAL_CAPITAL * kellyFraction, maxPositionValue);
+
+  if (isDeepValue) {
+    console.log(`[SIZING] Deep value ${signal.symbol}: Kelly=${(kellyFraction * 100).toFixed(1)}%, value=$${positionValue.toFixed(2)} (max $${maxPositionValue.toFixed(2)})`);
+  }
+
   return positionValue / signal.entry_price;
 }
 
@@ -532,6 +581,165 @@ async function trimQueue(): Promise<number> {
 }
 
 // ============================================================================
+// GRID TRIGGER CHECKING
+// ============================================================================
+
+interface GridResult {
+  symbol: string;
+  status: 'TRIGGERED' | 'EXECUTED' | 'FAILED' | 'SKIPPED';
+  level?: number;
+  price?: number;
+  error?: string;
+}
+
+async function checkGridTriggers(): Promise<GridResult[]> {
+  const results: GridResult[] = [];
+
+  try {
+    const activeGridsRaw = await redis.get('grid:active');
+    if (!activeGridsRaw) return results;
+
+    const activeGrids: string[] = JSON.parse(activeGridsRaw as string);
+    if (activeGrids.length === 0) return results;
+
+    // Check open positions - grid only works when we have capacity
+    const openPositions = await getOpenPositions();
+    if (openPositions.length >= CONFIG.MAX_OPEN_POSITIONS) {
+      return results;
+    }
+
+    const ex = getExchange();
+
+    for (const symbol of activeGrids) {
+      const configRaw = await redis.get(`grid:config:${symbol}`);
+      if (!configRaw) continue;
+
+      const config = JSON.parse(configRaw as string);
+      if (config.status !== 'active') continue;
+
+      // Check expiry
+      if (new Date(config.expiresAt) < new Date()) {
+        config.status = 'cancelled';
+        await redis.set(`grid:config:${symbol}`, JSON.stringify(config));
+        continue;
+      }
+
+      // Fetch current price
+      const ticker = await ex.fetchTicker(symbol);
+      const currentPrice = ticker.last || 0;
+      if (currentPrice === 0) continue;
+
+      // Check if price broke below grid floor (3% below lower bound)
+      if (currentPrice < config.lowerBound * 0.97) {
+        config.status = 'cancelled';
+        await redis.set(`grid:config:${symbol}`, JSON.stringify(config));
+        console.log(`[GRID] ${symbol} broke below range, cancelled`);
+        results.push({ symbol, status: 'SKIPPED', error: 'Price below grid range' });
+        continue;
+      }
+
+      // Check each unfilled level
+      const buyLevels: number[] = config.buyLevels || [];
+      const tpTargets: number[] = config.tpTargets || [];
+      const filledLevels: number[] = config.filledLevels || [];
+
+      for (let i = 0; i < buyLevels.length; i++) {
+        if (filledLevels.includes(i)) continue;
+
+        const levelPrice = buyLevels[i];
+        const distancePct = Math.abs(currentPrice - levelPrice) / levelPrice;
+        const isBelow = currentPrice <= levelPrice;
+
+        if (isBelow || distancePct <= 0.0015) {
+          console.log(`[GRID] ${symbol} hit level #${i}: $${currentPrice.toFixed(2)} -> $${levelPrice.toFixed(2)}`);
+
+          // Check if we still have capacity
+          const currentPositions = await getOpenPositions();
+          if (currentPositions.length >= CONFIG.MAX_OPEN_POSITIONS) {
+            results.push({ symbol, status: 'SKIPPED', level: i, error: 'Max positions reached' });
+            break;
+          }
+
+          if (currentPositions.some(p => p.symbol === symbol)) {
+            results.push({ symbol, status: 'SKIPPED', level: i, error: 'Already in position' });
+            break;
+          }
+
+          // Create grid signal - bypasses AI validation (LLM already set the range)
+          const gridSignal: Signal = {
+            symbol,
+            action: 'BUY',
+            confidence: 0.80,
+            reason: `Grid level #${i}: $${levelPrice.toFixed(2)}`,
+            patterns: ['GRID_BUY'],
+            entry_price: currentPrice,
+            stop_loss: config.lowerBound * 0.97,
+            target_price: tpTargets[i] || currentPrice * 1.02,
+            indicators: {
+              rsi: 0,
+              bb_width_pct: 0,
+              volume_ratio: 0,
+              atr_pct: 0,
+            },
+            position_size: (config.orderSizeUsd || 6) / currentPrice,
+            is_grid_buy: true,
+          };
+
+          const execution = await executeBuy(gridSignal);
+
+          if (execution.success) {
+            // Mark level as filled
+            filledLevels.push(i);
+            config.filledLevels = filledLevels;
+            await redis.set(`grid:config:${symbol}`, JSON.stringify(config));
+
+            await logTrade({
+              symbol,
+              side: 'BUY',
+              quantity: String(execution.quantity),
+              entryPrice: String(execution.executedPrice),
+              confidence: '0.80',
+              pattern: 'GRID_BUY',
+              reasoning: `Grid level #${i}: $${levelPrice.toFixed(2)} (range $${config.lowerBound}-$${config.upperBound})`,
+              status: 'FILLED',
+              agentId: 'grid-trader',
+            });
+
+            results.push({
+              symbol,
+              status: 'EXECUTED',
+              level: i,
+              price: execution.executedPrice,
+            });
+
+            // Only fill one level per cycle
+            break;
+          } else {
+            results.push({
+              symbol,
+              status: 'FAILED',
+              level: i,
+              error: execution.error,
+            });
+          }
+        }
+      }
+
+      // Check if all levels filled -> grid complete
+      if (filledLevels.length >= buyLevels.length && buyLevels.length > 0) {
+        config.status = 'completed';
+        await redis.set(`grid:config:${symbol}`, JSON.stringify(config));
+        console.log(`[GRID] ${symbol} grid completed - all ${buyLevels.length} levels filled`);
+      }
+    }
+  } catch (error) {
+    console.error('[GRID] Check error:', error);
+  }
+
+  return results;
+}
+
+// ============================================================================
 // POST /api/auto-trade - Main loop: monitor + buy + cleanup
 // ============================================================================
 
@@ -545,6 +753,9 @@ export async function POST() {
 
     // STEP 2: Trim queue to prevent overflow
     const trimmed = await trimQueue();
+
+    // STEP 2.5: Check grid triggers (priority over normal signals)
+    const gridResults = await checkGridTriggers();
 
     // STEP 3: Process new BUY signals
     const rawList = await redis.lrange('trades:pending', 0, 49);
@@ -642,6 +853,7 @@ export async function POST() {
       trimmed,
       dailyPnl: dailyState.dailyPnl,
       buyResults,
+      gridResults,
     });
   } catch (error) {
     console.error('[AUTO-TRADE] Error:', error);
@@ -685,6 +897,15 @@ export async function GET() {
     }
   }
 
+  // Fetch active grid configs
+  const activeGridsRaw = await redis.get('grid:active');
+  const activeGrids: string[] = activeGridsRaw ? JSON.parse(activeGridsRaw as string) : [];
+  const gridConfigs: any[] = [];
+  for (const sym of activeGrids) {
+    const raw = await redis.get(`grid:config:${sym}`);
+    if (raw) gridConfigs.push(JSON.parse(raw as string));
+  }
+
   return NextResponse.json({
     success: true,
     status: 'active',
@@ -696,6 +917,7 @@ export async function GET() {
       dailyPnl: dailyState.dailyPnl,
     },
     queues: { pending: pendingCount, approved: approvedCount },
+    grids: gridConfigs,
     isTestnet: process.env.BINANCE_TESTNET === 'true',
   });
 }
