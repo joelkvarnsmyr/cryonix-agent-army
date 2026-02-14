@@ -1,15 +1,17 @@
 #!/bin/bash
 
 # Navigate to project directory
-cd /opt/cryonix-agent-army || exit 1
+# Navigate to project directory (one level up from scripts/)
+cd "$(dirname "$0")/.." || exit 1
 
 # Logging
 LOG_FILE="evolution.log"
 echo "[INFO] Starting Evolution Cycle at $(date)" >> "$LOG_FILE"
 
 # Load environment variables (if stored in .env)
+# Load environment variables (if stored in .env)
 if [ -f .env ]; then
-  export $(cat .env | xargs)
+  export $(grep -v '^#' .env | xargs)
 fi
 
 # Run the evolver (Copilot Edition)

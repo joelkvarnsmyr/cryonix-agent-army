@@ -16,7 +16,7 @@ const { Client } = pg;
 
 // Configuration
 const CONFIG = {
-  DB_URL: process.env.POSTGRES_URL || 'postgresql://postgres:password@localhost:5432/cryonix',
+  DB_URL: process.env.POSTGRES_URL || `postgresql://postgres:${process.env.POSTGRES_PASSWORD || 'password'}@localhost:5432/cryonix`,
   REDIS_URL: process.env.KV_URL || 'redis://localhost:6379',
   LOOKBACK_HOURS: 24,
   MIN_TRADES_FOR_ANALYSIS: 3,
@@ -77,15 +77,14 @@ class EvolutionEngine {
       SELECT 
         pattern,
         COUNT(*) as trade_count,
-        SUM(pnl_usd) as total_pnl,
-        AVG(pnl_pct) as avg_roi,
-        SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) as wins,
-        SUM(CASE WHEN pnl_usd < 0 THEN 1 ELSE 0 END) as losses,
-        MAX(pnl_usd) as best_trade,
-        MIN(pnl_usd) as worst_trade
-      FROM trades 
-      WHERE status = 'CLOSED' 
-        AND closed_at > NOW() - INTERVAL '${CONFIG.LOOKBACK_HOURS} hours'
+        SUM(pnl) as total_pnl,
+        AVG(pnl_percent) as avg_roi,
+        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses,
+        MAX(pnl) as best_trade,
+        MIN(pnl) as worst_trade
+      FROM position_history 
+      WHERE closed_at > NOW() - INTERVAL '${CONFIG.LOOKBACK_HOURS} hours'
       GROUP BY pattern
       ORDER BY total_pnl ASC;
     `;
@@ -93,7 +92,7 @@ class EvolutionEngine {
     const result = await this.db.query(query);
 
     if (result.rows.length === 0) {
-      console.log('⚠️  No closed trades in the last 24h. Skipping evolution.');
+      console.log('⚠️  No closed positions in the last 24h. Skipping evolution.');
       return null;
     }
 
@@ -293,8 +292,9 @@ Focus on improving the ${weakestPattern} pattern specifically, as it's causing t
 
     await this.execCommand('git add .');
     await this.execCommand(`git commit -m "${message}"`);
+    await this.execCommand('git push'); // Sync to GitHub
 
-    console.log('✅ Changes committed');
+    console.log('✅ Changes committed and pushed');
   }
 
   async deployToProduction() {
