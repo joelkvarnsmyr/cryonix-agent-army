@@ -12,16 +12,16 @@ import json
 
 @dataclass
 class RiskLimits:
-    """Configurable risk limits - tuned for $17 USDC micro-budget"""
+    """Configurable risk limits - tuned for $17 USDC micro-budget, diversified"""
     max_daily_loss_pct: float = 0.05          # 5% max daily loss (~$0.85)
     max_weekly_loss_pct: float = 0.10         # 10% max weekly loss (~$1.70)
-    max_position_size_pct: float = 0.35       # 35% max per position (~$6)
-    max_total_exposure_pct: float = 0.70      # 70% max total exposure (~$12)
-    min_confidence: float = 0.65              # 65% min signal confidence (lowered to allow more BUY entries)
+    max_position_size_pct: float = 0.15       # 15% max per position (~$2.55)
+    max_total_exposure_pct: float = 0.85      # 85% max total exposure (~$14.50)
+    min_confidence: float = 0.65              # 65% min signal confidence
     max_correlation: float = 0.70             # Max position correlation
     volatility_pause_atr_pct: float = 5.0     # Pause if ATR > 5%
-    max_trades_per_day: int = 5               # Max 5 trades per day (increased for margin)
-    max_consecutive_losses: int = 4           # Pause after 4 losses
+    max_trades_per_day: int = 15              # Max 15 trades per day (diversified)
+    max_consecutive_losses: int = 5           # Pause after 5 losses
     max_leverage: int = 3                     # Max leverage for margin trading
     liquidation_buffer_pct: float = 0.15      # 15% buffer before liquidation price
 

@@ -20,18 +20,27 @@ class MarketScoutTank(BaseTank):
     """
 
     def __init__(self):
-        # Monitor 15 liquid USDC pairs across tiers
+        # Monitor 45 liquid USDC pairs across tiers
         super().__init__(
             name="MarketScout",
             symbols=[
-                # Tier 1: Core (ultra-liquid)
-                "BTC/USDC", "ETH/USDC", "SOL/USDC",
-                # Tier 2: Major alts
-                "BNB/USDC", "XRP/USDC", "AVAX/USDC", "ADA/USDC", "LINK/USDC",
-                # Tier 3: L2 / DeFi
-                "NEAR/USDC", "DOGE/USDC", "ARB/USDC", "OP/USDC",
-                # Tier 4: Emerging
-                "SUI/USDC", "ATOM/USDC", "ICP/USDC",
+                # Tier 1: Core (ultra-liquid, $5 min)
+                "BTC/USDC", "ETH/USDC", "SOL/USDC", "BNB/USDC", "XRP/USDC",
+                # Tier 2: Major alts ($5 min)
+                "AVAX/USDC", "ADA/USDC", "LINK/USDC", "DOT/USDC", "MATIC/USDC",
+                "NEAR/USDC", "ARB/USDC", "OP/USDC", "SUI/USDC", "ATOM/USDC",
+                # Tier 3: AI & DeFi ($5 min)
+                "FET/USDC", "RNDR/USDC", "INJ/USDC", "TIA/USDC", "SEI/USDC",
+                "JUP/USDC", "WLD/USDC", "ICP/USDC", "APT/USDC", "FIL/USDC",
+                # Tier 4: Mid-cap movers ($5 min)
+                "AAVE/USDC", "UNI/USDC", "LDO/USDC", "MKR/USDC", "CRV/USDC",
+                "DYDX/USDC", "STX/USDC", "IMX/USDC", "ALGO/USDC",
+                # Tier 5: Meme & micro-cap ($1 min — high volatility, diversification)
+                "DOGE/USDC", "SHIB/USDC", "PEPE/USDC", "BONK/USDC", "FLOKI/USDC",
+                "WIF/USDC", "1000SATS/USDC", "ANIME/USDC",
+                # Tier 6: Emerging narratives
+                "AIXBT/USDC", "ARKM/USDC", "PYTH/USDC", "JTO/USDC",
+                "STRK/USDC", "MANTA/USDC",
             ]
         )
         self.timeframe = "15m"  # 15-minute candles
@@ -64,7 +73,8 @@ class MarketScoutTank(BaseTank):
             # Get current price from last candle
             current_price = ohlcv[-1][4]  # Close price
 
-            print(f"[{self.name}] {symbol} @ ${current_price:,.2f} ({len(ohlcv)} candles)")
+            fmt = f"${current_price:,.8f}" if current_price < 0.01 else f"${current_price:,.4f}" if current_price < 1 else f"${current_price:,.2f}"
+            print(f"[{self.name}] {symbol} @ {fmt} ({len(ohlcv)} candles)")
 
             return {
                 "symbol": symbol,

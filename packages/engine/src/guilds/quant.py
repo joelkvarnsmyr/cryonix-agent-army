@@ -103,18 +103,18 @@ class QuantGuild:
 
         return {
             "rsi": round(rsi.iloc[latest_idx], 2) if not pd.isna(rsi.iloc[latest_idx]) else 50,
-            "bb_upper": round(bb_upper.iloc[latest_idx], 2),
-            "bb_mid": round(bb_mid.iloc[latest_idx], 2),
-            "bb_lower": round(bb_lower.iloc[latest_idx], 2),
+            "bb_upper": float(bb_upper.iloc[latest_idx]),
+            "bb_mid": float(bb_mid.iloc[latest_idx]),
+            "bb_lower": float(bb_lower.iloc[latest_idx]),
             "bb_width": round(bb_width.iloc[latest_idx], 4),
             "bb_width_percentile": self._percentile(bb_width, bb_width.iloc[latest_idx]),
-            "atr": round(atr.iloc[latest_idx], 2) if not pd.isna(atr.iloc[latest_idx]) else 0,
+            "atr": float(atr.iloc[latest_idx]) if not pd.isna(atr.iloc[latest_idx]) else 0,
             "atr_percent": round((atr.iloc[latest_idx] / close.iloc[latest_idx]) * 100, 2) if close.iloc[latest_idx] > 0 else 0,
             "volume_ratio": round(volume.iloc[latest_idx] / vol_sma.iloc[latest_idx], 2) if vol_sma.iloc[latest_idx] > 0 else 1,
             "macd": round(macd.iloc[latest_idx], 4) if not pd.isna(macd.iloc[latest_idx]) else 0,
             "macd_signal": round(macd_signal.iloc[latest_idx], 4) if not pd.isna(macd_signal.iloc[latest_idx]) else 0,
             "macd_hist": round(macd_hist.iloc[latest_idx], 4) if not pd.isna(macd_hist.iloc[latest_idx]) else 0,
-            "price": round(close.iloc[latest_idx], 2),
+            "price": float(close.iloc[latest_idx]),
         }
 
     def _detect_patterns(self, df: pd.DataFrame, indicators: Dict) -> List[Dict]:
@@ -460,8 +460,9 @@ class QuantGuild:
         # --- SL/TP: wider than normal (3*ATR SL, 4*ATR TP) ---
         atr = indicators['atr']
         entry_price = current_price
-        stop_loss = round(entry_price - 3 * atr, 2)
-        target_price = round(entry_price + 4 * atr, 2)
+        dec = 2 if entry_price >= 1 else (4 if entry_price >= 0.01 else (6 if entry_price >= 0.0001 else 8))
+        stop_loss = round(entry_price - 3 * atr, dec)
+        target_price = round(entry_price + 4 * atr, dec)
 
         reason_parts = [
             f"Deep value crash: {drawdown:.1%} drawdown from recent high",
@@ -517,7 +518,7 @@ class QuantGuild:
         price = indicators['price']
         atr = indicators['atr']
         # Smart rounding: more decimals for low-price coins
-        decimals = 2 if price >= 1 else (4 if price >= 0.01 else 6)
+        decimals = 2 if price >= 1 else (4 if price >= 0.01 else (6 if price >= 0.0001 else 8))
         def rp(v): return round(v, decimals)
 
         if not patterns:

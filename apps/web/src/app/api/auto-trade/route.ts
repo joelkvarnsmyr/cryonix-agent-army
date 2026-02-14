@@ -12,19 +12,19 @@ export const dynamic = 'force-dynamic';
 
 const CONFIG = {
   TOTAL_CAPITAL: 17,
-  MAX_POSITION_SIZE_PCT: 0.35,     // 35% per position (~$6 max)
+  MAX_POSITION_SIZE_PCT: 0.35,     // 35% per position (~$5.95 — above Binance $5 NOTIONAL)
   MIN_CONFIDENCE: 0.65,
   MAX_DAILY_LOSS_PCT: 0.05,        // 5% (~$0.85)
   MAX_OPEN_POSITIONS: 3,
-  MAX_TRADES_PER_DAY: 5,
-  MAX_SLIPPAGE_PCT: 0.3,
-  SPOT_ONLY: false,                // Margin trading enabled
-  TRADING_MODE: (process.env.TRADING_MODE || 'margin') as 'spot' | 'margin' | 'future',
+  MAX_TRADES_PER_DAY: 15,
+  MAX_SLIPPAGE_PCT: 0.5,
+  SPOT_ONLY: true,                  // Margin account not available — spot only
+  TRADING_MODE: 'spot' as 'spot' | 'margin' | 'future',
   MARGIN_TYPE: (process.env.MARGIN_TYPE || 'cross') as 'cross' | 'isolated',
   DEFAULT_LEVERAGE: parseInt(process.env.DEFAULT_LEVERAGE || '3'),
-  MIN_ORDER_VALUE: 5.5,
+  MIN_ORDER_VALUE: 5.0,            // Binance NOTIONAL filter minimum (~$5 for most pairs)
   TRAILING_STOP_PCT: 1.0,          // 1% trailing stop after profit
-  MAX_PENDING_QUEUE: 20,           // Auto-trim queue beyond this
+  MAX_PENDING_QUEUE: 30,           // Auto-trim queue beyond this
   AI_VALIDATION: true,             // Use GROK AI for signal validation
 };
 
@@ -511,8 +511,8 @@ JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one s
 function calculatePositionSize(signal: Signal): number {
   const isDeepValue = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
 
-  // Deep value: 50% max position, normal: 35%
-  const maxPct = isDeepValue ? 0.50 : CONFIG.MAX_POSITION_SIZE_PCT;
+  // Deep value: 25% max, normal: 15%
+  const maxPct = isDeepValue ? 0.25 : CONFIG.MAX_POSITION_SIZE_PCT;
   const maxPositionValue = CONFIG.TOTAL_CAPITAL * maxPct;
 
   // Deep value requires 80%+ confidence after AI blending
@@ -533,6 +533,7 @@ function calculatePositionSize(signal: Signal): number {
     console.log(`[SIZING] Deep value ${signal.symbol}: Kelly=${(kellyFraction * 100).toFixed(1)}%, value=$${positionValue.toFixed(2)} (max $${maxPositionValue.toFixed(2)})`);
   }
 
+  if (!signal.entry_price || signal.entry_price <= 0) return 0;
   return positionValue / signal.entry_price;
 }
 
@@ -548,20 +549,26 @@ async function executeBuy(signal: Signal): Promise<{
   error?: string;
 }> {
   const ex = getExchange();
-  const quantity = calculatePositionSize(signal);
+  const rawQuantity = calculatePositionSize(signal);
 
-  if (quantity <= 0) {
+  if (rawQuantity <= 0) {
     return { success: false, error: 'Position size too small' };
   }
 
-  const positionValue = quantity * signal.entry_price;
-  if (positionValue < CONFIG.MIN_ORDER_VALUE) {
-    return { success: false, error: `Value $${positionValue.toFixed(2)} < $${CONFIG.MIN_ORDER_VALUE} min` };
-  }
-
-  console.log(`[AUTO-TRADE] BUY ${signal.symbol}: qty=${quantity.toFixed(6)}, ~$${positionValue.toFixed(2)}`);
-
   try {
+    // Load market info for proper quantity rounding
+    await ex.loadMarkets();
+    const market = ex.market(signal.symbol);
+    const quantity = ex.amountToPrecision(signal.symbol, rawQuantity);
+    const qty = parseFloat(quantity);
+
+    const positionValue = qty * signal.entry_price;
+    if (positionValue < CONFIG.MIN_ORDER_VALUE) {
+      return { success: false, error: `Value $${positionValue.toFixed(2)} < $${CONFIG.MIN_ORDER_VALUE} min` };
+    }
+
+    console.log(`[AUTO-TRADE] BUY ${signal.symbol}: qty=${quantity}, ~$${positionValue.toFixed(2)}, minNotional=${market.limits?.cost?.min || '?'}`);
+
     const ticker = await ex.fetchTicker(signal.symbol);
     const currentPrice = ticker.last || signal.entry_price;
 
@@ -570,9 +577,9 @@ async function executeBuy(signal: Signal): Promise<{
       return { success: false, error: `Slippage ${slippage.toFixed(2)}%` };
     }
 
-    const order = await ex.createMarketOrder(signal.symbol, 'buy', quantity);
+    const order = await ex.createMarketOrder(signal.symbol, 'buy', qty);
     const executedPrice = order.average || order.price || currentPrice;
-    const executedQty = order.filled || quantity;
+    const executedQty = Number(order.filled) || qty;
 
     // Store position in Redis for monitoring
     await addPosition({
