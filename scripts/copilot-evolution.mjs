@@ -10,13 +10,20 @@ import { readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import pg from 'pg';
 import Redis from 'ioredis';
+import OpenAI from 'openai';
+import { TelegramBot } from './telegram-bot.mjs';
 import 'dotenv/config'; // Load .env file
 
 const { Client } = pg;
 
 // Configuration
 const CONFIG = {
-  DB_URL: process.env.POSTGRES_URL || `postgresql://postgres:${process.env.POSTGRES_PASSWORD || 'password'}@localhost:5432/cryonix`,
+  DB_URL_CANDIDATES: [
+    process.env.POSTGRES_URL,
+    `postgresql://postgres:${process.env.POSTGRES_PASSWORD || 'password'}@localhost:5432/cryonix`,
+    'postgresql://postgres:password@localhost:5432/cryonix',
+    'postgresql://postgres:password@postgres:5432/cryonix'
+  ].filter((value, index, all) => value && all.indexOf(value) === index),
   REDIS_URL: process.env.KV_URL || 'redis://localhost:6379',
   LOOKBACK_HOURS: 24,
   MIN_TRADES_FOR_ANALYSIS: 3,
@@ -27,8 +34,8 @@ const CONFIG = {
 
   // Test suite to run after mutation
   VERIFICATION_COMMANDS: [
-    'python scripts/verify_deep_value.py',
-    'python scripts/verify_grid.py',
+    'python3 scripts/verify_deep_value.py',
+    'python3 scripts/verify_grid.py',
     'pnpm type-check',
     'pnpm test'
   ],
@@ -46,6 +53,7 @@ class EvolutionEngine {
   constructor() {
     this.db = null;
     this.redis = null;
+    this.telegram = new TelegramBot();
     this.runId = `evo_${Date.now()}`;
     this.startTime = new Date();
   }
@@ -54,9 +62,9 @@ class EvolutionEngine {
     console.log(`[${this.runId}] 🚀 Initializing Evolution Engine...`);
 
     // Connect to Postgres
-    this.db = new Client({ connectionString: CONFIG.DB_URL });
-    await this.db.connect();
+    this.db = await this.connectPostgres();
     console.log('✅ Connected to Postgres');
+    await this.ensureEvolutionRunsTable();
 
     // Connect to Redis
     this.redis = new Redis(CONFIG.REDIS_URL);
@@ -77,14 +85,15 @@ class EvolutionEngine {
       SELECT 
         pattern,
         COUNT(*) as trade_count,
-        SUM(pnl) as total_pnl,
-        AVG(pnl_percent) as avg_roi,
+        COALESCE(SUM(pnl), 0) as total_pnl,
+        COALESCE(AVG(pnl), 0) as avg_roi,
         SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
         SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses,
-        MAX(pnl) as best_trade,
-        MIN(pnl) as worst_trade
-      FROM position_history 
-      WHERE closed_at > NOW() - INTERVAL '${CONFIG.LOOKBACK_HOURS} hours'
+        COALESCE(MAX(pnl), 0) as best_trade,
+        COALESCE(MIN(pnl), 0) as worst_trade
+      FROM trades
+      WHERE status = 'CLOSED'
+        AND timestamp > NOW() - INTERVAL '${CONFIG.LOOKBACK_HOURS} hours'
       GROUP BY pattern
       ORDER BY total_pnl ASC;
     `;
@@ -92,7 +101,7 @@ class EvolutionEngine {
     const result = await this.db.query(query);
 
     if (result.rows.length === 0) {
-      console.log('⚠️  No closed positions in the last 24h. Skipping evolution.');
+      console.log('⚠️  No closed trades in the last 24h. Skipping evolution.');
       return null;
     }
 
@@ -165,108 +174,162 @@ class EvolutionEngine {
     }
   }
 
+  /**
+   * Phase 1: GROK analyzes performance data + source code and generates
+   *          a precise instruction for Copilot CLI.
+   * Phase 2: Copilot CLI executes the instruction (edits files).
+   */
   async runCopilotEvolution(performanceData) {
-    console.log('\n🤖 Running GitHub Copilot CLI evolution...');
+    console.log('\n🤖 Running GROK → Copilot CLI evolution...');
 
-    const prompt = this.constructPrompt(performanceData);
-
-    // Save prompt to file for Copilot
-    const promptFile = join(CONFIG.PROJECT_ROOT, '.evolution-prompts', `${this.runId}.md`);
-    await this.execCommand(`mkdir -p $(dirname ${promptFile})`);
-    await writeFile(promptFile, prompt);
-
-    console.log(`📝 Prompt saved to: ${promptFile}`);
-    console.log('\n--- BEGIN PROMPT ---');
-    console.log(prompt);
-    console.log('--- END PROMPT ---\n');
-
-    // Run GitHub Copilot CLI in autonomous mode
-    // We use the terminal agent which can execute commands and edit files
     try {
-      // Method 1: Use gh copilot with chat mode (non-interactive)
-      // We pipe the prompt directly to copilot and let it execute
-      console.log('🔄 Invoking GitHub Copilot CLI...');
+      // Phase 1: GROK generates the evolution plan
+      console.log('\n🧠 Phase 1: GROK analyzing performance + source code...');
+      const copilotInstruction = await this.askGrokForPlan(performanceData);
 
-      const copilotCmd = `gh copilot explain "${prompt.substring(0, 500)}..." --execute`;
-      const result = await this.execCommand(copilotCmd, {
-        timeout: CONFIG.COPILOT_TIMEOUT,
-        cwd: CONFIG.PROJECT_ROOT
-      });
+      if (!copilotInstruction) {
+        console.error('❌ GROK failed to generate an evolution plan');
+        return false;
+      }
 
-      console.log('📤 Copilot response:', result);
+      // Save the instruction for audit
+      const promptDir = join(CONFIG.PROJECT_ROOT, '.evolution-prompts');
+      await this.execCommand(`mkdir -p ${promptDir}`);
+      await writeFile(join(promptDir, `${this.runId}-grok-plan.md`), copilotInstruction);
+      console.log('📝 GROK plan saved for audit');
 
-      // Alternative: Write a script that Copilot should execute
-      const evolutionScript = join(CONFIG.PROJECT_ROOT, '.evolution-prompts', `${this.runId}.sh`);
-      await writeFile(evolutionScript, `#!/bin/bash
-# Auto-generated evolution script
-# Goal: ${performanceData.weakestPattern} pattern improvement
+      // Phase 2: Copilot CLI executes the code changes
+      console.log('\n🔧 Phase 2: Copilot CLI executing code changes...');
+      const model = process.env.EVOLUTION_MODEL_MUTATION || 'claude-sonnet-4.5';
+      await this.telegram.sendCopilotPhase(true, model);
 
-cd ${CONFIG.PROJECT_ROOT}
+      const result = await this.execCommand(
+        `gh copilot -- -p ${this.shellEscape(copilotInstruction)} --allow-all --model ${model} -s`,
+        { timeout: CONFIG.COPILOT_TIMEOUT, cwd: CONFIG.PROJECT_ROOT }
+      );
 
-# Let GitHub Copilot suggest improvements
-gh copilot suggest "Improve the ${performanceData.weakestPattern} pattern in packages/engine/src/guilds/quant.py based on performance data: ${performanceData.weakestPnl.toFixed(2)} USD loss. Make the pattern more conservative."
-`);
-
-      await this.execCommand(`chmod +x ${evolutionScript}`);
-      console.log(`📝 Evolution script created: ${evolutionScript}`);
-
-      // Execute the script
-      await this.execCommand(evolutionScript);
-
+      // Save Copilot's output
+      await writeFile(join(promptDir, `${this.runId}-copilot-output.txt`), result);
+      console.log('📤 Copilot output saved');
       console.log('\n✅ Copilot evolution completed');
       return true;
 
     } catch (error) {
-      console.error('❌ Copilot execution failed:', error.message);
-      console.error('Full error:', error);
+      console.error('❌ Evolution failed:', error.message);
+      await this.telegram.sendCopilotPhase(false, process.env.EVOLUTION_MODEL_MUTATION || 'claude-sonnet-4.5');
       return false;
     }
   }
 
-  constructPrompt(data) {
-    const { weakestPattern, weakestPnl, totalPnl, patterns } = data;
+  /**
+   * Uses GROK (xAI) to analyze performance data and source code,
+   * then generates a precise, actionable instruction for Copilot CLI.
+   */
+  async askGrokForPlan(performanceData) {
+    const grok = new OpenAI({
+      apiKey: process.env.XAI_API_KEY,
+      baseURL: 'https://api.x.ai/v1',
+    });
 
-    return `# Trading System Evolution Task
+    // Read actual source code from critical files
+    const sourceCode = {};
+    for (const file of CONFIG.CRITICAL_FILES) {
+      try {
+        sourceCode[file] = await readFile(join(CONFIG.PROJECT_ROOT, file), 'utf-8');
+      } catch {
+        sourceCode[file] = '(file not found)';
+      }
+    }
 
-## Context
-You are improving an autonomous crypto trading system. The system has underperformed in the last 24 hours.
+    // Load prompt template
+    let promptTemplate = '';
+    try {
+      promptTemplate = await readFile(join(CONFIG.PROJECT_ROOT, 'scripts/prompts/evolution_prompt.txt'), 'utf-8');
+    } catch {
+      console.warn('⚠️  Could not load prompt template, using inline prompt');
+    }
 
-## Performance Data
-- **Total P&L**: $${totalPnl.toFixed(2)}
-- **Weakest Pattern**: ${weakestPattern} (P&L: $${weakestPnl.toFixed(2)})
+    const { weakestPattern, weakestPnl, totalPnl, totalTrades, patterns } = performanceData;
 
-### Pattern Breakdown:
-${patterns.map(p => `- **${p.pattern}**: ${p.trade_count} trades, $${parseFloat(p.total_pnl).toFixed(2)} P&L, ${((parseInt(p.wins) / parseInt(p.trade_count)) * 100).toFixed(1)}% win rate`).join('\n')}
+    const patternBreakdown = patterns.map(p =>
+      `- ${p.pattern}: ${p.trade_count} trades, $${parseFloat(p.total_pnl).toFixed(2)} P&L, ` +
+      `${((parseInt(p.wins) / parseInt(p.trade_count)) * 100).toFixed(1)}% win rate`
+    ).join('\n');
 
-## Your Task
-Analyze and improve the trading logic to address the performance issues. Focus on:
+    const systemPrompt = `You are a Senior Quantitative Developer orchestrating an autonomous trading system evolution.
 
-1. **Risk Management**: Review \`packages/engine/src/core/risk_gate.py\` and \`risk_manager.py\`
-   - Are stop-losses too tight or too loose?
-   - Is position sizing appropriate?
-   
-2. **Pattern Logic**: Review \`packages/engine/src/guilds/quant.py\`
-   - Is the ${weakestPattern} pattern detector too aggressive?
-   - Should confidence thresholds be adjusted?
-   - Are entry/exit conditions optimal?
+Your job: analyze the performance data and source code below, then produce a SINGLE, precise instruction
+that GitHub Copilot CLI will execute to improve the code.
 
-3. **Signal Validation**: Review \`apps/web/src/app/api/auto-trade/route.ts\`
-   - Is the GROK AI validation too lenient or strict?
-   - Should we add additional filters?
+RULES FOR YOUR OUTPUT:
+1. Output ONLY the instruction text that Copilot CLI will receive — no preamble, no markdown wrapping.
+2. The instruction must tell Copilot exactly which files to edit and what changes to make.
+3. Be surgical: 1-3 small parameter tweaks or condition changes. No rewrites.
+4. NEVER remove risk checks (stop-loss, max position size, daily loss limits).
+5. Changes must pass: python scripts/verify_deep_value.py && python scripts/verify_grid.py
+6. After editing, tell Copilot to run the verification tests.`;
 
-## Constraints
-- ⚠️  **SAFETY FIRST**: Do NOT remove risk checks (stop-loss, max position size, daily loss limits)
-- 📐 **INCREMENTAL**: Make small, surgical changes. No massive refactors.
-- ✅ **VERIFIABLE**: Changes must pass regression tests (verify_deep_value.py, verify_grid.py)
-- 🔍 **TYPED**: Maintain strict typing (TypeScript/Python)
+    const userPrompt = `## Performance Data (last ${CONFIG.LOOKBACK_HOURS}h)
+Total P&L: $${totalPnl.toFixed(2)} | Total Trades: ${totalTrades}
+Weakest Pattern: ${weakestPattern} (P&L: $${weakestPnl.toFixed(2)})
 
-## Instructions
-1. Analyze the performance data above
-2. Identify the root cause of losses in the ${weakestPattern} pattern
-3. Make 1-3 specific code changes to address the issue
-4. Ensure all type checking and tests pass
+${patternBreakdown}
 
-Focus on improving the ${weakestPattern} pattern specifically, as it's causing the most losses.`;
+## Source Code
+
+### packages/engine/src/guilds/quant.py
+\`\`\`python
+${sourceCode['packages/engine/src/guilds/quant.py']}
+\`\`\`
+
+### packages/engine/src/core/risk_gate.py
+\`\`\`python
+${sourceCode['packages/engine/src/core/risk_gate.py']}
+\`\`\`
+
+### packages/engine/src/core/risk_manager.py
+\`\`\`python
+${sourceCode['packages/engine/src/core/risk_manager.py']}
+\`\`\`
+
+### apps/web/src/app/api/auto-trade/route.ts
+\`\`\`typescript
+${sourceCode['apps/web/src/app/api/auto-trade/route.ts']}
+\`\`\`
+
+${promptTemplate ? `## Additional Guidelines\n${promptTemplate}` : ''}
+
+Now generate the Copilot CLI instruction to fix the ${weakestPattern} pattern.`;
+
+    console.log(`   Sending ${userPrompt.length} chars to GROK...`);
+
+    const response = await grok.chat.completions.create({
+      model: 'grok-4-1-fast-reasoning',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 4000,
+    });
+
+    const instruction = response.choices[0]?.message?.content?.trim();
+    const usage = response.usage;
+    console.log(`   GROK tokens: ${usage?.prompt_tokens || '?'} in / ${usage?.completion_tokens || '?'} out`);
+    await this.telegram.sendGrokPhase(instruction?.length || 0, usage?.prompt_tokens || 0, usage?.completion_tokens || 0);
+
+    if (!instruction || instruction.length < 50) {
+      console.error('❌ GROK returned insufficient instruction');
+      return null;
+    }
+
+    console.log(`   ✅ GROK generated instruction (${instruction.length} chars)`);
+    return instruction;
+  }
+
+  /** Escape a string for safe use as a single shell argument */
+  shellEscape(str) {
+    return "'" + str.replace(/'/g, "'\\''") + "'";
   }
 
   async runVerification() {
@@ -292,9 +355,17 @@ Focus on improving the ${weakestPattern} pattern specifically, as it's causing t
 
     await this.execCommand('git add .');
     await this.execCommand(`git commit -m "${message}"`);
-    await this.execCommand('git push'); // Sync to GitHub
 
-    console.log('✅ Changes committed and pushed');
+    let pushed = false;
+    try {
+      await this.execCommand('git push');
+      pushed = true;
+    } catch (error) {
+      console.warn('⚠️  Git push failed:', error.message);
+    }
+
+    console.log(`✅ Changes committed${pushed ? ' and pushed' : ''}`);
+    await this.telegram.sendGitReport(message, pushed);
   }
 
   async deployToProduction() {
@@ -351,7 +422,7 @@ Focus on improving the ${weakestPattern} pattern specifically, as it's causing t
       this.runId,
       this.startTime,
       endTime,
-      duration,
+      Math.round(duration),
       success ? 'SUCCESS' : 'FAILED',
       JSON.stringify(details.performance || {}),
       JSON.stringify(details.changes || [])
@@ -368,9 +439,11 @@ Focus on improving the ${weakestPattern} pattern specifically, as it's causing t
 
     try {
       await this.initialize();
+      await this.telegram.sendEvolutionStart(this.runId);
 
       // Step 1: Analyze performance
       performanceData = await this.analyzePerformance();
+      await this.telegram.sendPerformanceReport(performanceData);
 
       if (!performanceData) {
         console.log('\n✅ No evolution needed - insufficient data or good performance');
@@ -408,6 +481,7 @@ Focus on improving the ${weakestPattern} pattern specifically, as it's causing t
         // Step 4: Verify changes
         console.log('\n🧪 Verifying mutation...');
         const verificationPassed = await this.runVerification();
+        await this.telegram.sendVerificationResult(verificationPassed);
 
         if (!verificationPassed) {
           console.log('❌ Verification failed! Rolling back...');
@@ -429,6 +503,8 @@ Focus on improving the ${weakestPattern} pattern specifically, as it's causing t
         break;
       }
 
+      const duration = (new Date() - this.startTime) / 1000;
+
       if (!mutationApplied) {
         console.log(`\n❌ Evolution failed after ${CONFIG.MAX_EVOLUTION_ATTEMPTS} attempts`);
         await this.logEvolutionResult(false, {
@@ -436,6 +512,7 @@ Focus on improving the ${weakestPattern} pattern specifically, as it's causing t
           performance: performanceData,
           attempts: attempt
         });
+        await this.telegram.sendEvolutionResult(false, { runId: this.runId, duration, reason: 'max_attempts_reached', attempts: attempt });
         return;
       }
 
@@ -445,6 +522,7 @@ Focus on improving the ${weakestPattern} pattern specifically, as it's causing t
         attempts: attempt,
         changes: 'Applied mutation and verified'
       });
+      await this.telegram.sendEvolutionResult(true, { runId: this.runId, duration, reason: 'evolution_completed', attempts: attempt });
 
     } catch (error) {
       console.error('\n💥 Evolution engine crashed:', error);
@@ -465,6 +543,12 @@ Focus on improving the ${weakestPattern} pattern specifically, as it's causing t
         error: error.message,
         performance: performanceData
       });
+      await this.telegram.sendEvolutionResult(false, {
+        runId: this.runId,
+        duration: (new Date() - this.startTime) / 1000,
+        reason: `crash: ${error.message}`,
+        attempts: '?'
+      });
 
       throw error;
     } finally {
@@ -475,6 +559,39 @@ Focus on improving the ${weakestPattern} pattern specifically, as it's causing t
   }
 
   // Helper methods
+  async connectPostgres() {
+    let lastError = null;
+
+    for (const connectionString of CONFIG.DB_URL_CANDIDATES) {
+      const client = new Client({ connectionString });
+      try {
+        await client.connect();
+        return client;
+      } catch (error) {
+        lastError = error;
+        await client.end().catch(() => undefined);
+      }
+    }
+
+    throw lastError || new Error('Failed to connect to Postgres');
+  }
+
+  async ensureEvolutionRunsTable() {
+    await this.db.query(`
+      CREATE TABLE IF NOT EXISTS evolution_runs (
+        id SERIAL PRIMARY KEY,
+        run_id VARCHAR(64) UNIQUE NOT NULL,
+        started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        ended_at TIMESTAMP WITH TIME ZONE,
+        duration_seconds INTEGER,
+        status VARCHAR(20) NOT NULL,
+        performance_data JSONB,
+        changes_made JSONB,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  }
+
   execCommand(command, options = {}) {
     return new Promise((resolve, reject) => {
       const proc = spawn(command, {
