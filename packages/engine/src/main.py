@@ -6,6 +6,7 @@ from src.api.router import api_router
 from src.core.state_sync import state_manager
 from src.tanks.market_scout import MarketScoutTank
 from src.tanks.news_scout import NewsScoutTank
+from src.tanks.gainer_scanner import GainerScanner
 from contextlib import asynccontextmanager
 
 # Get Redis URL from environment
@@ -14,6 +15,7 @@ kv_url = os.getenv("KV_URL", "redis://localhost:6379")
 # Initialize Tanks
 scout_tank = MarketScoutTank()
 news_tank = NewsScoutTank(kv_url=kv_url)
+gainer_scanner = GainerScanner(redis_client=state_manager.redis)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -21,6 +23,7 @@ async def lifespan(app: FastAPI):
     print("🚀 Cryonix Engine Starting...")
     asyncio.create_task(scout_tank.run_loop())
     asyncio.create_task(news_tank.run_loop())
+    asyncio.create_task(gainer_scanner.run_loop())
     
     yield
     

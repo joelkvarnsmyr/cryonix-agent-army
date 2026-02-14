@@ -4,8 +4,8 @@ FROM node:20-alpine
 WORKDIR /app
 
 # ws-server.mjs needs the ws package, auto-trader.mjs only uses native fetch
-RUN npm install --no-save ws@8
+RUN npm install --no-save ws@8 pg@8 ioredis@5 dotenv@16
 
-COPY scripts/auto-trader.mjs scripts/ws-server.mjs ./scripts/
+COPY scripts/auto-trader.mjs scripts/ws-server.mjs scripts/telegram-interactive.mjs ./scripts/
 
 USER node

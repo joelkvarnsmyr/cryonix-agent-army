@@ -314,10 +314,12 @@ function cmdHelp() {
     `/pnl — P&L summary (24h + 7d)\n` +
     `/signals — Signal queue\n` +
     `/risk — Risk exposure\n` +
+    `/gainers — Top movers & volume surges\n` +
     `/audit — Full system audit\n` +
     `/evolve — Evolution history\n` +
     `/help — This menu\n\n` +
     `<b>Auto Reports:</b>\n` +
+    `📡 Every 15min — Pipeline health\n` +
     `📅 08:00 UTC — Morning brief\n` +
     `📅 14:00 UTC — System audit\n` +
     `📅 22:00 UTC — Daily summary\n` +
@@ -430,6 +432,116 @@ function timeSince(date) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+// ─── Gainer Scanner command ──────────────────────────────
+async function cmdGainers() {
+  try {
+    const rd = await connectRedis();
+    const raw = await rd.get('scanner:top_movers');
+    if (!raw) return '📊 <b>Top Movers</b>\n\nNo scanner data yet. Engine gainer scanner runs every 15min.';
+
+    const data = JSON.parse(raw);
+    const age = Math.floor((Date.now() / 1000 - data.timestamp) / 60);
+
+    const fmtRow = (r) => {
+      const sym = r.symbol.split('/')[0];
+      const arrow = r.change_1h > 0 ? '🟢' : r.change_1h < -2 ? '🔴' : '⚪';
+      return `${arrow} <code>${sym.padEnd(6)}</code> ${r.change_1h > 0 ? '+' : ''}${r.change_1h}% (4h: ${r.change_4h > 0 ? '+' : ''}${r.change_4h}%)`;
+    };
+
+    const gainers = (data.gainers || []).slice(0, 5).map(fmtRow).join('\n');
+    const losers = (data.losers || []).slice(0, 5).map(fmtRow).join('\n');
+
+    let volBlock = '';
+    if (data.volume_surges?.length > 0) {
+      const vols = data.volume_surges.slice(0, 5).map(r => {
+        const sym = r.symbol.split('/')[0];
+        return `⚡ <code>${sym.padEnd(6)}</code> ${r.vol_ratio}x vol | ${r.change_1h > 0 ? '+' : ''}${r.change_1h}%`;
+      }).join('\n');
+      volBlock = `\n<b>Volume Surges:</b>\n${vols}\n`;
+    }
+
+    return `📊 <b>Top Movers</b> (${age}min ago)\n\n` +
+      `<b>🚀 Gainers (1h):</b>\n${gainers || 'None'}\n\n` +
+      `<b>📉 Losers (1h):</b>\n${losers || 'None'}\n` +
+      volBlock +
+      `\n<i>Scanned: ${data.total_scanned} pairs</i>`;
+  } catch (e) {
+    return `📊 <b>Top Movers</b>\nError: ${e.message}`;
+  }
+}
+
+// ─── Pipeline Health Report (15min) ──────────────────────
+async function pipelineHealthReport() {
+  try {
+    const rd = await connectRedis();
+
+    // Queue sizes
+    const pending = await rd.llen('trades:pending');
+    const approved = await rd.llen('trades:approved');
+
+    // Open positions from Redis
+    const posRaw = await rd.get('positions:open');
+    const positions = posRaw ? JSON.parse(posRaw) : [];
+
+    // Recent signals (last 15min)
+    const recentSigs = await query(`
+      SELECT action, COUNT(*) as cnt
+      FROM signals WHERE timestamp > NOW() - INTERVAL '15 minutes'
+      GROUP BY action
+    `);
+    const buys15m = parseInt(recentSigs.rows.find(r => r.action === 'BUY')?.cnt || 0);
+    const sells15m = parseInt(recentSigs.rows.find(r => r.action === 'SELL')?.cnt || 0);
+
+    // Recent trades (last 1h)
+    const recentTrades = await query(`
+      SELECT COUNT(*) as cnt, SUM(pnl) as pnl
+      FROM trades WHERE timestamp > NOW() - INTERVAL '1 hour'
+    `);
+    const trades1h = parseInt(recentTrades.rows[0]?.cnt || 0);
+    const pnl1h = parseFloat(recentTrades.rows[0]?.pnl || 0);
+
+    // Gainer scanner data
+    let topMover = '';
+    const scannerRaw = await rd.get('scanner:top_movers');
+    if (scannerRaw) {
+      const scanner = JSON.parse(scannerRaw);
+      const top = scanner.gainers?.[0];
+      if (top) topMover = `\n🔥 Top mover: ${top.symbol.split('/')[0]} ${top.change_1h > 0 ? '+' : ''}${top.change_1h}%`;
+    }
+
+    // Position P&L summary
+    let posBlock = '';
+    if (positions.length > 0) {
+      const posLines = positions.map(p => {
+        const sym = p.symbol.split('/')[0];
+        const pnlPct = p.pnlPct || 0;
+        const icon = pnlPct >= 0 ? '🟢' : '🔴';
+        return `${icon} ${sym} ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
+      });
+      posBlock = `\n📌 Positions: ${posLines.join(' | ')}`;
+    }
+
+    // Scanner alerts
+    let alertBlock = '';
+    const alertsRaw = await rd.get('scanner:alerts');
+    if (alertsRaw) {
+      const alerts = JSON.parse(alertsRaw);
+      if (alerts.length > 0) {
+        alertBlock = '\n🚨 ' + alerts.map(a =>
+          `${a.symbol.split('/')[0]} ${a.change_1h > 0 ? '+' : ''}${a.change_1h}%`
+        ).join(', ');
+      }
+    }
+
+    return `📡 <b>Pipeline</b> (${new Date().toUTCString().slice(17, 22)} UTC)\n` +
+      `Signals 15m: ${buys15m} BUY / ${sells15m} SELL\n` +
+      `Queue: ${pending} pending | Trades 1h: ${trades1h} ($${pnl1h.toFixed(2)})` +
+      posBlock + topMover + alertBlock;
+  } catch (e) {
+    return null; // Silently fail — don't spam errors
+  }
+}
+
 // ─── Command router ──────────────────────────────────────
 const COMMANDS = {
   '/status': cmdStatus,
@@ -439,6 +551,7 @@ const COMMANDS = {
   '/signals': cmdSignals,
   '/risk': cmdRisk,
   '/audit': cmdAudit,
+  '/gainers': cmdGainers,
   '/evolve': cmdEvolve,
   '/help': cmdHelp,
   '/start': cmdHelp,
@@ -565,7 +678,15 @@ function startScheduledReports() {
   // Health alerts every 5min
   setInterval(() => checkHealthAlerts().catch(() => {}), HEALTH_INTERVAL);
 
-  console.log('📅 Scheduled reports: 08:00 (morning), 22:00 (daily), trade alerts, health checks');
+  // Pipeline health report every 15min
+  setInterval(async () => {
+    try {
+      const report = await pipelineHealthReport();
+      if (report) await sendMessage(report);
+    } catch {}
+  }, 900000);
+
+  console.log('📅 Scheduled reports: 08:00 (morning), 22:00 (daily), 15min pipeline, trade alerts, health checks');
 }
 
 // ─── Main polling loop ───────────────────────────────────
