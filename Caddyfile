@@ -1,10 +1,8 @@
 # Caddyfile for Cryonix Production Environment
 
 {
-    # Enable automatic HTTPS for local development with a self-signed certificate
-    # This allows using a local domain like https://cryonix.local
-    acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
-    email your_email@example.com
+    # Automatically manage TLS certificates for local development using Caddy's internal CA
+    tls internal
 }
 
 cryonix.local {

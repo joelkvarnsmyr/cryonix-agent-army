@@ -47,9 +47,7 @@ COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 # Copy auto-trader script (plain JS, no TS needed)
 COPY --from=builder /app/scripts/auto-trader.mjs ./scripts/auto-trader.mjs
 
-RUN ls -la
-
 USER nextjs
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["node", "apps/web/server.js"]
