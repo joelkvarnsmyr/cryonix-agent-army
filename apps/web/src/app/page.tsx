@@ -1,37 +1,52 @@
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout';
-import { PortfolioSummary } from '@/components/dashboard/portfolio-summary';
-// import { OrchestratorStatus } from '@/components/dashboard/orchestrator-status'; // Deprecated for TankMonitor
-import { TankMonitor } from '@/components/dashboard/tank-monitor';
-import { RiskGateApproval } from '@/components/dashboard/risk-gate-approval';
-import { AISignals } from '@/components/dashboard/ai-signals';
-import { ActivePositions } from '@/components/dashboard/active-positions';
+import { PortfolioCard } from '@/components/dashboard/portfolio-card';
+import { PositionsCard } from '@/components/dashboard/positions-card';
+import { SignalPipeline } from '@/components/dashboard/signal-pipeline';
+import { AgentFlow } from '@/components/dashboard/agent-flow';
+import { MarketTicker } from '@/components/dashboard/market-ticker';
 import { TradingChart } from '@/components/dashboard/trading-chart';
-import { QuickTrade } from '@/components/dashboard/quick-trade';
-import { ValueStats } from '@/components/dashboard/value-stats';
-
+import { HealthGrid } from '@/components/dashboard/health-grid';
+import { ConfigCard } from '@/components/dashboard/config-card';
+import { TradeActivity } from '@/components/dashboard/trade-activity';
 
 export default function HomePage() {
   return (
     <DashboardLayout>
-      <div className="grid grid-cols-12 gap-4 h-full">
-        {/* Left Sidebar - Status & Signals */}
-        <div className="col-span-12 lg:col-span-3 space-y-4 overflow-y-auto">
-          <ValueStats />
-          <TankMonitor /> {/* Replaces OrchestratorStatus */}
-          <PortfolioSummary />
-          <AISignals />
+      <div className="space-y-3 stagger-children">
+        {/* Row 1: Market Ticker Strip */}
+        <MarketTicker />
+
+        {/* Row 2: Agent Flow - the hero visualization */}
+        <AgentFlow />
+
+        {/* Row 3: Main Bento Grid */}
+        <div className="grid grid-cols-12 gap-3">
+          {/* Left: Portfolio + Positions */}
+          <div className="col-span-12 lg:col-span-3 space-y-3">
+            <PortfolioCard />
+            <PositionsCard />
+          </div>
+
+          {/* Center: Chart */}
+          <div className="col-span-12 lg:col-span-6">
+            <TradingChart />
+          </div>
+
+          {/* Right: Signals + Config + Activity */}
+          <div className="col-span-12 lg:col-span-3 space-y-3">
+            <SignalPipeline />
+            <ConfigCard />
+          </div>
         </div>
 
-        {/* Main Area - Risk Gate & Chart */}
-        <div className="col-span-12 lg:col-span-6 space-y-4">
-          <RiskGateApproval />
-          <TradingChart symbol="BTCUSDT" />
-        </div>
-
-        {/* Right Sidebar - Execution */}
-        <div className="col-span-12 lg:col-span-3 space-y-4 overflow-y-auto">
-          <QuickTrade /> {/* Warning: This executes immediately, bypassing Risk Gate for now */}
-          <ActivePositions />
+        {/* Row 4: Bottom strip */}
+        <div className="grid grid-cols-12 gap-3">
+          <div className="col-span-12 lg:col-span-6">
+            <TradeActivity />
+          </div>
+          <div className="col-span-12 lg:col-span-6">
+            <HealthGrid />
+          </div>
         </div>
       </div>
     </DashboardLayout>

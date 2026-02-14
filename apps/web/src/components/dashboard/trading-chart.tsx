@@ -1,57 +1,83 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from '@cryonix/ui';
-import { useEffect } from 'react';
+import { Card, CardContent } from '@cryonix/ui';
+import { useEffect, useRef, useState } from 'react';
 
 interface TradingChartProps {
-  symbol: string;
+  symbol?: string;
 }
 
-export function TradingChart({ symbol }: TradingChartProps) {
+const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'];
+
+export function TradingChart({ symbol: initialSymbol = 'BTCUSDT' }: TradingChartProps) {
+  const [symbol, setSymbol] = useState(initialSymbol);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const widgetRef = useRef<any>(null);
+
   useEffect(() => {
-    // TradingView widget will be loaded here
-    if (typeof window !== 'undefined') {
-      const script = document.createElement('script');
-      script.src = 'https://s3.tradingview.com/tv.js';
-      script.async = true;
-      script.onload = () => {
-        if ((window as any).TradingView) {
-          new (window as any).TradingView.widget({
-            container_id: 'tradingview_chart',
-            width: '100%',
-            height: 500,
-            symbol: `BINANCE:${symbol}`,
-            interval: '15',
-            timezone: 'Etc/UTC',
-            theme: 'dark',
-            style: '1',
-            locale: 'en',
-            toolbar_bg: '#0a0a0a',
-            enable_publishing: false,
-            hide_top_toolbar: false,
-            hide_legend: false,
-            save_image: false,
-          });
-        }
-      };
-      document.body.appendChild(script);
+    if (typeof window === 'undefined' || !containerRef.current) return;
+
+    // Clear previous widget
+    if (containerRef.current) {
+      containerRef.current.innerHTML = '';
     }
+
+    const script = document.createElement('script');
+    script.src = 'https://s3.tradingview.com/tv.js';
+    script.async = true;
+    script.onload = () => {
+      if ((window as any).TradingView && containerRef.current) {
+        widgetRef.current = new (window as any).TradingView.widget({
+          container_id: 'tv_chart',
+          width: '100%',
+          height: '100%',
+          symbol: `BINANCE:${symbol}`,
+          interval: '15',
+          timezone: 'Etc/UTC',
+          theme: 'dark',
+          style: '1',
+          locale: 'en',
+          toolbar_bg: '#050a18',
+          enable_publishing: false,
+          hide_top_toolbar: false,
+          hide_legend: false,
+          save_image: false,
+          backgroundColor: 'rgba(5, 10, 24, 0)',
+          gridColor: 'rgba(30, 42, 68, 0.3)',
+        });
+      }
+    };
+    document.body.appendChild(script);
+
+    return () => {
+      try { document.body.removeChild(script); } catch {}
+    };
   }, [symbol]);
 
   return (
-    <Card className="h-full">
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <span>{symbol}</span>
-          <div className="flex items-center gap-2 text-sm font-normal">
-            <span className="text-muted-foreground">15min</span>
-            <span className="text-2xl font-bold text-green-500">$96,542</span>
-            <span className="text-green-500 text-sm">+2.4%</span>
+    <Card className="glass-card h-full flex flex-col">
+      <CardContent className="p-0 flex-1 flex flex-col">
+        {/* Symbol Tabs */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-border/30">
+          <div className="flex items-center gap-0.5">
+            {SYMBOLS.map((sym) => (
+              <button
+                key={sym}
+                onClick={() => setSymbol(sym)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition-all ${
+                  symbol === sym
+                    ? 'bg-primary/10 text-primary border border-primary/20'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                }`}
+              >
+                {sym.replace('USDT', '')}
+              </button>
+            ))}
           </div>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div id="tradingview_chart" className="rounded-lg overflow-hidden" />
+          <span className="text-[9px] font-mono text-muted-foreground/50">15m</span>
+        </div>
+        {/* Chart Container */}
+        <div ref={containerRef} id="tv_chart" className="flex-1 min-h-[300px] rounded-b-lg overflow-hidden" />
       </CardContent>
     </Card>
   );
