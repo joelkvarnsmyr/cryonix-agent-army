@@ -16,12 +16,12 @@ SYMBOLS = [
     "BTC/USDC", "ETH/USDC", "SOL/USDC", "BNB/USDC", "XRP/USDC",
     # Tier 2: Mid caps
     "ADA/USDC", "AVAX/USDC", "LINK/USDC", "DOT/USDC", "ATOM/USDC",
-    "NEAR/USDC", "SUI/USDC", "UNI/USDC", "AAVE/USDC", "MKR/USDC",
+    "NEAR/USDC", "SUI/USDC", "UNI/USDC", "AAVE/USDC", "TAO/USDC",
     # Tier 3: High-beta
-    "ARB/USDC", "OP/USDC", "INJ/USDC", "FET/USDC", "RNDR/USDC",
+    "ARB/USDC", "OP/USDC", "INJ/USDC", "FET/USDC", "RENDER/USDC",
     "TIA/USDC", "SEI/USDC", "JUP/USDC", "WLD/USDC", "ICP/USDC",
     # Tier 4: Emerging
-    "APT/USDC", "FIL/USDC", "MATIC/USDC", "ALGO/USDC", "FTM/USDC",
+    "APT/USDC", "FIL/USDC", "POL/USDC", "ALGO/USDC", "THETA/USDC",
     "STRK/USDC", "PYTH/USDC", "JTO/USDC", "WIF/USDC", "PENDLE/USDC",
     # Tier 5: Meme / micro-order
     "DOGE/USDC", "PEPE/USDC", "SHIB/USDC", "BONK/USDC", "FLOKI/USDC",

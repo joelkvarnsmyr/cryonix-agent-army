@@ -257,6 +257,7 @@ class RiskManager:
         if market_data and "atr" in market_data:
             entry_price = signal.get("entry_price", 0)
             atr = market_data.get("atr", 0)
+            dec = 2 if entry_price >= 1 else (4 if entry_price >= 0.01 else (6 if entry_price >= 0.0001 else 8))
 
             if signal.get("action") == "BUY":
                 dynamic_stop = entry_price - (2.0 * atr)
@@ -265,8 +266,8 @@ class RiskManager:
                 dynamic_stop = entry_price + (2.0 * atr)
                 dynamic_target = entry_price - (3.0 * atr)
 
-            result["adjustments"]["stop_loss"] = round(dynamic_stop, 2)
-            result["adjustments"]["take_profit"] = round(dynamic_target, 2)
+            result["adjustments"]["stop_loss"] = round(dynamic_stop, dec)
+            result["adjustments"]["take_profit"] = round(dynamic_target, dec)
             result["adjustments"]["risk_reward_ratio"] = 1.5  # 3:2 ratio
 
         # 11. Margin/Leverage safety check
@@ -279,14 +280,15 @@ class RiskManager:
             entry_price = signal.get("entry_price", 0)
             stop_loss = result["adjustments"].get("stop_loss", signal.get("stop_loss", 0))
             if entry_price > 0 and stop_loss > 0:
+                dec = 2 if entry_price >= 1 else (4 if entry_price >= 0.01 else (6 if entry_price >= 0.0001 else 8))
                 sl_dist_pct = abs(entry_price - stop_loss) / entry_price * 100
                 if sl_dist_pct > liquidation_dist * (1 - self.limits.liquidation_buffer_pct):
                     # Tighten stop-loss to stay inside liquidation zone
                     safe_dist = entry_price * liquidation_dist * 0.7 / 100
                     if signal.get("action") == "BUY":
-                        result["adjustments"]["stop_loss"] = round(entry_price - safe_dist, 2)
+                        result["adjustments"]["stop_loss"] = round(entry_price - safe_dist, dec)
                     else:
-                        result["adjustments"]["stop_loss"] = round(entry_price + safe_dist, 2)
+                        result["adjustments"]["stop_loss"] = round(entry_price + safe_dist, dec)
                     result["warnings"].append(f"SL tightened for {leverage}x leverage safety")
             result["adjustments"]["leverage"] = leverage
 

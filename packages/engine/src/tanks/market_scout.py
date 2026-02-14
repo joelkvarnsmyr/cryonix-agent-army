@@ -27,13 +27,13 @@ class MarketScoutTank(BaseTank):
                 # Tier 1: Core (ultra-liquid, $5 min)
                 "BTC/USDC", "ETH/USDC", "SOL/USDC", "BNB/USDC", "XRP/USDC",
                 # Tier 2: Major alts ($5 min)
-                "AVAX/USDC", "ADA/USDC", "LINK/USDC", "DOT/USDC", "MATIC/USDC",
+                "AVAX/USDC", "ADA/USDC", "LINK/USDC", "DOT/USDC", "POL/USDC",
                 "NEAR/USDC", "ARB/USDC", "OP/USDC", "SUI/USDC", "ATOM/USDC",
                 # Tier 3: AI & DeFi ($5 min)
-                "FET/USDC", "RNDR/USDC", "INJ/USDC", "TIA/USDC", "SEI/USDC",
+                "FET/USDC", "RENDER/USDC", "INJ/USDC", "TIA/USDC", "SEI/USDC",
                 "JUP/USDC", "WLD/USDC", "ICP/USDC", "APT/USDC", "FIL/USDC",
                 # Tier 4: Mid-cap movers ($5 min)
-                "AAVE/USDC", "UNI/USDC", "LDO/USDC", "MKR/USDC", "CRV/USDC",
+                "AAVE/USDC", "UNI/USDC", "LDO/USDC", "TAO/USDC", "CRV/USDC",
                 "DYDX/USDC", "STX/USDC", "IMX/USDC", "ALGO/USDC",
                 # Tier 5: Meme & micro-cap ($1 min — high volatility, diversification)
                 "DOGE/USDC", "SHIB/USDC", "PEPE/USDC", "BONK/USDC", "FLOKI/USDC",
