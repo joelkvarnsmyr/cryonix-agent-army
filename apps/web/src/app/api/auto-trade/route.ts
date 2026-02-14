@@ -517,13 +517,13 @@ Approve if the technical pattern is valid and not contradicted by price action. 
 JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one sentence", "sl": number|null, "tp": number|null}`;
 
     const response = await ai.chat.completions.create({
-      model: 'grok-3-mini-fast',
+      model: 'grok-3-mini',
       messages: [
         { role: 'system', content: 'You are RISK-BOT 9000, a pragmatic trading risk analyst. Validate signals objectively. Respond with a single minified JSON object only.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.1,
-      max_tokens: 150,
+      max_tokens: 200,
     });
 
     const content = response.choices[0]?.message?.content || '';

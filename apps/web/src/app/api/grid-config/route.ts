@@ -144,7 +144,7 @@ Respond with ONLY a minified JSON object:
 {"lower": number, "upper": number, "buyLevels": [${Array(levelsCount).fill('number').join(', ')}], "tpTargets": [${Array(levelsCount).fill('number').join(', ')}], "reasoning": "one sentence explaining the range choice"}`;
 
       const response = await ai.chat.completions.create({
-        model: 'grok-3-mini-fast',
+        model: 'grok-3-mini',
         messages: [
           { role: 'system', content: 'You are a grid trading analyst. Respond with a single minified JSON object.' },
           { role: 'user', content: prompt },
