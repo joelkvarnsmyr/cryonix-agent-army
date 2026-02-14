@@ -213,13 +213,15 @@ export const validationHistory = pgTable('validation_history', {
 });
 
 export const evolutionRuns = pgTable('evolution_runs', {
-  runId: varchar('run_id', { length: 100 }).primaryKey(),
-  startedAt: timestamp('started_at').notNull(),
-  endedAt: timestamp('ended_at'),
-  durationSeconds: doublePrecision('duration_seconds'),
-  status: varchar('status', { length: 50 }),
+  id: serial('id').primaryKey(),
+  runId: varchar('run_id', { length: 64 }),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+  durationSeconds: integer('duration_seconds'),
+  status: varchar('status', { length: 20 }),
   performanceData: jsonb('performance_data'),
   changesMade: jsonb('changes_made'),
+  createdAt: timestamp('created_at').defaultNow(),
 });
 
 // ============================================================================
