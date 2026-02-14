@@ -6,7 +6,7 @@ echo Starting Evolution Cycle at %date% %time% >> evolution.log
 :: set POSTGRES_URL=... 
 
 :: Run the evolver
-python scripts/evolve.py >> evolution.log 2>&1
+node scripts/copilot-evolution.mjs >> evolution.log 2>&1
 
 echo Completed at %date% %time% >> evolution.log
 echo -------------------------------------------- >> evolution.log

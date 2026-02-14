@@ -12,12 +12,14 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: cryonix
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - cryonix-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -26,12 +28,14 @@ services:
     image: redis:7-alpine
     restart: always
     command: redis-server --appendonly yes
+    ports:
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     networks:
       - cryonix-net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -105,7 +109,7 @@ services:
       context: .
       dockerfile: Dockerfile.scripts
     restart: always
-    command: ["node", "scripts/auto-trader.mjs"]
+    command: [ "node", "scripts/auto-trader.mjs" ]
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_APP_URL=http://web:3000
@@ -123,7 +127,7 @@ services:
       context: .
       dockerfile: Dockerfile.scripts
     restart: always
-    command: ["node", "scripts/ws-server.mjs"]
+    command: [ "node", "scripts/ws-server.mjs" ]
     ports:
       - "${WS_PORT:-3004}:3004"
     environment:
@@ -158,6 +162,7 @@ volumes:
   postgres_data:
   redis_data:
   caddy_data:
+
 
 networks:
   cryonix-net:

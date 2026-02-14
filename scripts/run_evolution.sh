@@ -12,12 +12,11 @@ if [ -f .env ]; then
   export $(cat .env | xargs)
 fi
 
-# Run the evolver
-# Assumes 'python3' and 'claude' are in the PATH
-# If claude is installed via npm globally:
+# Run the evolver (Copilot Edition)
+# Assumes 'node' is in the PATH
 export PATH=$PATH:/usr/local/bin:/root/.npm-global/bin
 
-python3 scripts/evolve.py >> "$LOG_FILE" 2>&1
+node scripts/copilot-evolution.mjs >> "$LOG_FILE" 2>&1
 
 echo "[INFO] Completed at $(date)" >> "$LOG_FILE"
 echo "--------------------------------------------" >> "$LOG_FILE"
