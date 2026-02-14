@@ -314,12 +314,120 @@ function cmdHelp() {
     `/pnl — P&L summary (24h + 7d)\n` +
     `/signals — Signal queue\n` +
     `/risk — Risk exposure\n` +
+    `/audit — Full system audit\n` +
     `/evolve — Evolution history\n` +
     `/help — This menu\n\n` +
     `<b>Auto Reports:</b>\n` +
     `📅 08:00 UTC — Morning brief\n` +
+    `📅 14:00 UTC — System audit\n` +
     `📅 22:00 UTC — Daily summary\n` +
     `⚡ Real-time — Trade & health alerts`;
+}
+
+async function cmdAudit() {
+  try {
+    // 1. Signal distribution (24h)
+    const sigDist = await query(`
+      SELECT action, COUNT(*) as cnt 
+      FROM signals WHERE timestamp > NOW() - INTERVAL '24 hours' 
+      GROUP BY action
+    `);
+    const buySignals = parseInt(sigDist.rows.find(r => r.action === 'BUY')?.cnt || 0);
+    const sellSignals = parseInt(sigDist.rows.find(r => r.action === 'SELL')?.cnt || 0);
+    const totalSignals = buySignals + sellSignals;
+    const buyPct = totalSignals > 0 ? ((buySignals / totalSignals) * 100).toFixed(1) : '0';
+
+    // 2. Pattern breakdown (24h)
+    const patterns = await query(`
+      SELECT pattern, COUNT(*) as cnt 
+      FROM signals WHERE timestamp > NOW() - INTERVAL '24 hours'
+      GROUP BY pattern ORDER BY cnt DESC LIMIT 5
+    `);
+
+    // 3. Execution stats
+    const execStats = await query(`
+      SELECT 
+        COUNT(*) as total_trades,
+        SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) as closed,
+        SUM(pnl) as total_pnl,
+        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins
+      FROM trades WHERE timestamp > NOW() - INTERVAL '24 hours'
+    `);
+    const ex = execStats.rows[0];
+    const totalTrades = parseInt(ex.total_trades || 0);
+
+    // 4. Open positions
+    const openPos = await query(`SELECT COUNT(*) as cnt FROM positions WHERE status = 'OPEN'`);
+
+    // 5. Redis queue state
+    let pendingQueue = 0, approvedQueue = 0;
+    try {
+      const rd = await connectRedis();
+      pendingQueue = await rd.llen('trades:pending');
+      approvedQueue = await rd.llen('trades:approved');
+    } catch {}
+
+    // 6. Last BUY signal
+    const lastBuy = await query(`
+      SELECT symbol, confidence, pattern, timestamp 
+      FROM signals WHERE action = 'BUY' ORDER BY timestamp DESC LIMIT 1
+    `);
+    const lastBuyStr = lastBuy.rows[0]
+      ? `${lastBuy.rows[0].symbol} (${(lastBuy.rows[0].confidence * 100).toFixed(0)}% ${lastBuy.rows[0].pattern}) ${timeSince(lastBuy.rows[0].timestamp)}`
+      : 'None';
+
+    // 7. Health
+    let healthStr = '?';
+    try {
+      const hRes = await fetch(`${WEB_URL}/api/health`);
+      const h = await hRes.json();
+      healthStr = h.services?.map(s => {
+        const icon = s.status === 'healthy' ? '🟢' : s.status === 'degraded' ? '🟡' : '🔴';
+        return `${icon} ${s.name}`;
+      }).join(' | ') || '?';
+    } catch {}
+
+    // 8. Detect issues
+    const issues = [];
+    if (buySignals === 0) issues.push('⚠️ No BUY signals in 24h');
+    else if (buyPct < 5) issues.push(`⚠️ Only ${buyPct}% BUY signals (market overbought?)`);
+    if (totalTrades === 0) issues.push('⚠️ No trades executed in 24h');
+    if (pendingQueue === 0 && buySignals > 0) issues.push('⚠️ BUY signals not reaching Redis queue');
+    if (parseInt(openPos.rows[0].cnt) === 0 && totalTrades === 0) issues.push('⚠️ No open positions and no trades');
+
+    const patternLines = patterns.rows.map(p =>
+      `  ${p.pattern}: ${p.cnt}`
+    ).join('\n');
+
+    const issueBlock = issues.length > 0
+      ? `\n<b>⚠️ Issues Detected:</b>\n${issues.join('\n')}`
+      : '\n✅ No issues detected';
+
+    return `🔍 <b>System Audit</b>\n\n` +
+      `<b>Services:</b> ${healthStr}\n\n` +
+      `<b>Signals (24h):</b>\n` +
+      `  BUY: ${buySignals} (${buyPct}%) | SELL: ${sellSignals}\n` +
+      `  Total: ${totalSignals}\n\n` +
+      `<b>Top Patterns:</b>\n${patternLines}\n\n` +
+      `<b>Execution:</b>\n` +
+      `  Trades: ${totalTrades} | P&L: $${parseFloat(ex.total_pnl || 0).toFixed(2)}\n` +
+      `  Open positions: ${openPos.rows[0].cnt}\n` +
+      `  Queue: ${pendingQueue} pending, ${approvedQueue} approved\n\n` +
+      `<b>Last BUY:</b> ${lastBuyStr}` +
+      issueBlock;
+  } catch (e) {
+    return `🔍 <b>System Audit</b>\nError: ${e.message}`;
+  }
+}
+
+function timeSince(date) {
+  const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 // ─── Command router ──────────────────────────────────────
@@ -330,6 +438,7 @@ const COMMANDS = {
   '/pnl': cmdPnl,
   '/signals': cmdSignals,
   '/risk': cmdRisk,
+  '/audit': cmdAudit,
   '/evolve': cmdEvolve,
   '/help': cmdHelp,
   '/start': cmdHelp,
@@ -423,6 +532,7 @@ function startScheduledReports() {
   // Check every minute if it's time for a scheduled report
   let lastMorning = null;
   let lastEvening = null;
+  let lastAudit = null;
 
   setInterval(() => {
     const now = new Date();
@@ -434,6 +544,12 @@ function startScheduledReports() {
     if (utcHour === 8 && utcMinute === 0 && lastMorning !== today) {
       lastMorning = today;
       sendMorningBrief().catch(console.error);
+    }
+
+    // System audit at 14:00 UTC
+    if (utcHour === 14 && utcMinute === 0 && lastAudit !== today) {
+      lastAudit = today;
+      cmdAudit().then(r => sendMessage(r)).catch(console.error);
     }
 
     // Daily summary at 22:00 UTC
