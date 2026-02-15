@@ -37,6 +37,8 @@ interface DailyState {
   date: string;
   tradesExecuted: number;
   dailyPnl: number;
+  unrealizedPnl?: number;
+  totalDayPnl?: number;
 }
 
 interface GridConfig {

@@ -11,7 +11,7 @@ export function PortfolioCard() {
 
   const totalValue = portfolio?.totalValue || 0;
   const holdings = portfolio?.holdings || [];
-  const dailyPnl = autoTrade?.dailyState?.dailyPnl || 0;
+  const dailyPnl = autoTrade?.dailyState?.totalDayPnl ?? autoTrade?.dailyState?.dailyPnl ?? 0;
   const dailyPnlPct = totalValue > 0 ? (dailyPnl / totalValue) * 100 : 0;
   const isProfitable = dailyPnl >= 0;
 

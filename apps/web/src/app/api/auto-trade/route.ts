@@ -1797,6 +1797,8 @@ export async function GET() {
   // Capital budget for dashboard visibility
   const budget = await getCapitalBudget();
 
+  const unrealizedPnl = positionDetails.reduce((sum: number, pos: any) => sum + (pos.pnl || 0), 0);
+
   return NextResponse.json({
     success: true,
     status: 'active',
@@ -1813,6 +1815,8 @@ export async function GET() {
       date: dailyState.date,
       tradesExecuted: dailyState.tradesExecuted,
       dailyPnl: dailyState.dailyPnl,
+      unrealizedPnl: +unrealizedPnl.toFixed(4),
+      totalDayPnl: +(dailyState.dailyPnl + unrealizedPnl).toFixed(4),
     },
     queues: { pending: pendingCount, approved: approvedCount },
     grids: gridConfigs,
