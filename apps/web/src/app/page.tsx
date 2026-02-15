@@ -3,7 +3,6 @@ import { PortfolioCard } from '@/components/dashboard/portfolio-card';
 import { PositionsCard } from '@/components/dashboard/positions-card';
 import { SignalPipeline } from '@/components/dashboard/signal-pipeline';
 import { AgentFlow } from '@/components/dashboard/agent-flow';
-import { MarketTicker } from '@/components/dashboard/market-ticker';
 import { HealthGrid } from '@/components/dashboard/health-grid';
 import { ConfigCard } from '@/components/dashboard/config-card';
 import { TradeActivity } from '@/components/dashboard/trade-activity';
@@ -13,71 +12,70 @@ import { EquityCurve } from '@/components/dashboard/equity-curve';
 import { PnlChart } from '@/components/dashboard/pnl-chart';
 import { PatternPerformance } from '@/components/dashboard/pattern-performance';
 import { AiImpactChart } from '@/components/dashboard/ai-impact-chart';
-import { PortfolioDonut } from '@/components/dashboard/portfolio-donut';
+import { SystemVitals } from '@/components/dashboard/system-vitals';
+import { EvolutionPanel } from '@/components/dashboard/evolution-panel';
 import { StaggerContainer, FadeUpItem } from '@/components/dashboard/motion-wrappers';
 
 export default function HomePage() {
   return (
     <DashboardLayout>
-      <StaggerContainer className="space-y-3">
-        {/* Row 1: Market Ticker Strip */}
+      <StaggerContainer className="space-y-2.5">
+        {/* Row 1: System Vitals — key metrics at a glance */}
         <FadeUpItem>
-          <MarketTicker />
+          <SystemVitals />
         </FadeUpItem>
 
-        {/* Row 2: Agent Flow - the hero visualization */}
+        {/* Row 2: System Architecture Flow */}
         <FadeUpItem>
           <AgentFlow />
         </FadeUpItem>
 
-        {/* Row 3: Main Grid - Portfolio + Chart + Signals */}
+        {/* Row 3: Main Grid — Command Center */}
         <FadeUpItem>
-          <div className="grid grid-cols-12 gap-3">
-            {/* Left: Portfolio + Allocation */}
-            <div className="col-span-12 lg:col-span-3 space-y-3">
+          <div className="grid grid-cols-12 gap-2.5">
+            {/* Left Column: Portfolio + Evolution */}
+            <div className="col-span-12 lg:col-span-3 space-y-2.5">
               <PortfolioCard />
-              <PortfolioDonut />
-              <PositionsCard />
+              <EvolutionPanel />
             </div>
 
-            {/* Center: Price Chart with trade markers */}
-            <div className="col-span-12 lg:col-span-6">
+            {/* Center Column: Price Chart (hero) + Analytics beneath */}
+            <div className="col-span-12 lg:col-span-6 space-y-2.5">
               <PriceChart />
+              <div className="grid grid-cols-2 gap-2.5">
+                <EquityCurve />
+                <PatternPerformance />
+              </div>
             </div>
 
-            {/* Right: Signals + Config */}
-            <div className="col-span-12 lg:col-span-3 space-y-3">
+            {/* Right Column: Signal Pipeline + Positions + Config */}
+            <div className="col-span-12 lg:col-span-3 space-y-2.5">
               <SignalPipeline />
+              <PositionsCard />
               <ConfigCard />
             </div>
           </div>
         </FadeUpItem>
 
-        {/* Row 4: Analytics Grid - 4 charts */}
+        {/* Row 4: Analytics Deep Dive */}
         <FadeUpItem>
-          <div className="grid grid-cols-12 gap-3">
-            <div className="col-span-12 lg:col-span-3">
-              <EquityCurve />
-            </div>
-            <div className="col-span-12 lg:col-span-3">
+          <div className="grid grid-cols-12 gap-2.5">
+            <div className="col-span-12 lg:col-span-6">
               <PnlChart />
             </div>
-            <div className="col-span-12 lg:col-span-3">
-              <PatternPerformance />
-            </div>
-            <div className="col-span-12 lg:col-span-3">
+            <div className="col-span-12 lg:col-span-6">
               <AiImpactChart />
             </div>
           </div>
         </FadeUpItem>
 
-        {/* Row 5: Process Log + Activity */}
+        {/* Row 5: Process Log + Activity + Health */}
         <FadeUpItem>
-          <div className="grid grid-cols-12 gap-3">
+          <div className="grid grid-cols-12 gap-2.5">
             <div className="col-span-12 lg:col-span-8">
               <ProcessViewer />
             </div>
-            <div className="col-span-12 lg:col-span-4 space-y-3">
+            <div className="col-span-12 lg:col-span-4 space-y-2.5">
               <TradeActivity />
               <HealthGrid />
             </div>

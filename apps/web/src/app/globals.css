@@ -80,8 +80,12 @@
   }
 }
 
-/* Cryonix Terminal Utilities */
+/* ============================================================
+   Cryonix Terminal — Visual System
+   ============================================================ */
+
 @layer utilities {
+  /* Text glow effects */
   .text-glow-cyan {
     text-shadow: 0 0 20px hsl(191 100% 50% / 0.4), 0 0 40px hsl(191 100% 50% / 0.15);
   }
@@ -91,6 +95,14 @@
   .text-glow-red {
     text-shadow: 0 0 20px hsl(0 72% 51% / 0.4), 0 0 40px hsl(0 72% 51% / 0.15);
   }
+  .text-glow-amber {
+    text-shadow: 0 0 20px hsl(38 92% 50% / 0.4), 0 0 40px hsl(38 92% 50% / 0.15);
+  }
+  .text-glow-violet {
+    text-shadow: 0 0 20px hsl(270 70% 60% / 0.4), 0 0 40px hsl(270 70% 60% / 0.15);
+  }
+
+  /* Glass morphism cards */
   .glass-card {
     background: hsl(220 55% 7% / 0.6);
     backdrop-filter: blur(12px);
@@ -101,12 +113,27 @@
     backdrop-filter: blur(16px);
     border: 1px solid hsl(218 35% 20% / 0.6);
   }
+  .glass-card-inset {
+    background: hsl(220 55% 5% / 0.5);
+    backdrop-filter: blur(8px);
+    border: 1px solid hsl(218 35% 12% / 0.4);
+  }
+
+  /* Border glow effects */
   .glow-border-cyan {
     box-shadow: 0 0 0 1px hsl(191 100% 50% / 0.15), 0 0 15px hsl(191 100% 50% / 0.07);
   }
   .glow-border-green {
     box-shadow: 0 0 0 1px hsl(160 84% 39% / 0.15), 0 0 15px hsl(160 84% 39% / 0.07);
   }
+  .glow-border-amber {
+    box-shadow: 0 0 0 1px hsl(38 92% 50% / 0.15), 0 0 15px hsl(38 92% 50% / 0.07);
+  }
+  .glow-border-violet {
+    box-shadow: 0 0 0 1px hsl(270 70% 60% / 0.15), 0 0 15px hsl(270 70% 60% / 0.07);
+  }
+
+  /* Noise texture overlay */
   .noise-overlay {
     position: relative;
   }
@@ -119,25 +146,71 @@
     pointer-events: none;
     z-index: 0;
   }
+
+  /* Dot grid background */
+  .dot-grid {
+    background-image: radial-gradient(circle, hsl(218 35% 20% / 0.3) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  /* Subtle scanline effect */
+  .scanlines::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      hsl(0 0% 0% / 0.02) 2px,
+      hsl(0 0% 0% / 0.02) 4px
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Metric highlight - subtle gradient background for key numbers */
+  .metric-highlight {
+    background: linear-gradient(135deg, hsl(191 100% 50% / 0.06) 0%, transparent 60%);
+    border-left: 2px solid hsl(191 100% 50% / 0.3);
+  }
+
+  /* Active indicator breathing */
+  .breathing {
+    animation: breathing 3s ease-in-out infinite;
+  }
+
+  /* Edge accent line */
+  .edge-accent-top {
+    border-top: 1px solid transparent;
+    border-image: linear-gradient(90deg, transparent, hsl(191 100% 50% / 0.3), transparent) 1;
+  }
+  .edge-accent-bottom {
+    border-bottom: 1px solid transparent;
+    border-image: linear-gradient(90deg, transparent, hsl(191 100% 50% / 0.2), transparent) 1;
+  }
 }
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(218 35% 20%);
+  background: hsl(218 35% 18%);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(218 35% 28%);
+  background: hsl(218 35% 26%);
 }
 
-/* Animations */
+/* ============================================================
+   Animations
+   ============================================================ */
+
 @keyframes pulse-glow {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -158,16 +231,31 @@
   100% { background-position: 200% 0; }
 }
 
+@keyframes breathing {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+@keyframes flow-dash {
+  to { stroke-dashoffset: -12; }
+}
+
+@keyframes number-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes border-pulse {
+  0%, 100% { border-color: hsl(191 100% 50% / 0.15); }
+  50% { border-color: hsl(191 100% 50% / 0.35); }
+}
+
 .animate-slide-up {
   animation: slide-up 0.4s ease-out both;
 }
 
 .animate-fade-in {
   animation: fade-in 0.3s ease-out both;
-}
-
-@keyframes flow-dash {
-  to { stroke-dashoffset: -12; }
 }
 
 .animate-shimmer {
@@ -178,6 +266,14 @@
 
 .animate-flow-dash {
   animation: flow-dash 0.8s linear infinite;
+}
+
+.animate-number-up {
+  animation: number-up 0.3s ease-out both;
+}
+
+.animate-border-pulse {
+  animation: border-pulse 3s ease-in-out infinite;
 }
 
 /* Stagger children animations */
