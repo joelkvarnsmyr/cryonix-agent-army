@@ -177,6 +177,31 @@ services:
         condition: service_healthy
 
   # ============================================================
+  # Telegram Signal Scraper (Python/Telethon)
+  # ============================================================
+
+  telegram-scraper:
+    build:
+      context: ./scripts/telegram-scraper
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - TELEGRAM_SESSION=${TELEGRAM_SESSION}
+      - TELEGRAM_CHANNELS=${TELEGRAM_CHANNELS:-CoinCodeCap,FatPigSignals,RavenTradingPro}
+      - KV_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+      - CONFIDENCE_BOOST_ENABLED=false
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ============================================================
   # Caddy Reverse Proxy (Handles HTTPS and routing)
   # ============================================================
 

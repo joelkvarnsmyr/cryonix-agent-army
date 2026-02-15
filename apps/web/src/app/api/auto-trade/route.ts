@@ -1541,6 +1541,38 @@ export async function POST() {
       }
     }
 
+    // STEP 3b: Telegram Signal Boost — external channel convergence
+    let telegramBoosts: Record<string, { delta: number; channels: string[]; consensus: number }> = {};
+    try {
+      const telegramRaw = await redis.get('signals:telegram:active');
+      if (telegramRaw) {
+        const telegramData = JSON.parse(telegramRaw as string);
+        if (telegramData.boost_enabled) {
+          const cutoff = Date.now() - 30 * 60 * 1000;
+          for (const sig of (telegramData.signals || [])) {
+            const sigTime = new Date(sig.latest_at || telegramData.timestamp).getTime();
+            if (sigTime > cutoff) {
+              telegramBoosts[sig.symbol] = {
+                delta: sig.confidence_delta,
+                channels: sig.channels || [sig.channel],
+                consensus: sig.consensus || 1,
+              };
+            }
+          }
+        }
+      }
+    } catch { /* telegram source unavailable — silent fail */ }
+
+    for (const p of parsed) {
+      const boost = telegramBoosts[p.signal.symbol];
+      if (boost && p.signal.action === 'BUY') {
+        const oldConf = p.signal.confidence;
+        p.signal.confidence = Math.min(0.95, p.signal.confidence + boost.delta);
+        p.signal.reason += ` | 📱 Telegram (${boost.channels.join(', ')}) +${(boost.delta * 100).toFixed(0)}%`;
+        console.log(`[TELEGRAM-BOOST] ${p.signal.symbol}: ${oldConf.toFixed(2)} → ${p.signal.confidence.toFixed(2)} (${boost.consensus} channels)`);
+      }
+    }
+
     parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
     const topSignals = parsed.slice(0, 15);
     // Remove low-quality signals we won't process

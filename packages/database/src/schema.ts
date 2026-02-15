@@ -254,6 +254,49 @@ export const positionHistory = pgTable('position_history', {
 });
 
 // ============================================================================
+// TELEGRAM SIGNALS TABLE — Log every parsed signal from Telegram channels
+// ============================================================================
+
+export const telegramSignals = pgTable('telegram_signals', {
+  id: serial('id').primaryKey(),
+  timestamp: timestamp('timestamp').defaultNow().notNull(),
+  channelId: varchar('channel_id', { length: 50 }).notNull(),
+  channelName: varchar('channel_name', { length: 100 }).notNull(),
+  symbol: varchar('symbol', { length: 20 }).notNull(),
+  action: varchar('action', { length: 10 }).notNull(),     // 'BUY' or 'SELL'
+  entryPrice: decimal('entry_price', { precision: 20, scale: 8 }),
+  entryPriceHigh: decimal('entry_price_high', { precision: 20, scale: 8 }),
+  stopLoss: decimal('stop_loss', { precision: 20, scale: 8 }),
+  tp1: decimal('tp1', { precision: 20, scale: 8 }),
+  tp2: decimal('tp2', { precision: 20, scale: 8 }),
+  tp3: decimal('tp3', { precision: 20, scale: 8 }),
+  rawMessage: text('raw_message').notNull(),
+  parsed: boolean('parsed').default(true),
+  matchedInternalSignal: boolean('matched_internal_signal').default(false),
+  outcome: varchar('outcome', { length: 20 }),  // 'WIN', 'LOSS', 'PENDING', 'EXPIRED'
+  metadata: jsonb('metadata'),
+});
+
+// ============================================================================
+// TELEGRAM CHANNELS TABLE — Track channel quality over time
+// ============================================================================
+
+export const telegramChannels = pgTable('telegram_channels', {
+  id: serial('id').primaryKey(),
+  channelId: varchar('channel_id', { length: 50 }).notNull().unique(),
+  channelName: varchar('channel_name', { length: 100 }).notNull(),
+  totalSignals: integer('total_signals').default(0),
+  wins: integer('wins').default(0),
+  losses: integer('losses').default(0),
+  winRate: decimal('win_rate', { precision: 5, scale: 2 }),
+  avgConfidenceBoost: decimal('avg_confidence_boost', { precision: 5, scale: 4 }),
+  isActive: boolean('is_active').default(true),
+  addedAt: timestamp('added_at').defaultNow(),
+  lastSignalAt: timestamp('last_signal_at'),
+  metadata: jsonb('metadata'),
+});
+
+// ============================================================================
 // EXPORT TYPES
 // ============================================================================
 
@@ -286,3 +329,9 @@ export type NewValidationHistory = typeof validationHistory.$inferInsert;
 
 export type PositionHistory = typeof positionHistory.$inferSelect;
 export type NewPositionHistory = typeof positionHistory.$inferInsert;
+
+export type TelegramSignal = typeof telegramSignals.$inferSelect;
+export type NewTelegramSignal = typeof telegramSignals.$inferInsert;
+
+export type TelegramChannel = typeof telegramChannels.$inferSelect;
+export type NewTelegramChannel = typeof telegramChannels.$inferInsert;

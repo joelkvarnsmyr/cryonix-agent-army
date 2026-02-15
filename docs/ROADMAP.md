@@ -265,7 +265,7 @@ At each phase transition, ask:
 
 | Component | Status | Relevant Fas |
 |-----------|--------|-------------|
-| QuantGuild (7 pattern detectors) | ✅ Production | All |
+| QuantGuild (8 pattern detectors) | ✅ Production | All |
 | GROK AI validation (second opinion) | ✅ Production | All |
 | Kelly Criterion position sizing | ✅ Production (3 implementations) | All |
 | Market regime detection (ADX) | ✅ Production | All |
@@ -280,7 +280,7 @@ At each phase transition, ask:
 | Margin mode (cross, 3x) | ✅ Coded, disabled | Fas 3 |
 | Short selling (executeMarginSell) | ✅ Coded, disabled | Fas 3 |
 | Binance native SL orders | ✅ Production | Fas 3+ |
-| Capital Allocator | 🔴 Not built | Fas 2 |
+| Capital Allocator | ✅ Production | Fas 2 |
 | Unified RiskManager | 🔴 Not built | Fas 2 |
 | LoanManager Agent | 🔴 Not built | Fas 4 |
 | Multi-exchange | 🔴 Not built | Fas 5 |

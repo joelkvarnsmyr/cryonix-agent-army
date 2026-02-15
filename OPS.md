@@ -275,14 +275,16 @@ curl http://openclaw-vm/api/auto-trade
 | GRID_POOL_PCT       | 0.25    | 25% capital → grid trading          |
 | RESERVE_PCT         | 0.10    | 10% always held in reserve          |
 
-### Scanned Pairs (15)
+### Scanned Pairs (45)
 
-| Tier | Pairs                                   |
-|------|-----------------------------------------|
-| 1    | BTC/USDC, ETH/USDC, SOL/USDC           |
-| 2    | BNB/USDC, XRP/USDC, AVAX/USDC, ADA/USDC, LINK/USDC |
-| 3    | NEAR/USDC, DOGE/USDC, ARB/USDC, OP/USDC |
-| 4    | SUI/USDC, ATOM/USDC, ICP/USDC          |
+| Tier | Pairs |
+|------|-------|
+| 1 | BTC, ETH, SOL, BNB, XRP |
+| 2 | AVAX, ADA, LINK, DOT, POL, NEAR, ARB, OP, SUI, ATOM |
+| 3 | FET, RENDER, INJ, TIA, SEI, JUP, WLD, ICP, APT, FIL |
+| 4 | AAVE, UNI, LDO, TAO, CRV, DYDX, STX, IMX, ALGO |
+| 5 | DOGE, SHIB, PEPE, BONK, FLOKI, WIF, 1000SATS, ANIME |
+| 6 | AIXBT, ARKM, PYTH, JTO, STRK, MANTA |
 
 ---
 
