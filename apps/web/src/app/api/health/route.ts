@@ -112,10 +112,37 @@ export async function GET() {
     status = 'degraded';
   }
 
+  // Build services array for frontend components
+  const servicesMap = [
+    { name: 'Redis', check: redisCheck },
+    { name: 'Postgres', check: postgresCheck },
+    { name: 'Python Engine', check: engineCheck },
+    { name: 'Binance', check: binanceCheck },
+  ];
+
+  const services = servicesMap.map(({ name, check }) => ({
+    name,
+    status: check.status === 'ok' ? 'healthy' as const : 'down' as const,
+    latency: check.latency_ms,
+    ...(check.error ? { details: { error: check.error } } : {}),
+  }));
+
+  const healthyCount = services.filter(s => s.status === 'healthy').length;
+  const downCount = services.filter(s => s.status === 'down').length;
+  const totalLatency = services.reduce((sum, s) => sum + (s.latency || 0), 0);
+
   const body = {
     status,
     timestamp: new Date().toISOString(),
     uptime: Math.floor((Date.now() - startedAt) / 1000),
+    totalLatency,
+    summary: {
+      healthy: healthyCount,
+      degraded: 0,
+      down: downCount,
+      total: services.length,
+    },
+    services,
     checks: {
       redis: redisCheck,
       postgres: postgresCheck,
