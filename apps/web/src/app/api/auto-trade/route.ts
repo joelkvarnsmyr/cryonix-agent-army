@@ -406,6 +406,71 @@ async function monitorPositions(): Promise<MonitorResult[]> {
 }
 
 // ============================================================================
+// SELF-CALIBRATION: Pattern Win Rate + Expected Value
+// ============================================================================
+
+interface PatternStats {
+  pattern: string;
+  trades: number;
+  wins: number;
+  winRate: number;
+  avgWin: number;
+  avgLoss: number;
+  ev: number;
+}
+
+let calibrationCache: Record<string, PatternStats> = {};
+let calibrationLastFetched = 0;
+const CALIBRATION_CACHE_MS = 30 * 60 * 1000; // refresh every 30 min
+
+async function getPatternCalibration(): Promise<Record<string, PatternStats>> {
+  const now = Date.now();
+  if (now - calibrationLastFetched < CALIBRATION_CACHE_MS && Object.keys(calibrationCache).length > 0) {
+    return calibrationCache;
+  }
+
+  try {
+    // Fetch from Redis cache first
+    const cached = await redis.get('calibration:patterns');
+    if (cached) {
+      calibrationCache = JSON.parse(cached);
+      calibrationLastFetched = now;
+      return calibrationCache;
+    }
+  } catch {}
+
+  // If no cache, return empty (calibration cron will populate it)
+  return calibrationCache;
+}
+
+async function calculateExpectedValue(signal: Signal, cal?: Record<string, PatternStats>): Promise<{ ev: number; winRate: number; sampleSize: number; pattern: string } | null> {
+  if (!cal) cal = await getPatternCalibration();
+  if (Object.keys(cal).length === 0) return null; // No calibration data yet
+
+  // Match signal patterns against calibration
+  const patterns = signal.patterns || [];
+  const patternKey = patterns.sort().join(', ');
+
+  // Try exact multi-pattern match first, then individual patterns
+  let stats = cal[patternKey];
+  if (!stats) {
+    // Find best single-pattern match
+    for (const p of patterns) {
+      if (cal[p] && (!stats || cal[p].trades > stats.trades)) {
+        stats = cal[p];
+      }
+    }
+  }
+
+  if (!stats || stats.trades < 3) return null; // Not enough data
+
+  const ev = (stats.winRate / 100 * stats.avgWin) - ((100 - stats.winRate) / 100 * Math.abs(stats.avgLoss));
+  console.log(`[EV] ${signal.symbol} ${patternKey}: EV=$${ev.toFixed(4)} (win ${stats.winRate}% of ${stats.trades})`);
+
+  return { ev, winRate: stats.winRate, sampleSize: stats.trades, pattern: patternKey };
+}
+
+// ============================================================================
 // RISK CHECKS
 // ============================================================================
 
@@ -439,6 +504,18 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     return { pass: false, reason: `Already in ${signal.symbol}` };
   }
 
+  // X sentiment alert check — reject if breaking negative news
+  try {
+    const baseAsset = signal.symbol.split('/')[0];
+    const alert = await redis.get(`sentiment:alert:${baseAsset}`);
+    if (alert && signal.action === 'BUY') {
+      const alertLower = alert.toLowerCase();
+      if (alertLower.includes('hack') || alertLower.includes('exploit') || alertLower.includes('rug') || alertLower.includes('sec') || alertLower.includes('crash')) {
+        return { pass: false, reason: `X alert: ${alert}` };
+      }
+    }
+  } catch {}
+
   // Check available cash before burning AI tokens
   try {
     const ex = getExchange();
@@ -457,6 +534,12 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
   const reward = Math.abs(signal.target_price - signal.entry_price);
   if (risk > 0 && reward / risk < 1.3) {
     return { pass: false, reason: `R/R ${(reward / risk).toFixed(2)} < 1.3` };
+  }
+
+  // === EV-MODEL: Expected Value filter based on historical pattern performance ===
+  const ev = await calculateExpectedValue(signal);
+  if (ev !== null && ev.ev < 0) {
+    return { pass: false, reason: `Negative EV: $${ev.ev.toFixed(4)} (${ev.pattern} win ${ev.winRate}% of ${ev.sampleSize} trades)` };
   }
 
   return { pass: true, reason: 'OK' };
@@ -491,10 +574,24 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
     // Fetch sentiment score from Redis
     const baseAsset = signal.symbol.split('/')[0];
     const sentimentKey = `sentiment:${baseAsset}`;
-    const sentimentScore = parseInt(await redis.get(sentimentKey) || '0');
+    const [sentimentRaw, sentimentAlert, evData] = await Promise.all([
+      redis.get(sentimentKey),
+      redis.get(`sentiment:alert:${baseAsset}`),
+      getPatternCalibration(),
+    ]);
+    const sentimentScore = parseInt(sentimentRaw || '0');
     let sentimentLabel = 'Neutral';
     if (sentimentScore > 0) sentimentLabel = 'Positive';
     if (sentimentScore < 0) sentimentLabel = 'Negative';
+    if (sentimentScore >= 2) sentimentLabel = 'Bullish';
+    if (sentimentScore <= -2) sentimentLabel = 'Bearish';
+
+    // Calculate EV for this signal's patterns
+    const evResult = await calculateExpectedValue(signal, evData);
+    const evCtx = evResult
+      ? `- **Expected Value:** $${evResult.ev.toFixed(4)} (${evResult.winRate}% win rate over ${evResult.sampleSize} trades)`
+      : '- **Expected Value:** insufficient data';
+    const alertCtx = sentimentAlert ? `\n- **⚠️ X Alert:** ${sentimentAlert}` : '';
 
     // === DYNAMIC PORTFOLIO CONTEXT ===
     const [totalCapital, openPositions] = await Promise.all([
@@ -529,11 +626,10 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
 **LIVE MARKET:**
 - **Current Price:** $${ticker.last?.toFixed(2)}
 - **24h Change:** ${ticker.percentage?.toFixed(2)}%
-- **Sentiment:** ${sentimentLabel} (${sentimentScore})
+- **Sentiment:** ${sentimentLabel} (${sentimentScore})${alertCtx}
+${evCtx}
 
 ${portfolioCtx}
-
-**CRITICAL ANALYSIS:**
 Is this PANIC SELLING (opportunity) or a FALLING KNIFE (avoid)?
 Consider: drop velocity, volume pattern, multi-TF RSI alignment, isolated vs broad selloff.
 
@@ -558,13 +654,16 @@ JSON: {"approve": boolean, "confidence": number(0-100), "reasoning": "one senten
 
 **Live Market:**
 - **Price:** $${ticker.last?.toFixed(4)} | **24h:** ${ticker.percentage?.toFixed(2)}%
-- **Sentiment:** ${sentimentLabel} (${sentimentScore})
+- **Sentiment:** ${sentimentLabel} (${sentimentScore})${alertCtx}
+${evCtx}
 
 ${portfolioCtx}
 
 **Decision rules:**
 - Approve if 2+ indicators confirm AND market regime supports the pattern type (trending patterns need ADX>25, mean-reversion needs ranging market).
 - REJECT if signal goes AGAINST higher timeframe trend (HTF).
+- REJECT or lower confidence if EV is negative (pattern historically loses money).
+- BOOST confidence if X sentiment is bullish (score ≥2) AND technical signal aligns.
 - Consider position concentration — reject if we already hold this asset.
 
 JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one sentence", "sl": number|null, "tp": number|null}`;

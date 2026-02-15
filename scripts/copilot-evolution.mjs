@@ -278,6 +278,14 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
   async createBackup() {
     console.log('\n💾 Creating backup of critical files...');
 
+    // Stash any uncommitted changes FIRST to protect manual work
+    const statusOut = await this.execCommand('git status --porcelain');
+    this.hadUncommittedChanges = statusOut.trim().length > 0;
+    if (this.hadUncommittedChanges) {
+      console.log('  📦 Stashing uncommitted changes to protect manual work...');
+      await this.execCommand('git stash push -m "evolution-auto-stash"');
+    }
+
     const backupDir = join(CONFIG.PROJECT_ROOT, '.evolution-backups', this.runId);
     await this.execCommand(`mkdir -p ${backupDir}`);
 
@@ -300,6 +308,16 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
       const dest = join(CONFIG.PROJECT_ROOT, file);
       await this.execCommand(`cp ${source} ${dest}`);
       console.log(`  ✅ Restored: ${file}`);
+    }
+
+    // Restore stashed manual changes
+    if (this.hadUncommittedChanges) {
+      console.log('  📦 Restoring stashed manual changes...');
+      try {
+        await this.execCommand('git stash pop');
+      } catch (e) {
+        console.warn('  ⚠️  Could not pop stash cleanly, manual merge may be needed');
+      }
     }
   }
 
@@ -416,6 +434,39 @@ DIAGNOSIS KEY:
 ${scannerDiagnostic}
 DIAGNOSIS: If big movers were missed, the signal pipeline may not prioritize momentum coins.` : '';
 
+    // Fetch calibration data (EV model)
+    let calibrationSection = '';
+    try {
+      const calRaw = await this.redis.get('calibration:patterns');
+      if (calRaw) {
+        const cal = JSON.parse(calRaw);
+        calibrationSection = `
+## Pattern Calibration (EV Model)
+${Object.entries(cal).map(([pattern, stats]) => {
+  const s = stats;
+  return `- ${pattern}: ${s.trades} trades, ${s.winRate}% win rate, EV=$${s.ev} (avg win=$${s.avgWin}, avg loss=$${s.avgLoss})`;
+}).join('\n')}
+DIAGNOSIS: Patterns with negative EV should be deprioritized. Patterns with <3 trades need more data.`;
+      }
+    } catch {}
+
+    // Fetch X sentiment context
+    let sentimentSection = '';
+    try {
+      const sentRaw = await this.redis.get('x-sentiment:latest');
+      if (sentRaw) {
+        const sent = JSON.parse(sentRaw);
+        const age = Math.round((Date.now() - new Date(sent.timestamp).getTime()) / 60000);
+        sentimentSection = `
+## X/Twitter Sentiment (${age}min ago)
+${Object.entries(sent.data).map(([symbol, info]) => {
+  const i = info;
+  return `- ${symbol}: score=${i.score} volume=${i.volume} "${i.narrative}"${i.alert ? ` ⚠️ ALERT: ${i.alert}` : ''}`;
+}).join('\n')}
+DIAGNOSIS: Coins with score ≥2 and high volume are momentum candidates. Coins with alerts should be avoided.`;
+      }
+    } catch {}
+
     // Build structural issues section
     const issuesSection = structuralIssues?.length > 0 ? `
 ## ⚡ STRUCTURAL ISSUES DETECTED
@@ -424,14 +475,26 @@ These are more important than pattern-level fixes. Address structural issues FIR
 
     const systemPrompt = `You are a Senior Quantitative Developer orchestrating an autonomous trading system evolution.
 
-Your job: analyze the performance data, exit analysis, market diagnostics, and source code below,
+Your job: analyze the performance data, exit analysis, market diagnostics, calibration EV data, X sentiment, and source code below,
 then produce a SINGLE, precise instruction that GitHub Copilot CLI will execute to improve the code.
+
+SYSTEM CAPABILITIES YOU CAN LEVERAGE:
+- ADX market regime detection (trending/ranging/volatile) in quant.py
+- Multi-timeframe trend filter (1h+4h EMA alignment)
+- Pattern calibration with Expected Value (EV) model — patterns with negative EV should be filtered
+- X/Twitter sentiment scores per coin — bullish sentiment + technical signal = high confidence
+- GROK xAI search mode for real-time news context during AI validation
+- Order book spread check (rejects >0.3% spread)
+- GainerScanner identifying momentum coins with >5% moves
+- Dynamic portfolio context (real Binance capital, not hardcoded)
 
 ANALYSIS PRIORITY ORDER:
 1. STRUCTURAL ISSUES (stop-loss too tight, trailing stop killing profits, over-trading) — fix these first
 2. EXIT STRATEGY (SL/TP/trailing parameters) — more impactful than entry strategy
-3. SIGNAL QUALITY (pattern confidence, missed opportunities from GainerScanner)
-4. PATTERN-LEVEL (weakest pattern confidence/thresholds)
+3. CALIBRATION EV — if patterns have negative expected value, adjust thresholds or deprioritize
+4. SENTIMENT ALIGNMENT — leverage X sentiment for signal confirmation
+5. SIGNAL QUALITY (pattern confidence, missed opportunities from GainerScanner)
+6. PATTERN-LEVEL (weakest pattern confidence/thresholds)
 
 RULES FOR YOUR OUTPUT:
 1. Output ONLY the instruction text that Copilot CLI will receive — no preamble, no markdown wrapping.
@@ -440,7 +503,9 @@ RULES FOR YOUR OUTPUT:
 4. NEVER remove risk checks (stop-loss, max position size, daily loss limits).
 5. Changes must pass: python scripts/verify_deep_value.py && python scripts/verify_grid.py
 6. After editing, tell Copilot to run the verification tests.
-7. Focus on the EXIT side — historically our entries are better than our exits.`;
+7. Focus on the EXIT side — historically our entries are better than our exits.
+8. If calibration data shows a pattern has negative EV, consider raising its confidence threshold.
+9. Use X sentiment to inform whether momentum-based signals should be boosted.`;
 
     const userPrompt = `## Performance Data (last ${CONFIG.LOOKBACK_HOURS}h)
 Total P&L: $${totalPnl.toFixed(2)} | Total Trades: ${totalTrades}
@@ -450,6 +515,8 @@ ${patternBreakdown}
 ${exitSection}
 ${freqSection}
 ${scannerSection}
+${calibrationSection}
+${sentimentSection}
 ${issuesSection}
 
 ## Open Positions
@@ -674,6 +741,16 @@ Based on ALL the data above (not just patterns), generate the Copilot CLI instru
         // Step 5: Commit and deploy
         const commitMsg = `[Auto-Evolution ${this.runId}] Improve ${performanceData.weakestPattern} pattern (P&L: $${performanceData.weakestPnl.toFixed(2)})`;
         await this.commitChanges(commitMsg);
+
+        // Restore stashed manual changes after successful commit
+        if (this.hadUncommittedChanges) {
+          console.log('  📦 Restoring stashed manual changes...');
+          try {
+            await this.execCommand('git stash pop');
+          } catch (e) {
+            console.warn('  ⚠️  Stash pop conflict — manual changes saved in stash');
+          }
+        }
 
         // Step 6: Deploy to production
         await this.deployToProduction();
