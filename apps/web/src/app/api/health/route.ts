@@ -1,139 +1,129 @@
 import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
-import { db, signals } from '@cryonix/database';
-import { desc } from 'drizzle-orm';
+import { db } from '@cryonix/database';
+import { sql } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
 
-interface ServiceStatus {
-  name: string;
-  status: 'healthy' | 'degraded' | 'down';
-  latency?: number;
-  details?: Record<string, unknown>;
+const startedAt = Date.now();
+
+interface CheckResult {
+  status: 'ok' | 'error';
+  latency_ms: number;
+  error?: string;
 }
 
-async function checkRedis(): Promise<ServiceStatus> {
+async function checkRedis(): Promise<CheckResult> {
   const start = Date.now();
   try {
     await redis.ping();
-    const pendingCount = await redis.llen('trades:pending');
-    const approvedCount = await redis.llen('trades:approved');
-    return {
-      name: 'Redis',
-      status: 'healthy',
-      latency: Date.now() - start,
-      details: {
-        pendingApprovals: pendingCount,
-        approvedTrades: approvedCount,
-      },
-    };
-  } catch (error) {
-    return { name: 'Redis', status: 'down', details: { error: String(error) } };
+    return { status: 'ok', latency_ms: Date.now() - start };
+  } catch (e) {
+    return { status: 'error', latency_ms: Date.now() - start, error: String(e) };
   }
 }
 
-async function checkPostgres(): Promise<ServiceStatus> {
+async function checkPostgres(): Promise<CheckResult> {
   const start = Date.now();
   try {
-    const result = await db.select().from(signals).orderBy(desc(signals.timestamp)).limit(1);
-    return {
-      name: 'Postgres',
-      status: 'healthy',
-      latency: Date.now() - start,
-      details: {
-        lastSignal: result[0]?.timestamp || null,
-        signalCount: result.length,
-      },
-    };
-  } catch (error) {
-    return { name: 'Postgres', status: 'down', details: { error: String(error) } };
+    await db.execute(sql`SELECT 1`);
+    return { status: 'ok', latency_ms: Date.now() - start };
+  } catch (e) {
+    return { status: 'error', latency_ms: Date.now() - start, error: String(e) };
   }
 }
 
-async function checkPythonEngine(): Promise<ServiceStatus> {
+async function checkBinance(): Promise<CheckResult> {
   const start = Date.now();
   try {
+    // Lightweight public endpoint — no auth needed
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const engineUrl = process.env.ENGINE_URL || 'http://localhost:8000';
-    const response = await fetch(`${engineUrl}/`, {
+    const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDC', {
       signal: controller.signal,
     });
     clearTimeout(timeout);
-
-    if (!response.ok) {
-      return { name: 'Python Engine', status: 'degraded', latency: Date.now() - start };
-    }
-
-    const data = await response.json();
-    return {
-      name: 'Python Engine',
-      status: 'healthy',
-      latency: Date.now() - start,
-      details: {
-        mode: data.mode,
-      },
-    };
-  } catch (error) {
-    return { name: 'Python Engine', status: 'down', details: { error: String(error) } };
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await res.json();
+    return { status: 'ok', latency_ms: Date.now() - start };
+  } catch (e) {
+    return { status: 'error', latency_ms: Date.now() - start, error: String(e) };
   }
 }
 
-async function checkMarketScout(): Promise<ServiceStatus> {
+async function checkEngine(): Promise<CheckResult> {
   const start = Date.now();
   try {
-    const status = await redis.get('agent:MarketScout:status');
-    if (!status) {
-      return { name: 'MarketScout Tank', status: 'down', details: { error: 'No status in Redis' } };
-    }
+    const engineUrl = process.env.ENGINE_URL || 'http://localhost:8000';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`${engineUrl}/health`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return { status: 'ok', latency_ms: Date.now() - start };
+  } catch (e) {
+    return { status: 'error', latency_ms: Date.now() - start, error: String(e) };
+  }
+}
 
-    const parsed = JSON.parse(status);
+async function getTradingData() {
+  try {
+    const [dailyRaw, positionsRaw, regimeRaw] = await Promise.all([
+      redis.get('daily:state'),
+      redis.get('positions:open'),
+      redis.get('market:regime'),
+    ]);
+
+    const daily = dailyRaw ? JSON.parse(dailyRaw as string) : null;
+    const positions = positionsRaw ? JSON.parse(positionsRaw as string) : [];
+    const today = new Date().toDateString();
+
     return {
-      name: 'MarketScout Tank',
-      status: parsed.status === 'active' ? 'healthy' : 'degraded',
-      latency: Date.now() - start,
-      details: parsed.details,
+      open_positions: Array.isArray(positions) ? positions.length : 0,
+      daily_trades: daily?.date === today ? (daily.tradesExecuted ?? 0) : 0,
+      daily_pnl: daily?.date === today ? (daily.dailyPnl ?? 0) : 0,
+      capital: 0, // populated below if possible
+      regime: (regimeRaw as string) || 'unknown',
     };
-  } catch (error) {
-    return { name: 'MarketScout Tank', status: 'down', details: { error: String(error) } };
+  } catch {
+    return { open_positions: 0, daily_trades: 0, daily_pnl: 0, capital: 0, regime: 'unknown' };
   }
 }
 
 export async function GET() {
-  const start = Date.now();
-
-  // Run all health checks in parallel
-  const [redisStatus, postgresStatus, engineStatus, scoutStatus] = await Promise.all([
+  const [redisCheck, postgresCheck, binanceCheck, engineCheck, trading] = await Promise.all([
     checkRedis(),
     checkPostgres(),
-    checkPythonEngine(),
-    checkMarketScout(),
+    checkBinance(),
+    checkEngine(),
+    getTradingData(),
   ]);
 
-  const services = [redisStatus, postgresStatus, engineStatus, scoutStatus];
+  // healthy = all pass; degraded = core (redis+pg) ok but engine/binance down; unhealthy = redis or pg down
+  const coreOk = redisCheck.status === 'ok' && postgresCheck.status === 'ok';
+  const allOk = coreOk && binanceCheck.status === 'ok' && engineCheck.status === 'ok';
 
-  // Determine overall health
-  const healthyCount = services.filter(s => s.status === 'healthy').length;
-  const downCount = services.filter(s => s.status === 'down').length;
-
-  let overallStatus: 'healthy' | 'degraded' | 'down';
-  if (downCount > 0) {
-    overallStatus = downCount === services.length ? 'down' : 'degraded';
+  let status: 'healthy' | 'degraded' | 'unhealthy';
+  if (!coreOk) {
+    status = 'unhealthy';
+  } else if (allOk) {
+    status = 'healthy';
   } else {
-    overallStatus = 'healthy';
+    status = 'degraded';
   }
 
-  return NextResponse.json({
-    status: overallStatus,
+  const body = {
+    status,
     timestamp: new Date().toISOString(),
-    totalLatency: Date.now() - start,
-    summary: {
-      healthy: healthyCount,
-      degraded: services.filter(s => s.status === 'degraded').length,
-      down: downCount,
-      total: services.length,
+    uptime: Math.floor((Date.now() - startedAt) / 1000),
+    checks: {
+      redis: redisCheck,
+      postgres: postgresCheck,
+      binance: binanceCheck,
+      engine: engineCheck,
     },
-    services,
-  });
+    trading,
+  };
+
+  return NextResponse.json(body, { status: status === 'unhealthy' ? 503 : 200 });
 }
