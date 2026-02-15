@@ -162,6 +162,8 @@ interface OpenPosition {
   pattern: string;
   confidence: number;
   isGridPosition?: boolean; // Track whether position came from grid strategy
+  pnlPct?: number;         // Live P&L % (updated every monitoring cycle)
+  currentPrice?: number;   // Last known price (updated every monitoring cycle)
 }
 
 // ============================================================================
@@ -421,6 +423,10 @@ async function monitorPositions(): Promise<MonitorResult[]> {
       const pnlPct = pos.side === 'SELL'
         ? ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100
         : ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+
+      // Persist live P&L to Redis so Telegram bot can read it
+      pos.pnlPct = Math.round(pnlPct * 100) / 100;
+      pos.currentPrice = currentPrice;
 
       // Update high water mark and trailing stop
       if (currentPrice > pos.highWaterMark) {
@@ -926,7 +932,7 @@ JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one s
     const response = await ai.chat.completions.create({
       model: 'grok-3-mini',
       messages: [
-        { role: 'system', content: 'You are RISK-BOT 9000, a strict trading risk analyst. You REJECT more signals than you approve. Only approve signals with clear technical confluence (2+ confirming indicators). Reject if: RSI is neutral (35-65), volume is below average, pattern is weak, risk/reward is marginal, or signal goes against higher timeframe trend. Your job is to PROTECT capital, not find trades. Respond with a single minified JSON object only.' },
+        { role: 'system', content: 'You are RISK-BOT 9000, a trading risk analyst. Approve signals with clear technical setups (2+ confirming indicators or strong single signals like RSI < 30 or Bollinger squeeze). Reject if: no confirming indicators, risk/reward < 1.3, or signal clearly conflicts with higher timeframe trend. RSI 30-40 with volume confirmation is a valid setup. Your job is to balance capital protection with opportunity capture. Respond with a single minified JSON object only.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.1,
@@ -1213,11 +1219,19 @@ async function executeMarginSell(signal: Signal): Promise<{
 async function trimQueue(): Promise<number> {
   const len = await redis.llen('trades:pending');
   if (len > CONFIG.MAX_PENDING_QUEUE) {
-    // Remove oldest signals (they're stale anyway)
     const excess = len - CONFIG.MAX_PENDING_QUEUE;
+    // Log what we're about to drop (sample first few for debugging)
+    const dropped: string[] = [];
     for (let i = 0; i < excess; i++) {
-      await redis.rpop('trades:pending');
+      const raw = await redis.rpop('trades:pending');
+      if (raw && dropped.length < 3) {
+        try {
+          const sig = JSON.parse(raw as string);
+          dropped.push(`${sig.symbol} ${sig.action} conf=${(sig.confidence * 100).toFixed(0)}%`);
+        } catch { dropped.push('(parse error)'); }
+      }
     }
+    console.log(`[TRIM] Dropped ${excess} stale signals from queue (was ${len}, now ${CONFIG.MAX_PENDING_QUEUE}). Sample: ${dropped.join(', ')}`);
     // Also trim rejected queue
     await redis.ltrim('trades:rejected', 0, 99);
     return excess;
@@ -1457,9 +1471,9 @@ export async function POST() {
     }
 
     parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
-    const topSignals = parsed.slice(0, 5);
+    const topSignals = parsed.slice(0, 15);
     // Remove low-quality signals we won't process
-    for (const p of parsed.slice(5)) {
+    for (const p of parsed.slice(15)) {
       await redis.lrem('trades:pending', 1, p.raw);
     }
 
