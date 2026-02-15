@@ -4,6 +4,7 @@ Runs every 15 minutes, stores results in Redis for Telegram reporting.
 """
 import asyncio
 import json
+import os
 import time
 from typing import Dict, List
 from src.core.market_data import MarketDataFetcher
@@ -105,6 +106,15 @@ class GainerScanner:
 
         # Store in Redis
         await self.redis.set("scanner:top_movers", json.dumps(report), ex=1800)
+
+        # Persist snapshot to Postgres for evolution analysis
+        try:
+            import httpx
+            api_url = os.environ.get("NEXTJS_API_URL", "http://host.docker.internal:3000")
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(f"{api_url}/api/scanner-history", json=report)
+        except Exception as e:
+            print(f"[{self.name}] Scanner history persist failed (non-critical): {e}")
 
         # Alert on significant moves (>5% in 1h)
         alerts = [r for r in results if abs(r["change_1h"]) > 5]

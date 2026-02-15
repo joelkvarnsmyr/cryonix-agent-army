@@ -260,15 +260,15 @@ class RiskManager:
             dec = 2 if entry_price >= 1 else (4 if entry_price >= 0.01 else (6 if entry_price >= 0.0001 else 8))
 
             if signal.get("action") == "BUY":
-                dynamic_stop = entry_price - (2.0 * atr)
-                dynamic_target = entry_price + (3.0 * atr)
+                dynamic_stop = entry_price - (3.0 * atr)
+                dynamic_target = entry_price + (4.5 * atr)
             else:  # SELL
-                dynamic_stop = entry_price + (2.0 * atr)
-                dynamic_target = entry_price - (3.0 * atr)
+                dynamic_stop = entry_price + (3.0 * atr)
+                dynamic_target = entry_price - (4.5 * atr)
 
             result["adjustments"]["stop_loss"] = round(dynamic_stop, dec)
             result["adjustments"]["take_profit"] = round(dynamic_target, dec)
-            result["adjustments"]["risk_reward_ratio"] = 1.5  # 3:2 ratio
+            result["adjustments"]["risk_reward_ratio"] = 1.5  # 4.5:3 ratio
 
         # 11. Margin/Leverage safety check
         leverage = self.limits.max_leverage

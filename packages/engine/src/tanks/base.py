@@ -165,6 +165,33 @@ class BaseTank:
             return
 
         try:
+            # Include indicator snapshot for post-mortem analysis
+            indicators = state.get("indicators", {})
+            metadata = {}
+            if indicators:
+                metadata = {
+                    "rsi": indicators.get("rsi"),
+                    "macd": indicators.get("macd"),
+                    "macd_signal": indicators.get("macd_signal"),
+                    "macd_hist": indicators.get("macd_hist"),
+                    "bb_upper": indicators.get("bb_upper"),
+                    "bb_lower": indicators.get("bb_lower"),
+                    "bb_mid": indicators.get("bb_mid"),
+                    "bb_width_percentile": indicators.get("bb_width_percentile"),
+                    "atr": indicators.get("atr"),
+                    "atr_percent": indicators.get("atr_percent"),
+                    "volume_ratio": indicators.get("volume_ratio"),
+                    "ema9": indicators.get("ema9"),
+                    "ema21": indicators.get("ema21"),
+                    "price": indicators.get("price"),
+                    "consensus_score": signal.get("consensus_score"),
+                    "consensus_boosts": signal.get("consensus_boosts"),
+                    "trend_aligned": signal.get("trend_aligned"),
+                    "volume_confirmed": signal.get("volume_confirmed"),
+                }
+                # Remove None values to keep it clean
+                metadata = {k: v for k, v in metadata.items() if v is not None}
+
             payload = {
                 "symbol": signal.get("symbol", state.get("symbol", "")),
                 "action": signal.get("action", "HOLD"),
@@ -177,6 +204,7 @@ class BaseTank:
                 "timeframe": "15m",
                 "agentId": self.name,
                 "executed": False,
+                "metadata": metadata if metadata else None,
             }
 
             async with httpx.AsyncClient(timeout=5.0) as client:

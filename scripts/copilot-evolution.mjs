@@ -81,7 +81,8 @@ class EvolutionEngine {
   async analyzePerformance() {
     console.log('\n📊 Analyzing trading performance...');
 
-    const query = `
+    // === QUERY 1: Pattern-level performance ===
+    const patternQuery = `
       SELECT 
         pattern,
         COUNT(*) as trade_count,
@@ -98,12 +99,50 @@ class EvolutionEngine {
       ORDER BY total_pnl ASC;
     `;
 
-    const result = await this.db.query(query);
+    const result = await this.db.query(patternQuery);
 
     if (result.rows.length === 0) {
       console.log('⚠️  No closed trades in the last 24h. Skipping evolution.');
       return null;
     }
+
+    // === QUERY 2: Exit-type breakdown (SL vs TP vs Trailing) ===
+    const exitQuery = `
+      SELECT 
+        symbol, side, entry_price, exit_price, pnl, confidence, pattern, reasoning,
+        CASE
+          WHEN reasoning LIKE 'Stop-loss%' OR reasoning LIKE 'Short SL%' THEN 'SL'
+          WHEN reasoning LIKE 'Take-profit%' OR reasoning LIKE 'Short TP%' THEN 'TP'
+          WHEN reasoning LIKE 'Trailing%' THEN 'TRAILING'
+          ELSE 'OTHER'
+        END as exit_type
+      FROM trades
+      WHERE status = 'CLOSED'
+        AND timestamp > NOW() - INTERVAL '${CONFIG.LOOKBACK_HOURS} hours'
+      ORDER BY timestamp DESC;
+    `;
+    const exitResult = await this.db.query(exitQuery);
+
+    // === QUERY 3: Trade frequency (trades per hour) ===
+    const freqQuery = `
+      SELECT 
+        date_trunc('hour', timestamp) as hour,
+        COUNT(*) as trades_in_hour
+      FROM trades
+      WHERE timestamp > NOW() - INTERVAL '${CONFIG.LOOKBACK_HOURS} hours'
+      GROUP BY hour
+      ORDER BY hour;
+    `;
+    const freqResult = await this.db.query(freqQuery);
+
+    // === QUERY 4: Open positions (are we stuck?) ===
+    const openQuery = `
+      SELECT symbol, entry_price, timestamp, pattern
+      FROM trades
+      WHERE status = 'FILLED'
+      ORDER BY timestamp;
+    `;
+    const openResult = await this.db.query(openQuery);
 
     // Calculate portfolio-level metrics
     const totalPnl = result.rows.reduce((sum, row) => sum + parseFloat(row.total_pnl), 0);
@@ -125,6 +164,51 @@ class EvolutionEngine {
       console.log(`    Best: $${parseFloat(row.best_trade).toFixed(2)} | Worst: $${parseFloat(row.worst_trade).toFixed(2)}\n`);
     });
 
+    // === DIAGNOSTIC: SL Post-Mortem ===
+    const slTrades = exitResult.rows.filter(r => r.exit_type === 'SL');
+    const tpTrades = exitResult.rows.filter(r => r.exit_type === 'TP');
+    const trailingTrades = exitResult.rows.filter(r => r.exit_type === 'TRAILING');
+    const slRate = slTrades.length / exitResult.rows.length;
+
+    console.log('🔍 Exit Analysis:');
+    console.log(`   SL exits: ${slTrades.length} (${(slRate * 100).toFixed(0)}%)`);
+    console.log(`   TP exits: ${tpTrades.length}`);
+    console.log(`   Trailing exits: ${trailingTrades.length}`);
+
+    // Calculate SL tightness: avg SL distance as % of entry
+    const slDistances = slTrades.map(t => {
+      const entry = parseFloat(t.entry_price);
+      const exit = parseFloat(t.exit_price);
+      return entry > 0 ? Math.abs(entry - exit) / entry * 100 : 0;
+    });
+    const avgSlDist = slDistances.length > 0
+      ? slDistances.reduce((a, b) => a + b, 0) / slDistances.length : 0;
+
+    console.log(`   Avg SL distance: ${avgSlDist.toFixed(2)}%`);
+    console.log(`   Trade frequency: ${totalTrades} trades / ${CONFIG.LOOKBACK_HOURS}h = ${(totalTrades / (CONFIG.LOOKBACK_HOURS / 24)).toFixed(1)} trades/day`);
+
+    // === DIAGNOSTIC: GainerScanner missed opportunities ===
+    let scannerDiagnostic = 'No scanner data available';
+    try {
+      const scannerRaw = await this.redis.get('scanner:top_movers');
+      if (scannerRaw) {
+        const scanner = JSON.parse(scannerRaw);
+        const tradedSymbols = [...new Set(exitResult.rows.map(r => r.symbol))];
+        const bigGainers = (scanner.gainers || []).filter(g => g.change_24h >= 5);
+        const missedMovers = bigGainers.filter(g => !tradedSymbols.includes(g.symbol));
+        const tradedMovers = bigGainers.filter(g => tradedSymbols.includes(g.symbol));
+        const volSurges = scanner.volume_surges || [];
+
+        scannerDiagnostic = `Top movers (24h >5%): ${bigGainers.map(g => `${g.symbol} +${g.change_24h.toFixed(1)}%`).join(', ') || 'none'}
+Missed (not traded): ${missedMovers.map(g => `${g.symbol} +${g.change_24h.toFixed(1)}%`).join(', ') || 'none'}
+Traded: ${tradedMovers.map(g => `${g.symbol} +${g.change_24h.toFixed(1)}%`).join(', ') || 'none'}
+Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).join(', ') || 'none'}`;
+
+        console.log(`\n🔥 GainerScanner Diagnostic:`);
+        console.log(`   ${scannerDiagnostic.replace(/\n/g, '\n   ')}`);
+      }
+    } catch { /* ignore scanner errors */ }
+
     // Check if evolution is needed
     if (totalTrades < CONFIG.MIN_TRADES_FOR_ANALYSIS) {
       console.log(`⚠️  Insufficient trades (${totalTrades} < ${CONFIG.MIN_TRADES_FOR_ANALYSIS}). Skipping evolution.`);
@@ -135,6 +219,28 @@ class EvolutionEngine {
     const weakestPattern = result.rows[0];
     const weakestPnl = parseFloat(weakestPattern.total_pnl);
 
+    // === SMART EVOLUTION TRIGGERS ===
+    // Not just P&L — detect structural problems
+    const diagnostics = {
+      slTooTight: slRate > 0.6 && avgSlDist < 2.0,
+      trailingKillingProfits: trailingTrades.length > 0 &&
+        trailingTrades.filter(t => parseFloat(t.pnl) < 0.01).length / trailingTrades.length > 0.5,
+      overTrading: totalTrades / (CONFIG.LOOKBACK_HOURS / 24) > 10,
+      missedBigMovers: scannerDiagnostic.includes('+') && scannerDiagnostic.includes('Missed'),
+      lowWinRate: result.rows.some(r =>
+        parseInt(r.trade_count) >= 3 && parseInt(r.wins) / parseInt(r.trade_count) < 0.3),
+    };
+
+    const structuralIssues = Object.entries(diagnostics)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+
+    const needsEvolution = totalPnl < CONFIG.PERFORMANCE_THRESHOLD || structuralIssues.length > 0;
+
+    if (structuralIssues.length > 0) {
+      console.log(`\n⚡ Structural issues detected: ${structuralIssues.join(', ')}`);
+    }
+
     return {
       totalPnl,
       totalTrades,
@@ -142,7 +248,30 @@ class EvolutionEngine {
       patterns: result.rows,
       weakestPattern: weakestPattern.pattern,
       weakestPnl,
-      needsEvolution: totalPnl < CONFIG.PERFORMANCE_THRESHOLD
+      needsEvolution,
+      // New diagnostic data for GROK
+      exitAnalysis: {
+        slCount: slTrades.length,
+        tpCount: tpTrades.length,
+        trailingCount: trailingTrades.length,
+        slRate: slRate,
+        avgSlDistance: avgSlDist,
+        trades: exitResult.rows.map(t => ({
+          symbol: t.symbol, pnl: parseFloat(t.pnl).toFixed(4),
+          exitType: t.exit_type, pattern: t.pattern,
+          entry: parseFloat(t.entry_price), exit: parseFloat(t.exit_price),
+        })),
+      },
+      tradeFrequency: {
+        tradesPerDay: totalTrades / (CONFIG.LOOKBACK_HOURS / 24),
+        hourlyBreakdown: freqResult.rows,
+      },
+      openPositions: openResult.rows.map(r => ({
+        symbol: r.symbol, entry: parseFloat(r.entry_price), pattern: r.pattern,
+      })),
+      scannerDiagnostic,
+      structuralIssues,
+      diagnostics,
     };
   }
 
@@ -249,17 +378,60 @@ class EvolutionEngine {
       console.warn('⚠️  Could not load prompt template, using inline prompt');
     }
 
-    const { weakestPattern, weakestPnl, totalPnl, totalTrades, patterns } = performanceData;
+    const { weakestPattern, weakestPnl, totalPnl, totalTrades, patterns,
+            exitAnalysis, tradeFrequency, openPositions, scannerDiagnostic,
+            structuralIssues, diagnostics } = performanceData;
 
     const patternBreakdown = patterns.map(p =>
       `- ${p.pattern}: ${p.trade_count} trades, $${parseFloat(p.total_pnl).toFixed(2)} P&L, ` +
       `${((parseInt(p.wins) / parseInt(p.trade_count)) * 100).toFixed(1)}% win rate`
     ).join('\n');
 
+    // Build exit analysis section
+    const exitSection = exitAnalysis ? `
+## Exit Analysis (CRITICAL — read carefully)
+- SL exits: ${exitAnalysis.slCount} (${(exitAnalysis.slRate * 100).toFixed(0)}% of all exits)
+- TP exits: ${exitAnalysis.tpCount}
+- Trailing exits: ${exitAnalysis.trailingCount}
+- Average SL distance from entry: ${exitAnalysis.avgSlDistance.toFixed(2)}%
+${exitAnalysis.trades.map(t =>
+  `  ${t.symbol} ${t.exitType}: entry=$${t.entry} exit=$${t.exit} pnl=$${t.pnl} pattern=${t.pattern}`
+).join('\n')}
+
+DIAGNOSIS KEY:
+- If SL rate >60% and avg SL distance <2%: stops are too tight
+- If trailing exits have near-zero PnL: trailing stop activates too early
+- If TP exits are rare: take-profit targets may be too far` : '';
+
+    // Build trade frequency section
+    const freqSection = tradeFrequency ? `
+## Trade Frequency
+- Trades per day: ${tradeFrequency.tradesPerDay.toFixed(1)}
+- DIAGNOSIS: ${tradeFrequency.tradesPerDay > 10 ? '⚠️ OVER-TRADING — too many trades for capital size' :
+  tradeFrequency.tradesPerDay < 1 ? '⚠️ UNDER-TRADING — missing opportunities' : '✅ Reasonable frequency'}` : '';
+
+    // Build scanner section
+    const scannerSection = scannerDiagnostic ? `
+## GainerScanner (Market Opportunities)
+${scannerDiagnostic}
+DIAGNOSIS: If big movers were missed, the signal pipeline may not prioritize momentum coins.` : '';
+
+    // Build structural issues section
+    const issuesSection = structuralIssues?.length > 0 ? `
+## ⚡ STRUCTURAL ISSUES DETECTED
+${structuralIssues.map(i => `- ${i}`).join('\n')}
+These are more important than pattern-level fixes. Address structural issues FIRST.` : '';
+
     const systemPrompt = `You are a Senior Quantitative Developer orchestrating an autonomous trading system evolution.
 
-Your job: analyze the performance data and source code below, then produce a SINGLE, precise instruction
-that GitHub Copilot CLI will execute to improve the code.
+Your job: analyze the performance data, exit analysis, market diagnostics, and source code below,
+then produce a SINGLE, precise instruction that GitHub Copilot CLI will execute to improve the code.
+
+ANALYSIS PRIORITY ORDER:
+1. STRUCTURAL ISSUES (stop-loss too tight, trailing stop killing profits, over-trading) — fix these first
+2. EXIT STRATEGY (SL/TP/trailing parameters) — more impactful than entry strategy
+3. SIGNAL QUALITY (pattern confidence, missed opportunities from GainerScanner)
+4. PATTERN-LEVEL (weakest pattern confidence/thresholds)
 
 RULES FOR YOUR OUTPUT:
 1. Output ONLY the instruction text that Copilot CLI will receive — no preamble, no markdown wrapping.
@@ -267,13 +439,21 @@ RULES FOR YOUR OUTPUT:
 3. Be surgical: 1-3 small parameter tweaks or condition changes. No rewrites.
 4. NEVER remove risk checks (stop-loss, max position size, daily loss limits).
 5. Changes must pass: python scripts/verify_deep_value.py && python scripts/verify_grid.py
-6. After editing, tell Copilot to run the verification tests.`;
+6. After editing, tell Copilot to run the verification tests.
+7. Focus on the EXIT side — historically our entries are better than our exits.`;
 
     const userPrompt = `## Performance Data (last ${CONFIG.LOOKBACK_HOURS}h)
 Total P&L: $${totalPnl.toFixed(2)} | Total Trades: ${totalTrades}
 Weakest Pattern: ${weakestPattern} (P&L: $${weakestPnl.toFixed(2)})
 
 ${patternBreakdown}
+${exitSection}
+${freqSection}
+${scannerSection}
+${issuesSection}
+
+## Open Positions
+${openPositions?.map(p => `- ${p.symbol} entry=$${p.entry} pattern=${p.pattern}`).join('\n') || 'None'}
 
 ## Source Code
 
@@ -299,7 +479,7 @@ ${sourceCode['apps/web/src/app/api/auto-trade/route.ts']}
 
 ${promptTemplate ? `## Additional Guidelines\n${promptTemplate}` : ''}
 
-Now generate the Copilot CLI instruction to fix the ${weakestPattern} pattern.`;
+Based on ALL the data above (not just patterns), generate the Copilot CLI instruction to fix the most impactful issue.`;
 
     console.log(`   Sending ${userPrompt.length} chars to GROK...`);
 

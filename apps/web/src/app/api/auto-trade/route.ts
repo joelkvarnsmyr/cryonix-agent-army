@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
-import { logTrade, saveValidation } from '@cryonix/database';
+import { logTrade, saveValidation, archivePosition } from '@cryonix/database';
 import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
 
@@ -16,14 +16,14 @@ const CONFIG = {
   MIN_CONFIDENCE: 0.65,
   MAX_DAILY_LOSS_PCT: 0.05,        // 5% (~$0.85)
   MAX_OPEN_POSITIONS: 10,          // Spread across up to 10 positions
-  MAX_TRADES_PER_DAY: 15,
+  MAX_TRADES_PER_DAY: 6,
   MAX_SLIPPAGE_PCT: 0.5,
   SPOT_ONLY: true,                  // Margin account not available — spot only
   TRADING_MODE: 'spot' as 'spot' | 'margin' | 'future',
   MARGIN_TYPE: (process.env.MARGIN_TYPE || 'cross') as 'cross' | 'isolated',
   DEFAULT_LEVERAGE: parseInt(process.env.DEFAULT_LEVERAGE || '3'),
   MIN_ORDER_VALUE: 1.0,            // Global floor — actual minimum fetched per-pair from Binance
-  TRAILING_STOP_PCT: 1.0,          // 1% trailing stop after profit
+  TRAILING_STOP_PCT: 3.0,          // 3% trailing stop — let positions breathe
   MAX_PENDING_QUEUE: 30,           // Auto-trim queue beyond this
   AI_VALIDATION: true,             // Use GROK AI for signal validation
 };
@@ -232,10 +232,13 @@ async function monitorPositions(): Promise<MonitorResult[]> {
       // Update high water mark and trailing stop
       if (currentPrice > pos.highWaterMark) {
         pos.highWaterMark = currentPrice;
-        // Move trailing stop up (only goes up, never down)
-        const newTrailingStop = currentPrice * (1 - CONFIG.TRAILING_STOP_PCT / 100);
-        if (newTrailingStop > pos.trailingStop) {
-          pos.trailingStop = newTrailingStop;
+        // Only start trailing after 1.5% profit (let positions breathe)
+        const profitPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+        if (profitPct >= 1.5) {
+          const newTrailingStop = currentPrice * (1 - CONFIG.TRAILING_STOP_PCT / 100);
+          if (newTrailingStop > pos.trailingStop) {
+            pos.trailingStop = newTrailingStop;
+          }
         }
       }
 
@@ -321,6 +324,37 @@ async function monitorPositions(): Promise<MonitorResult[]> {
 
           const exitType = currentPrice >= pos.takeProfit ? 'SOLD_TP' :
             currentPrice <= pos.stopLoss ? 'SOLD_SL' : 'SOLD_TRAILING';
+
+          // Archive to position_history with full context for evolution analysis
+          try {
+            await archivePosition({
+              symbol: pos.symbol,
+              side: pos.side,
+              quantity: String(pos.quantity),
+              entryPrice: String(pos.entryPrice),
+              exitPrice: String(closePrice),
+              stopLoss: String(pos.stopLoss),
+              takeProfit: String(pos.takeProfit),
+              pnl: String(realizedPnl - fees),
+              pnlPercent: String(pnlPct),
+              fees: String(fees),
+              holdingPeriod: Math.round((Date.now() - new Date(pos.openedAt || Date.now()).getTime()) / 1000),
+              openedAt: new Date(pos.openedAt || Date.now()),
+              closedAt: new Date(),
+              closeReason: exitType,
+              pattern: pos.pattern,
+              metadata: {
+                highWaterMark: pos.highWaterMark,
+                trailingStop: pos.trailingStop,
+                confidence: pos.confidence,
+                entryPrice: pos.entryPrice,
+                exitReason,
+              },
+              agentId: 'auto-trader',
+            });
+          } catch (archiveErr) {
+            console.warn(`[MONITOR] position_history archive failed (non-critical):`, archiveErr);
+          }
 
           console.log(`[MONITOR] ${pos.symbol} ${exitType}: PnL $${(realizedPnl - fees).toFixed(4)} (${pnlPct.toFixed(2)}%)`);
 
@@ -941,6 +975,29 @@ export async function POST() {
     for (const raw of rawList) {
       try { parsed.push({ signal: JSON.parse(raw), raw }); } catch { continue; }
     }
+
+    // STEP 3a: Boost signals from GainerScanner top movers
+    let topMovers: string[] = [];
+    try {
+      const scannerRaw = await redis.get('scanner:top_movers');
+      if (scannerRaw) {
+        const scannerData = JSON.parse(scannerRaw);
+        const gainers = (scannerData.gainers || [])
+          .filter((g: any) => g.change_pct >= 3.0)
+          .map((g: any) => g.symbol);
+        const volSurges = (scannerData.volume_surges || [])
+          .map((v: any) => v.symbol);
+        topMovers = [...new Set([...gainers, ...volSurges])];
+      }
+    } catch { /* scanner data not available */ }
+
+    for (const p of parsed) {
+      if (topMovers.includes(p.signal.symbol)) {
+        p.signal.confidence = Math.min(0.95, (p.signal.confidence || 0) + 0.10);
+        p.signal.reason = (p.signal.reason || '') + ' | 🔥 GainerScanner top mover';
+      }
+    }
+
     parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
     const topSignals = parsed.slice(0, 5);
     // Remove low-quality signals we won't process

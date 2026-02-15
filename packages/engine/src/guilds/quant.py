@@ -197,11 +197,11 @@ class QuantGuild:
         rsi = indicators['rsi']
 
         if rsi < 35:
-            confidence = 0.70 + (35 - rsi) / 100  # Higher confidence for lower RSI
+            confidence = 0.75 + (35 - rsi) / 80  # Boosted: RSI_OVERSOLD is strong signal
             return {
                 "pattern": "RSI_OVERSOLD",
                 "action": "BUY",
-                "confidence": min(0.90, confidence),
+                "confidence": min(0.92, confidence),
                 "reason": f"RSI oversold at {rsi:.1f}",
             }
         elif rsi > 70:
@@ -265,7 +265,7 @@ class QuantGuild:
             return {
                 "pattern": "MACD_BULLISH_CROSS",
                 "action": "BUY",
-                "confidence": 0.76,
+                "confidence": 0.68,  # Lowered: MACD alone is weak signal
                 "reason": "MACD bullish crossover",
             }
         # Bearish crossover
@@ -273,7 +273,7 @@ class QuantGuild:
             return {
                 "pattern": "MACD_BEARISH_CROSS",
                 "action": "SELL",
-                "confidence": 0.76,
+                "confidence": 0.68,  # Lowered: MACD alone is weak signal
                 "reason": "MACD bearish crossover",
             }
 
@@ -608,8 +608,8 @@ class QuantGuild:
                 "reason": " | ".join(reasons),
                 "patterns": [p['pattern'] for p in buy_signals],
                 "entry_price": price,
-                "stop_loss": rp(price - 2 * atr),
-                "target_price": rp(price + 3 * atr),
+                "stop_loss": rp(price - 3 * atr),
+                "target_price": rp(price + 4.5 * atr),
                 "consensus_score": len(buy_signals),
                 "consensus_boosts": boosts,
                 "trend_aligned": trend_bullish,
@@ -626,8 +626,8 @@ class QuantGuild:
                 "reason": " | ".join(reasons),
                 "patterns": [p['pattern'] for p in sell_signals],
                 "entry_price": price,
-                "stop_loss": rp(price + 2 * atr),
-                "target_price": rp(price - 3 * atr),
+                "stop_loss": rp(price + 3 * atr),
+                "target_price": rp(price - 4.5 * atr),
                 "consensus_score": len(sell_signals),
                 "consensus_boosts": boosts,
                 "trend_aligned": trend_bearish,
