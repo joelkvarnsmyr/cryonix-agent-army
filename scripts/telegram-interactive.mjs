@@ -479,9 +479,27 @@ async function pipelineHealthReport() {
     const pending = await rd.llen('trades:pending');
     const approved = await rd.llen('trades:approved');
 
-    // Open positions from Redis
+    // Open positions from Redis (now includes live pnlPct from monitoring)
     const posRaw = await rd.get('positions:open');
     const positions = posRaw ? JSON.parse(posRaw) : [];
+
+    // Portfolio state from Redis
+    const riskRaw = await rd.get('risk:portfolio_state');
+    const riskState = riskRaw ? JSON.parse(riskRaw) : null;
+
+    // Daily state from Redis
+    const dailyRaw = await rd.get('daily:state');
+    const dailyState = dailyRaw ? JSON.parse(dailyRaw) : null;
+
+    // Signal funnel: signals generated (24h) vs trades executed (24h)
+    const funnelResult = await query(`
+      SELECT
+        (SELECT COUNT(*) FROM signals WHERE timestamp > NOW() - INTERVAL '24 hours' AND action = 'BUY') as signals_24h,
+        (SELECT COUNT(*) FROM trades WHERE timestamp > NOW() - INTERVAL '24 hours') as trades_24h
+    `);
+    const signals24h = parseInt(funnelResult.rows[0]?.signals_24h || 0);
+    const trades24h = parseInt(funnelResult.rows[0]?.trades_24h || 0);
+    const conversionPct = signals24h > 0 ? ((trades24h / signals24h) * 100).toFixed(1) : '0';
 
     // Recent signals (last 15min)
     const recentSigs = await query(`
@@ -506,20 +524,35 @@ async function pipelineHealthReport() {
     if (scannerRaw) {
       const scanner = JSON.parse(scannerRaw);
       const top = scanner.gainers?.[0];
-      if (top) topMover = `\n🔥 Top mover: ${top.symbol.split('/')[0]} ${top.change_1h > 0 ? '+' : ''}${top.change_1h}%`;
+      if (top) topMover = `\n🔥 Top: ${top.symbol.split('/')[0]} ${top.change_1h > 0 ? '+' : ''}${top.change_1h}%`;
     }
 
-    // Position P&L summary
+    // Portfolio summary
+    let portfolioBlock = '';
+    if (riskState) {
+      const capital = parseFloat(riskState.total_capital || 0);
+      const dailyPnl = parseFloat(riskState.daily_pnl || 0);
+      const dailyLimit = capital * 0.05;
+      const drawdownPct = capital > 0 ? ((dailyPnl / capital) * 100).toFixed(2) : '0';
+      const posValue = positions.reduce((sum, p) => sum + (p.entryPrice || 0) * (p.quantity || 0), 0);
+      const cashPct = capital > 0 ? (((capital - posValue) / capital) * 100).toFixed(0) : '?';
+      portfolioBlock = `\n💰 Capital: $${capital.toFixed(2)} | Cash: ${cashPct}% | Day P&L: ${dailyPnl >= 0 ? '+' : ''}$${dailyPnl.toFixed(2)} (${drawdownPct}%)`;
+    }
+
+    // Position P&L summary (now uses live pnlPct from monitoring cycle)
     let posBlock = '';
     if (positions.length > 0) {
       const posLines = positions.map(p => {
         const sym = p.symbol.split('/')[0];
         const pnlPct = p.pnlPct || 0;
-        const icon = pnlPct >= 0 ? '🟢' : '🔴';
-        return `${icon} ${sym} ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
+        const icon = pnlPct > 0.5 ? '🟢' : pnlPct < -0.5 ? '🔴' : '⚪';
+        return `${icon}${sym} ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
       });
-      posBlock = `\n📌 Positions: ${posLines.join(' | ')}`;
+      posBlock = `\n📌 ${posLines.join(' | ')}`;
     }
+
+    // Signal funnel line
+    const funnelBlock = `\n📊 Funnel 24h: ${signals24h} signals → ${trades24h} trades (${conversionPct}%)`;
 
     // Scanner alerts
     let alertBlock = '';
@@ -534,9 +567,10 @@ async function pipelineHealthReport() {
     }
 
     return `📡 <b>Pipeline</b> (${new Date().toUTCString().slice(17, 22)} UTC)\n` +
-      `Signals 15m: ${buys15m} BUY / ${sells15m} SELL\n` +
-      `Queue: ${pending} pending | Trades 1h: ${trades1h} ($${pnl1h.toFixed(2)})` +
-      posBlock + topMover + alertBlock;
+      `Signals 15m: ${buys15m} BUY | Queue: ${pending} pending` +
+      portfolioBlock + posBlock + funnelBlock +
+      `\nTrades 1h: ${trades1h} ($${pnl1h.toFixed(2)})` +
+      topMover + alertBlock;
   } catch (e) {
     return null; // Silently fail — don't spam errors
   }
