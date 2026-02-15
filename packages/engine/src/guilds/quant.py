@@ -390,7 +390,7 @@ class QuantGuild:
 
         # --- Calculate drop velocity (% per hour) ---
         # Find when the high occurred and calculate time elapsed
-        high_idx = close.rolling(20).max().iloc[-20:].idxmax() if len(close) >= 20 else 0
+        high_idx = close.iloc[-20:].idxmax() if len(close) >= 20 else 0
         bars_since_high = len(close) - 1 - high_idx if high_idx > 0 else 20
         # Assuming 15m bars: bars * 0.25 = hours
         hours_elapsed = max(bars_since_high * 0.25, 0.25)
@@ -445,16 +445,27 @@ class QuantGuild:
             base_confidence += 0.05
             boosts.append(f"capitulation volume ({vol_ratio:.1f}x)")
 
-        # Multi-TF RSI oversold boost (all < 35)
-        mtf_oversold = rsi_15m < 35
-        if rsi_1h is not None and rsi_1h < 35:
-            mtf_oversold = mtf_oversold and True
-        if rsi_4h is not None and rsi_4h < 35:
-            mtf_oversold = mtf_oversold and True
+        # Multi-TF RSI oversold boost/penalty
+        if rsi_15m < 35:
+            htf_oversold = True
+            htf_conflict = False
+            if rsi_1h is not None:
+                if rsi_1h < 35:
+                    pass  # confirms oversold
+                else:
+                    htf_conflict = True  # 1h NOT oversold = conflicting
+            if rsi_4h is not None:
+                if rsi_4h < 35:
+                    pass
+                else:
+                    htf_conflict = True
 
-        if mtf_oversold and (rsi_1h is not None or rsi_4h is not None):
-            base_confidence += 0.05
-            boosts.append(f"multi-TF RSI oversold (15m:{rsi_15m:.0f}, 1h:{rsi_1h}, 4h:{rsi_4h})")
+            if htf_conflict:
+                base_confidence -= 0.03
+                boosts.append(f"HTF RSI conflict (15m:{rsi_15m:.0f}, 1h:{rsi_1h}, 4h:{rsi_4h})")
+            elif rsi_1h is not None or rsi_4h is not None:
+                base_confidence += 0.05
+                boosts.append(f"multi-TF RSI oversold (15m:{rsi_15m:.0f}, 1h:{rsi_1h}, 4h:{rsi_4h})")
 
         # Near support level boost
         if support_level and support_level > 0:
@@ -801,10 +812,10 @@ class QuantGuild:
             return "ranging"
 
     def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate RSI (handles zero-loss and zero-gain edge cases)"""
+        """Calculate RSI using Wilder's EMA (handles zero-loss and zero-gain edge cases)"""
         delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        gain = (delta.where(delta > 0, 0)).ewm(alpha=1/period, adjust=False).mean()
+        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/period, adjust=False).mean()
         # Avoid division by zero: when loss=0 -> RSI=100, when gain=0 -> RSI=0
         # Clamp to [1, 99] since true 0/100 are unrealistic in real markets
         rs = gain / loss.replace(0, np.nan)

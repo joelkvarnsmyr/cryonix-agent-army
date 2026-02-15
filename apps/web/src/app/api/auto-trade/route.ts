@@ -572,7 +572,7 @@ async function calculateExpectedValue(signal: Signal, cal?: Record<string, Patte
     }
   }
 
-  if (!stats || stats.trades < 3) return null; // Not enough data
+  if (!stats || stats.trades < 5) return null; // Need at least 5 trades for meaningful EV
 
   const ev = (stats.winRate / 100 * stats.avgWin) - ((100 - stats.winRate) / 100 * Math.abs(stats.avgLoss));
   console.log(`[EV] ${signal.symbol} ${patternKey}: EV=$${ev.toFixed(4)} (win ${stats.winRate}% of ${stats.trades})`);
@@ -621,7 +621,7 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     const alert = await redis.get(`sentiment:alert:${baseAsset}`);
     if (alert && signal.action === 'BUY') {
       const alertLower = alert.toLowerCase();
-      if (alertLower.includes('hack') || alertLower.includes('exploit') || alertLower.includes('rug') || alertLower.includes('sec') || alertLower.includes('crash')) {
+      if (alertLower.includes('hack') || alertLower.includes('exploit') || alertLower.includes('rug') || alertLower.includes('sec') || alertLower.includes('crash') || alertLower.includes('delist') || alertLower.includes('lawsuit') || alertLower.includes('ban') || alertLower.includes('scam') || alertLower.includes('fraud') || alertLower.includes('investigation') || alertLower.includes('vulnerability')) {
         return { pass: false, reason: `X alert: ${alert}` };
       }
     }
@@ -796,7 +796,7 @@ JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one s
 
     const content = response.choices[0]?.message?.content || '';
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { approved: true, aiConfidence: signal.confidence, reasoning: 'AI parse failed - proceeding' };
+    if (!jsonMatch) return { approved: false, aiConfidence: 0, reasoning: 'AI parse failed - rejecting (fail-closed)' };
 
     const result = JSON.parse(jsonMatch[0]);
     console.log(`[AI] ${signal.symbol}: ${result.approve ? 'APPROVED' : 'REJECTED'} (${result.confidence}%) - ${result.reasoning}`);
@@ -817,8 +817,8 @@ JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one s
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[AI] Validation error: ${msg}`);
-    // On AI failure, proceed with original signal (fail-open)
-    return { approved: true, aiConfidence: signal.confidence, reasoning: `AI error: ${msg}` };
+    // On AI failure, reject (fail-closed) — don't trade without validation
+    return { approved: false, aiConfidence: 0, reasoning: `AI error (fail-closed): ${msg}` };
   }
 }
 
@@ -1251,25 +1251,33 @@ export async function POST() {
       try { parsed.push({ signal: JSON.parse(raw), raw }); } catch { continue; }
     }
 
-    // STEP 3a: Boost signals from GainerScanner top movers
+    // STEP 3a: Boost signals from GainerScanner top movers (only if direction matches)
     let topMovers: string[] = [];
+    let topMoverDirections: Record<string, number> = {};
     try {
       const scannerRaw = await redis.get('scanner:top_movers');
       if (scannerRaw) {
         const scannerData = JSON.parse(scannerRaw);
         const gainers = (scannerData.gainers || [])
-          .filter((g: any) => (g.change_1h ?? g.change_pct ?? 0) >= 3.0)
-          .map((g: any) => g.symbol);
+          .filter((g: any) => (g.change_1h ?? g.change_pct ?? 0) >= 3.0);
+        for (const g of gainers) {
+          topMoverDirections[g.symbol] = g.change_1h ?? g.change_pct ?? 0;
+        }
         const volSurges = (scannerData.volume_surges || [])
           .map((v: any) => v.symbol);
-        topMovers = [...new Set([...gainers, ...volSurges])];
+        topMovers = [...new Set([...gainers.map((g: any) => g.symbol), ...volSurges])];
       }
     } catch { /* scanner data not available */ }
 
     for (const p of parsed) {
       if (topMovers.includes(p.signal.symbol)) {
-        p.signal.confidence = Math.min(0.95, (p.signal.confidence || 0) + 0.10);
-        p.signal.reason = (p.signal.reason || '') + ' | 🔥 GainerScanner top mover';
+        const change = topMoverDirections[p.signal.symbol] || 0;
+        const isBuy = p.signal.action === 'BUY';
+        // Only boost if gainer direction matches signal: BUY on positive change, SELL on negative
+        if ((isBuy && change > 0) || (!isBuy && change < 0)) {
+          p.signal.confidence = Math.min(0.95, (p.signal.confidence || 0) + 0.10);
+          p.signal.reason = (p.signal.reason || '') + ` | 🔥 GainerScanner top mover (${change > 0 ? '+' : ''}${change.toFixed(1)}%)`;
+        }
       }
     }
 
