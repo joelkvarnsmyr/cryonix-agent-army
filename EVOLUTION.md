@@ -43,21 +43,30 @@ Cryonix includes a two-phase autonomous evolution engine:
     5. Copilot CLI Mutation (Phase 2)
        - Executes GROK's instruction via `gh copilot --`
        - 10-minute timeout, up to 3 retry attempts
+       - Output validation: `git diff --stat` must show changes
+       - Refusal detection: rejects "I cannot", "I'm unable", etc.
            │
            ↓
-    6. Verification Suite
+    6. Diff-Size Guard & Scoped Staging
+       - Reject changes >100 lines (via `git diff --cached --numstat`)
+       - Stage only CONFIG.CRITICAL_FILES (no `git add .`)
+           │
+           ↓
+    7. Verification Suite
        ✓ Python invariants (verify_deep_value.py, verify_grid.py)
        ✓ TypeScript build (pnpm build)
        ✓ Type checking (pnpm type-check)
        ✓ Unit tests (pnpm test)
            │
            ↓
-    7. Deploy or Rollback
-       - Success: commit [Auto-Evolution], rebuild Docker, pop stash
+    8. Deploy or Rollback
+       - Success: commit, rebuild Docker, pop stash
+         (`hadUncommittedChanges` reset after pop)
        - Failure: restore backup, git reset, pop stash, retry
+         (`hadUncommittedChanges` reset in restoreBackup AND max-attempts path)
            │
            ↓
-    8. Report via Telegram
+    9. Report via Telegram
        - Sends run summary, GROK token usage, success/failure
 ```
 
@@ -68,8 +77,10 @@ The evolution prompt includes:
 | Data Source | Content |
 |-------------|---------|
 | **Postgres** | Pattern P&L, win rates, exit types, trade frequency |
-| **Redis calibration** | Expected Value per pattern (from `/api/calibration`) |
-| **Redis sentiment** | X/Twitter scores and alerts (from `/api/x-sentiment`) |
+| **Redis calibration** | Per-pattern EV data: win rate, sample size, EV value (from `/api/calibration`) |
+| **Redis sentiment** | X/Twitter sentiment scores and alerts (from `/api/x-sentiment`) |
+| **Redis market regime** | Current market regime classification |
+| **Indicators** | Full indicator set: MACD, Bollinger Bands, EMAs, ADX, etc. |
 | **GainerScanner** | Top movers, missed opportunities, volume surges |
 | **Source code** | Full files: quant.py, risk_gate.py, risk_manager.py, route.ts |
 | **Diagnostics** | Structural issue flags (slTooTight, overTrading, etc.) |
@@ -94,6 +105,18 @@ GROK is explicitly instructed to NEVER remove: stop-loss, position size limits, 
 ### 6. Telegram Reporting
 Every evolution run reports to Telegram: phase progress, token usage, success/failure.
 
+### 7. Diff-Size Guard
+Changes exceeding 100 lines (measured via `git diff --cached --numstat`) are rejected to prevent full-file rewrites.
+
+### 8. Copilot Output Validation
+After mutation, `git diff --stat` must show actual changes. Refusal phrases ("I cannot", "I'm unable") in Copilot output trigger a retry.
+
+### 9. Scoped Git Add
+Only `CONFIG.CRITICAL_FILES` are staged (`git add` per file), replacing the previous `git add .` which could stage unrelated changes.
+
+### 10. Stash-Pop Safety
+`hadUncommittedChanges` is reset in all three exit paths (success, restoreBackup, max-attempts) to prevent double `git stash pop`.
+
 ## Configuration
 
 ```javascript
@@ -115,8 +138,8 @@ const CONFIG = {
 ## Cron Jobs
 
 ```cron
-# Evolution (currently paused during development)
-#PAUSED# 0 */2 * * * cd ~/cryonix && bash scripts/run_evolution.sh >> /tmp/evolution-cron.log 2>&1
+# Evolution (active — every 2h)
+0 */2 * * * cd ~/cryonix && bash scripts/run_evolution.sh >> /tmp/evolution-cron.log 2>&1
 
 # Pattern calibration + X sentiment (every 6h)
 0 */6 * * * cd ~/cryonix && bash scripts/run_calibration.sh >> /tmp/calibration-cron.log 2>&1
@@ -149,16 +172,16 @@ docker compose -f docker-compose.prod.yml restart engine web auto-trader
 
 ## Known Issues (from peer review)
 
-1. **Double stash-pop risk** — `hadUncommittedChanges` flag not reset between retry iterations
-2. **`git add .` too broad** — should only add CRITICAL_FILES
-3. **No diff-size guard** — Copilot could rewrite entire files
-4. **No Copilot output validation** — garbage/refusal treated as success
-5. **No semantic parameter validation** — syntactically valid but dangerous changes pass
+1. ~~**Double stash-pop risk**~~ — ✅ FIXED: `hadUncommittedChanges` reset in restoreBackup, success, and max-attempts paths
+2. ~~**`git add .` too broad**~~ — ✅ FIXED: scoped to `CONFIG.CRITICAL_FILES` loop
+3. ~~**No diff-size guard**~~ — ✅ FIXED: reject changes >100 lines via `git diff --cached --numstat`
+4. ~~**No Copilot output validation**~~ — ✅ FIXED: `git diff --stat` content check + refusal phrase detection
+5. **No semantic parameter validation** — 🟡 PARTIALLY MITIGATED (output validation + diff guard reduce risk)
 
 See peer review: `.copilot/session-state/.../files/peer-review-evolution.md`
 
 ---
 
-**Status**: 🟡 Paused (during manual development)
-**Last Updated**: 2025-07-15
-**Version**: 2.0.0
+**Status**: 🟢 Active (evolution cron running every 2h)
+**Last Updated**: 2025-07-16
+**Version**: 2.1.0 — Phase 11 Evolution Hardening
