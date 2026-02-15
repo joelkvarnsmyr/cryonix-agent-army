@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     BINANCE_TESTNET: bool = True
     
     # Trading mode: 'spot', 'margin', 'future'
-    TRADING_MODE: str = "margin"
+    TRADING_MODE: str = "spot"        # Synced with auto-trader (margin unavailable)
     MARGIN_TYPE: str = "cross"        # 'cross' or 'isolated'
     DEFAULT_LEVERAGE: int = 3          # Conservative 3x leverage
     

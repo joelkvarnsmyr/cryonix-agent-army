@@ -12,10 +12,10 @@ export const dynamic = 'force-dynamic';
 
 const CONFIG = {
   TOTAL_CAPITAL: 17,
-  MAX_POSITION_SIZE_PCT: 0.12,     // 12% per position (~$2) — diversify across many positions
+  MAX_POSITION_SIZE_PCT: 0.15,     // 15% per position (~$2.55) — fewer but larger positions
   MIN_CONFIDENCE: 0.65,
   MAX_DAILY_LOSS_PCT: 0.05,        // 5% (~$0.85)
-  MAX_OPEN_POSITIONS: 10,          // Spread across up to 10 positions
+  MAX_OPEN_POSITIONS: 5,           // Realistic for $17 capital (min ~$1.50/position after fees)
   MAX_TRADES_PER_DAY: 6,
   MAX_SLIPPAGE_PCT: 0.5,
   SPOT_ONLY: true,                  // Margin account not available — spot only
@@ -26,6 +26,12 @@ const CONFIG = {
   TRAILING_STOP_PCT: 3.0,          // 3% trailing stop — let positions breathe
   MAX_PENDING_QUEUE: 30,           // Auto-trim queue beyond this
   AI_VALIDATION: true,             // Use GROK AI for signal validation
+  // Capital allocation between strategies
+  SIGNAL_POOL_PCT: 0.65,           // 65% for signal-based trades
+  GRID_POOL_PCT: 0.25,             // 25% for grid trades
+  RESERVE_PCT: 0.10,               // 10% always kept as reserve
+  MAX_SIGNAL_POSITIONS: 4,         // Max signal-based positions
+  MAX_GRID_POSITIONS: 2,           // Max grid positions
 };
 
 // ============================================================================
@@ -144,6 +150,90 @@ interface OpenPosition {
   openedAt: string;
   pattern: string;
   confidence: number;
+  isGridPosition?: boolean; // Track whether position came from grid strategy
+}
+
+// ============================================================================
+// CAPITAL ALLOCATOR — Single source of truth for strategy budgets
+// ============================================================================
+
+interface CapitalBudget {
+  totalCapital: number;
+  signalBudget: number;      // Max $ for signal trades
+  gridBudget: number;        // Max $ for grid trades
+  reserve: number;           // Always kept free
+  signalUsed: number;        // Currently allocated to signal positions
+  gridUsed: number;          // Currently allocated to grid positions
+  signalRemaining: number;
+  gridRemaining: number;
+  regime: string;            // Current market regime
+}
+
+async function getCapitalBudget(): Promise<CapitalBudget> {
+  const capital = await getTotalCapital();
+  const positions = await getOpenPositions();
+
+  // Get current market regime from latest signal data
+  let regime = 'unknown';
+  try {
+    const regimeRaw = await redis.get('market:regime');
+    if (regimeRaw) regime = regimeRaw;
+  } catch {}
+
+  // Base allocation
+  let signalPct = CONFIG.SIGNAL_POOL_PCT;
+  let gridPct = CONFIG.GRID_POOL_PCT;
+  let reservePct = CONFIG.RESERVE_PCT;
+
+  // Regime-based adjustments
+  if (regime === 'volatile') {
+    // Volatile: pause grid, increase reserve, reduce signal pool
+    gridPct = 0;
+    reservePct = 0.30;
+    signalPct = 0.70;
+    console.log('[ALLOCATOR] Volatile regime: grid paused, reserve increased to 30%');
+  } else if (regime === 'trending') {
+    // Trending: boost signal pool (trend strategies excel)
+    signalPct = 0.72;
+    gridPct = 0.18;
+    reservePct = 0.10;
+  }
+  // ranging: default allocation (grid works well in ranges)
+
+  const signalBudget = capital * signalPct;
+  const gridBudget = capital * gridPct;
+  const reserve = capital * reservePct;
+
+  // Calculate current usage
+  let signalUsed = 0;
+  let gridUsed = 0;
+  for (const pos of positions) {
+    const posValue = pos.entryPrice * pos.quantity;
+    if (pos.isGridPosition || pos.pattern === 'GRID_BUY') {
+      gridUsed += posValue;
+    } else {
+      signalUsed += posValue;
+    }
+  }
+
+  return {
+    totalCapital: capital,
+    signalBudget,
+    gridBudget,
+    reserve,
+    signalUsed,
+    gridUsed,
+    signalRemaining: Math.max(0, signalBudget - signalUsed),
+    gridRemaining: Math.max(0, gridBudget - gridUsed),
+    regime,
+  };
+}
+
+// Persist regime from engine signals so allocator can read it
+async function updateMarketRegime(regime: string): Promise<void> {
+  if (regime && regime !== 'unknown') {
+    await redis.set('market:regime', regime, 'EX', 3600); // 1h TTL
+  }
 }
 
 // ============================================================================
@@ -611,6 +701,38 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     return { pass: false, reason: `Max positions (${CONFIG.MAX_OPEN_POSITIONS})` };
   }
 
+  // Capital allocator: enforce per-strategy budgets
+  const isGrid = signal.patterns?.includes('GRID_BUY') || (signal as any).is_grid_buy;
+  const budget = await getCapitalBudget();
+
+  // Update regime from signal if available
+  if (signal.indicators?.market_regime) {
+    await updateMarketRegime(String(signal.indicators.market_regime));
+  }
+
+  if (isGrid) {
+    // Grid strategy checks
+    const gridPositions = openPositions.filter(p => p.isGridPosition || p.pattern === 'GRID_BUY');
+    if (gridPositions.length >= CONFIG.MAX_GRID_POSITIONS) {
+      return { pass: false, reason: `Max grid positions (${CONFIG.MAX_GRID_POSITIONS})` };
+    }
+    if (budget.gridRemaining < CONFIG.MIN_ORDER_VALUE) {
+      return { pass: false, reason: `Grid budget exhausted ($${budget.gridRemaining.toFixed(2)} remaining of $${budget.gridBudget.toFixed(2)})` };
+    }
+    if (budget.regime === 'volatile') {
+      return { pass: false, reason: 'Grid paused: volatile market regime' };
+    }
+  } else {
+    // Signal strategy checks
+    const signalPositions = openPositions.filter(p => !p.isGridPosition && p.pattern !== 'GRID_BUY');
+    if (signalPositions.length >= CONFIG.MAX_SIGNAL_POSITIONS) {
+      return { pass: false, reason: `Max signal positions (${CONFIG.MAX_SIGNAL_POSITIONS})` };
+    }
+    if (budget.signalRemaining < CONFIG.MIN_ORDER_VALUE) {
+      return { pass: false, reason: `Signal budget exhausted ($${budget.signalRemaining.toFixed(2)} remaining of $${budget.signalBudget.toFixed(2)})` };
+    }
+  }
+
   if (openPositions.some(p => p.symbol === signal.symbol)) {
     return { pass: false, reason: `Already in ${signal.symbol}` };
   }
@@ -827,12 +949,17 @@ JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one s
 // ============================================================================
 
 async function calculatePositionSize(signal: Signal): Promise<number> {
-  const capital = await getTotalCapital();
+  const budget = await getCapitalBudget();
+  const capital = budget.totalCapital;
   const isDeepValue = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
+  const isGrid = signal.patterns?.includes('GRID_BUY') || (signal as any).is_grid_buy;
 
-  // Deep value: 20% max, normal: 12%
+  // Use strategy-specific budget, not total capital
+  const availableBudget = isGrid ? budget.gridRemaining : budget.signalRemaining;
+
+  // Deep value: 20% max, normal: 15%
   const maxPct = isDeepValue ? 0.20 : CONFIG.MAX_POSITION_SIZE_PCT;
-  const maxPositionValue = capital * maxPct;
+  const maxPositionValue = Math.min(capital * maxPct, availableBudget);
 
   // Deep value requires 80%+ confidence after AI blending
   if (isDeepValue && signal.confidence < 0.80) {
@@ -957,6 +1084,7 @@ async function executeBuy(signal: Signal): Promise<{
       openedAt: new Date().toISOString(),
       pattern: signal.patterns?.join(', ') || '',
       confidence: signal.confidence,
+      isGridPosition: !!(signal as any).is_grid_buy,
     });
 
     await incrementTradeCount();
@@ -1140,15 +1268,32 @@ async function checkGridTriggers(): Promise<GridResult[]> {
         if (isBelow || distancePct <= 0.0015) {
           console.log(`[GRID] ${symbol} hit level #${i}: $${currentPrice.toFixed(2)} -> $${levelPrice.toFixed(2)}`);
 
-          // Check if we still have capacity
+          // Check if we still have capacity — use capital allocator
+          const gridBudget = await getCapitalBudget();
           const currentPositions = await getOpenPositions();
-          if (currentPositions.length >= CONFIG.MAX_OPEN_POSITIONS) {
+          const gridPositions = currentPositions.filter(p => p.isGridPosition || p.pattern === 'GRID_BUY');
+          if (currentPositions.length >= CONFIG.MAX_OPEN_POSITIONS || gridPositions.length >= CONFIG.MAX_GRID_POSITIONS) {
             results.push({ symbol, status: 'SKIPPED', level: i, error: 'Max positions reached' });
+            break;
+          }
+
+          if (gridBudget.regime === 'volatile') {
+            results.push({ symbol, status: 'SKIPPED', level: i, error: 'Grid paused: volatile regime' });
             break;
           }
 
           if (currentPositions.some(p => p.symbol === symbol)) {
             results.push({ symbol, status: 'SKIPPED', level: i, error: 'Already in position' });
+            break;
+          }
+
+          // Proportional grid sizing: use grid budget / max levels, not hardcoded $6
+          const gridOrderSize = Math.min(
+            config.orderSizeUsd || gridBudget.gridBudget / 3,
+            gridBudget.gridRemaining
+          );
+          if (gridOrderSize < CONFIG.MIN_ORDER_VALUE) {
+            results.push({ symbol, status: 'SKIPPED', level: i, error: `Grid budget exhausted ($${gridBudget.gridRemaining.toFixed(2)})` });
             break;
           }
 
@@ -1168,7 +1313,7 @@ async function checkGridTriggers(): Promise<GridResult[]> {
               volume_ratio: 0,
               atr_pct: 0,
             },
-            position_size: (config.orderSizeUsd || 6) / currentPrice,
+            position_size: gridOrderSize / currentPrice,
             is_grid_buy: true,
           };
 
@@ -1464,10 +1609,20 @@ export async function GET() {
     if (raw) gridConfigs.push(JSON.parse(raw as string));
   }
 
+  // Capital budget for dashboard visibility
+  const budget = await getCapitalBudget();
+
   return NextResponse.json({
     success: true,
     status: 'active',
     config: CONFIG,
+    budget: {
+      totalCapital: budget.totalCapital,
+      regime: budget.regime,
+      signal: { budget: budget.signalBudget, used: budget.signalUsed, remaining: budget.signalRemaining },
+      grid: { budget: budget.gridBudget, used: budget.gridUsed, remaining: budget.gridRemaining },
+      reserve: budget.reserve,
+    },
     positions: positionDetails,
     dailyState: {
       date: dailyState.date,

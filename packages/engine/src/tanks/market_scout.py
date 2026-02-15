@@ -226,6 +226,24 @@ class MarketScoutTank(BaseTank):
             print(f"[{self.name}] {symbol} {action_emoji} {signal['action']} "
                   f"(conf: {signal['confidence']:.1%}) - {signal['reason'][:50]}...")
 
+            # Propagate market regime to Redis so capital allocator can read it
+            regime = indicators.get('market_regime', 'unknown')
+            if regime != 'unknown':
+                try:
+                    await state_manager.redis.set('market:regime', regime, ex=3600)
+                except Exception:
+                    pass
+
+            # In spot-only mode, skip SELL signals early (save compute)
+            if signal['action'] == 'SELL':
+                print(f"[{self.name}] {symbol} SELL signal skipped (spot-only mode)")
+                return {
+                    "symbol": symbol,
+                    "signal": trading_signal,
+                    "indicators": indicators,
+                    "status": "skipped_sell"
+                }
+
             return {
                 "symbol": symbol,
                 "signal": trading_signal,

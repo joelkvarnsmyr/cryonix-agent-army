@@ -12,15 +12,16 @@ import json
 
 @dataclass
 class RiskLimits:
-    """Configurable risk limits - tuned for dynamic capital, diversified"""
+    """Configurable risk limits — synced with auto-trade CONFIG"""
     max_daily_loss_pct: float = 0.05          # 5% max daily loss (~$0.85)
     max_weekly_loss_pct: float = 0.10         # 10% max weekly loss (~$1.70)
-    max_position_size_pct: float = 0.12       # 12% max per position (~$2) — diversify
-    max_total_exposure_pct: float = 0.85      # 85% max total exposure (~$14.50)
+    max_position_size_pct: float = 0.15       # 15% max per position (synced with auto-trade)
+    max_total_exposure_pct: float = 0.90      # 90% max total exposure (10% reserve)
     min_confidence: float = 0.65              # 65% min signal confidence
     max_correlation: float = 0.70             # Max position correlation
     volatility_pause_atr_pct: float = 5.0     # Pause if ATR > 5%
     max_trades_per_day: int = 6              # Max 6 trades per day
+    max_open_positions: int = 5              # Synced with auto-trade CONFIG
     max_consecutive_losses: int = 5           # Pause after 5 losses
     max_leverage: int = 3                     # Max leverage for margin trading
     liquidation_buffer_pct: float = 0.15      # 15% buffer before liquidation price
