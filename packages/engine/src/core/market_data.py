@@ -83,17 +83,8 @@ class MarketDataFetcher:
             return cached['data']
 
         try:
-            # Use spot balance regardless of trading mode
-            spot_exchange = ccxt.binance({
-                'apiKey': settings.BINANCE_API_KEY or None,
-                'secret': settings.BINANCE_API_SECRET or None,
-                'enableRateLimit': True,
-                'options': {'defaultType': 'spot'},
-            })
-            if settings.BINANCE_TESTNET:
-                spot_exchange.set_sandbox_mode(True)
-
-            bal = spot_exchange.fetch_balance()
+            # Reuse singleton exchange (no leaked connections)
+            bal = self.exchange.fetch_balance()
             total = 0.0
             for coin, amount in (bal.get('free', {}) or {}).items():
                 amt = float(amount or 0)
@@ -103,7 +94,7 @@ class MarketDataFetcher:
                     total += amt
                 else:
                     try:
-                        t = spot_exchange.fetch_ticker(f"{coin}/USDC")
+                        t = self.exchange.fetch_ticker(f"{coin}/USDC")
                         total += amt * (t.get('last', 0) or 0)
                     except:
                         pass

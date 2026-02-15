@@ -72,9 +72,8 @@ class RiskManager:
 
             # Sync actual capital from Binance (overrides stored value)
             try:
-                from src.core.market_data import MarketDataFetcher
-                mdf = MarketDataFetcher()
-                live_capital = mdf.fetch_total_capital()
+                from src.core.market_data import market_data
+                live_capital = market_data.fetch_total_capital()
                 if live_capital > 0:
                     self.portfolio.total_capital = live_capital
                     self.portfolio.available_capital = live_capital
