@@ -107,7 +107,6 @@ All available at `http://openclaw-vm/api/...` (prod) or `http://localhost:3000/a
 | `/api/backtest`             | POST       | Run backtest                                   |
 | `/api/calibration`          | POST       | Pattern EV calibration                         |
 | `/api/x-sentiment`          | POST       | X/Twitter sentiment scanning                   |
-| `/api/telegram-signals`     | GET        | Active Telegram signals + channel stats        |
 
 ### WebSocket
 
@@ -144,7 +143,6 @@ docker compose -f docker-compose.prod.yml ps
 | `cryonix-auto-trader-1`| custom (Node)     | none          | Polls /api/auto-trade every 30s       |
 | `cryonix-ws-server-1` | custom (Node)      | 3004          | WebSocket for real-time dashboard     |
 | `cryonix-telegram-bot-1`| custom (Node)    | none          | Telegram bot for evolution reports    |
-| `cryonix-telegram-scraper-1`| custom (Python) | none       | Telegram channel signal scraper (Telethon) |
 | `cryonix-caddy-1`     | caddy:2-alpine     | 80            | Reverse proxy, routes /ws to ws-server|
 
 ---
@@ -235,8 +233,6 @@ curl http://openclaw-vm/api/auto-trade
    - Top-15 signals processed per cycle (sorted by confidence)
    - Capital Allocator checks budget (signal pool vs grid pool vs reserve)
    - Regime check: volatile → grid paused
-   - GainerScanner boost (+10% for top movers matching signal direction)
-   - Telegram Signal boost (+5-12% if external channels agree, Phase 1: log only)
    - EV model filter (reject negative-EV patterns, min 5 trades)
    - X sentiment alert check (12 keywords: hack, exploit, delist, scam...)
    - GROK AI validates (pragmatic prompt, fail-closed on parse error)
@@ -313,7 +309,7 @@ The Azure VM is where production runs and where Copilot agents work. You interac
 
 | Component | How | Persistent |
 |---|---|---|
-| 9 Docker containers | `docker-compose.prod.yml` | Yes — `restart: always` |
+| 8 Docker containers | `docker-compose.prod.yml` | Yes — `restart: always` |
 | Evolution pipeline | Cron every 2h | Yes |
 | X sentiment scanning | Cron every 15min | Yes |
 | Calibration | Cron every 6h | Yes |
@@ -375,7 +371,7 @@ Local Docker runs the full stack but with **execution guards** — no real order
 | Postgres logging | ✅ Signals saved for analysis | ✅ Full trade history |
 | Redis | Own isolated instance | Own isolated instance |
 | Postgres | Own isolated instance | Own isolated instance |
-| Containers | 3 (engine, redis, postgres) | 9 (+ web, auto-trader, ws, telegram-bot, telegram-scraper, caddy) |
+| Containers | 3 (engine, redis, postgres) | 8 (+ web, auto-trader, ws, telegram, caddy) |
 
 ### Getting started
 
@@ -411,7 +407,7 @@ npx ts-node apps/web/scripts/ws-server.ts   # ws://localhost:3004
 npx ts-node apps/web/scripts/auto-trader.ts
 ```
 
-### Full local Docker (all 9 containers)
+### Full local Docker (all 8 containers)
 
 If you want to run the full prod-like stack locally (but with guards):
 
@@ -486,7 +482,7 @@ cryonix-agent-army/
   Dockerfile                 # Multi-stage Next.js build
   Dockerfile.scripts         # Lightweight auto-trader + ws-server
   docker-compose.yml         # Local dev (engine, redis, postgres)
-  docker-compose.prod.yml    # Production (9 containers)
+  docker-compose.prod.yml    # Production (8 containers)
   Caddyfile                  # Reverse proxy config
   .env.prod                  # Template for production env vars
   scripts/
@@ -496,10 +492,6 @@ cryonix-agent-army/
     ws-server.mjs            # Docker-compatible WebSocket server (ESM)
     telegram-interactive.mjs # Interactive Telegram bot (@cryptonixis_bot)
     telegram-bot.mjs         # Evolution report bot (@cryonixEvolution_bot)
-    telegram-scraper/        # Telegram signal scraper (Python/Telethon, Docker)
-      scraper.py             #   Telethon event listener → Redis + Postgres
-      parser.py              #   Multi-format parser (Cornix, simple, emoji)
-      setup_session.py       #   One-time auth → TELEGRAM_SESSION string
     health-monitor.sh        # Container health monitor (cron every 5min)
     strategy-lab/
       calibrate.py           # Pattern EV calibration (--days 30)
@@ -510,7 +502,6 @@ cryonix-agent-army/
   apps/web/
     src/app/page.tsx          # Dashboard UI
     src/app/api/auto-trade/   # Auto-trade API (GROK validation + execution)
-    src/app/api/telegram-signals/ # Telegram signal status API
     src/app/api/health/       # Health check
   packages/engine/
     src/main.py               # FastAPI entry point (starts tanks)
@@ -527,9 +518,7 @@ cryonix-agent-army/
 
 ---
 
-## Telegram Integration
-
-### Bots
+## Telegram Bots
 
 | Bot | Handle | Purpose |
 |-----|--------|---------|
@@ -542,50 +531,12 @@ cryonix-agent-army/
 - Signal funnel metrics (24h signals → trades, conversion %)
 - Pipeline health (queue depth, trades/hour)
 
-### Signal Scraper (Telethon user client)
-
-Scrapes BUY/SELL signals from external Telegram channels as a confidence modifier for internal QuantGuild signals.
-
-| Property | Value |
-|----------|-------|
-| Container | `cryonix-telegram-scraper-1` |
-| Runtime | Python 3.11 + Telethon (MTProto) |
-| Channels | `coincodecap`, `fatpigsignals`, `ravensignalspro` |
-| Phase | **1 (log-only)** — `CONFIDENCE_BOOST_ENABLED=false` |
-| Redis keys | `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:*` |
-| Postgres | `telegram_signals` (log), `telegram_channels` (quality) |
-| API | `GET /api/telegram-signals` |
-
-**Confidence boost logic** (Phase 2, when enabled):
-- 1 channel agrees: +5%
-- 2 channels agree: +8%
-- 3 channels agree: +12%
-- Cap: total confidence max 0.95, signal TTL 30min
-
-**Monitoring:**
-```bash
-# Live logs
-ssh azureuser@openclaw-vm "docker logs -f cryonix-telegram-scraper-1"
-
-# Active signals
-curl http://openclaw-vm/api/telegram-signals
-
-# Postgres signal count
-ssh azureuser@openclaw-vm "docker exec cryonix-postgres-1 psql -U postgres -d cryonix -c 'SELECT count(*) FROM telegram_signals'"
-
-# Channel quality
-ssh azureuser@openclaw-vm "docker exec cryonix-postgres-1 psql -U postgres -d cryonix -c 'SELECT channel_name, total_signals, wins, losses, win_rate FROM telegram_channels'"
-
-# Enable boost (after 1-2 weeks)
-ssh azureuser@openclaw-vm "cd ~/cryonix && sed -i 's/CONFIDENCE_BOOST_ENABLED=false/CONFIDENCE_BOOST_ENABLED=true/' .env && docker compose -f docker-compose.prod.yml up -d --no-deps telegram-scraper"
-```
-
 ---
 
 ## Known Issues & Fixes (2026-02-15)
 
 ### Resolved
-- Postgres schema: pushed (15 tables created, +telegram_signals, +telegram_channels)
+- Postgres schema: pushed (13 tables created)
 - Health check: fixed (`ENGINE_URL` env var, 4/4 healthy)
 - RSI calculation: fixed (clamped to [1, 99], no more false 0/100)
 - **CCXT connection leak**: Engine crashed every ~70min due to leaked `MarketDataFetcher()` and `spot_exchange` instances. Fixed with singleton pattern.

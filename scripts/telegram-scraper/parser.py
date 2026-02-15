@@ -100,13 +100,12 @@ def parse_cornix_format(text: str) -> Optional[ParsedSignal]:
             action = 'BUY'
         elif re.search(r'\b(SELL|SHORT)\b', line_clean, re.I):
             action = 'SELL'
-        # Find symbol (iterate all matches — first match may be action word)
-        if not symbol:
-            for sym_match in re.finditer(r'([A-Z]{2,10})(?:/(?:USDT|USDC|USD|BUSD))?', line_clean):
-                sym = normalize_symbol(sym_match.group(1))
-                if sym:
-                    symbol = sym
-                    break
+        # Find symbol
+        sym_match = re.search(r'([A-Z]{2,10})(?:/(?:USDT|USDC|USD|BUSD))?', line_clean)
+        if sym_match and not symbol:
+            sym = normalize_symbol(sym_match.group(1))
+            if sym:
+                symbol = sym
 
     if not action or not symbol:
         return None
@@ -115,18 +114,16 @@ def parse_cornix_format(text: str) -> Optional[ParsedSignal]:
 
     for line in lines:
         line_lower = line.lower().strip()
-        # Extract value part after the label (after ':' or label text)
-        value_part = re.split(r'[:]\s*', line, maxsplit=1)[-1] if ':' in line else line
         if re.match(r'entry', line_lower) or re.match(r'buy\s*(zone|price|range)', line_lower):
-            entry, entry_high = _extract_price_range(value_part)
+            entry, entry_high = _extract_price_range(line)
         elif re.match(r'(sl|stop\s*loss|stoploss)', line_lower):
-            sl = _extract_price(value_part)
+            sl = _extract_price(line)
         elif re.match(r'tp\s*1|target\s*1|take\s*profit\s*1', line_lower):
-            tp1 = _extract_price(value_part)
+            tp1 = _extract_price(line)
         elif re.match(r'tp\s*2|target\s*2|take\s*profit\s*2', line_lower):
-            tp2 = _extract_price(value_part)
+            tp2 = _extract_price(line)
         elif re.match(r'tp\s*3|target\s*3|take\s*profit\s*3', line_lower):
-            tp3 = _extract_price(value_part)
+            tp3 = _extract_price(line)
 
     if entry is None:
         return None
