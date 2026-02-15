@@ -22,7 +22,13 @@ scripts/
   ws-server.mjs              # ESM WebSocket server for Docker
   telegram-interactive.mjs   # Interactive Telegram bot (@cryptonixis_bot)
   telegram-bot.mjs           # Evolution report bot (@cryonixEvolution_bot)
-  copilot-evolution.mjs      # GROK→Copilot CLI evolution engine
+  copilot-evolution.mjs      # GROK→Copilot CLI evolution engine (with diff guard + output validation)
+  backup-postgres.sh         # Daily Postgres backup (7-day rotation)
+  strategy-lab/              # Calibration & analysis tools
+    calibrate.py             #   Pattern EV calibration (--days 30)
+    morning_report.py        #   Daily morning report
+    x_sentiment.py           #   X/Twitter sentiment scanner
+    engine_diagnostik.py     #   Engine diagnostics
 ```
 
 ## Commands
@@ -36,7 +42,7 @@ pnpm type-check              # TypeScript check across monorepo
 
 # Infrastructure (Docker)
 docker compose up -d                                    # Dev: engine + redis + postgres
-docker compose -f docker-compose.prod.yml up -d --build # Prod: all 7 containers
+docker compose -f docker-compose.prod.yml up -d --build # Prod: all 8 containers
 
 # Database (from packages/database)
 pnpm db:generate             # Generate Drizzle migrations
@@ -56,6 +62,12 @@ Runs in Docker. Two autonomous tanks on continuous loops:
 
 - **MarketScoutTank** - Scans 15 USDC pairs every 10s via CCXT. Uses QuantGuild for pattern detection (RSI, Bollinger, MACD, EMA, Volume Spike, Dip Buy, Deep Value Crash). Approved signals go to Redis `trades:pending` queue.
 - **NewsScoutTank** - RSS sentiment analysis every 15min. Stores scores in Redis `sentiment:{SYMBOL}`.
+
+**Architecture notes:**
+- **Capital allocator** splits capital into signal pool (SIGNAL_POOL_PCT), grid pool (GRID_POOL_PCT), and reserve (RESERVE_PCT)
+- **Market regime** propagated from engine → Redis → capital allocator
+- **AI validation** is fail-closed (signal rejected if validation unavailable, not fail-open)
+- **Python engine** is spot-only mode (`config.py` synced with TypeScript CONFIG)
 
 Key modules:
 - `src/guilds/quant.py` - QuantGuild: all technical analysis + pattern detection
@@ -146,3 +158,4 @@ NEXTJS_API_URL=http://web:3000       # Engine persists signals to Postgres
 - Docker networking: containers use service names (web, engine, redis, postgres) not localhost
 - `host.docker.internal` for dev Docker -> host communication
 - Auto-trader is SPOT_ONLY (rejects SELL signals, only BUY)
+- **Risk parameters**: single source of truth is `CONFIG` in `auto-trade/route.ts`

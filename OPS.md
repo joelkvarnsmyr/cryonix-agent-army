@@ -5,7 +5,7 @@
 ```
                     Your Laptop (Dev)                     Azure VM (Prod, 24/7)
                     ────────────────                      ─────────────────────
-                    pnpm dev (localhost:3000)              Docker Compose (7 containers)
+                    pnpm dev (localhost:3000)              Docker Compose (8 containers)
                     Docker: engine, redis, postgres        Caddy reverse proxy on :80
                                                           Tailscale: openclaw-vm
 ```
@@ -21,6 +21,18 @@
 | DNS            | `openclaw-vm.taila1abdb.ts.net`            |
 | SSH            | `ssh azureuser@openclaw-vm`                |
 | Project dir    | `~/cryonix`                                |
+
+---
+
+## Cron Jobs (Active)
+
+| Schedule         | Job                          | Details                                              |
+|------------------|------------------------------|------------------------------------------------------|
+| `0 */2 * * *`   | Evolution                    | `scripts/run_evolution.sh` — RE-ENABLED              |
+| `*/15 * * * *`  | X sentiment                  | `scripts/strategy-lab/x_sentiment.py` — standalone Python |
+| `0 */6 * * *`   | Calibration                  | `scripts/strategy-lab/calibrate.py --days 30`        |
+| `0 3 * * *`     | Postgres backup              | `scripts/backup-postgres.sh` — 7-day rotation        |
+| `0 6 * * *`     | Morning report               | `scripts/strategy-lab/run.sh`                        |
 
 ---
 
@@ -46,7 +58,7 @@ All available at `http://openclaw-vm/api/...` (prod) or `http://localhost:3000/a
 
 | Endpoint                    | Method     | Description                                    |
 |-----------------------------|------------|------------------------------------------------|
-| `/api/auto-trade`           | GET / POST | Auto-trader status & trigger trade execution   |
+| `/api/auto-trade`           | GET / POST | Auto-trader status (incl. `budget` capital allocation) & trigger trade execution |
 | `/api/health`               | GET        | System health (Redis, Postgres, Engine, Scout) |
 | `/api/portfolio`            | GET        | Portfolio balances from Binance                |
 | `/api/positions`            | GET        | Open positions with live P&L                   |
@@ -65,6 +77,8 @@ All available at `http://openclaw-vm/api/...` (prod) or `http://localhost:3000/a
 | `/api/chat`                 | POST       | Chat with GROK AI assistant                    |
 | `/api/analyze`              | POST       | AI market analysis                             |
 | `/api/backtest`             | POST       | Run backtest                                   |
+| `/api/calibration`          | POST       | Pattern EV calibration                         |
+| `/api/x-sentiment`          | POST       | X/Twitter sentiment scanning                   |
 
 ### WebSocket
 
@@ -100,6 +114,7 @@ docker compose -f docker-compose.prod.yml ps
 | `cryonix-web-1`       | custom (Next.js)   | 3000 internal | Dashboard + API routes                |
 | `cryonix-auto-trader-1`| custom (Node)     | none          | Polls /api/auto-trade every 30s       |
 | `cryonix-ws-server-1` | custom (Node)      | 3004          | WebSocket for real-time dashboard     |
+| `cryonix-telegram-bot-1`| custom (Node)    | none          | Telegram bot for evolution reports    |
 | `cryonix-caddy-1`     | caddy:2-alpine     | 80            | Reverse proxy, routes /ws to ws-server|
 
 ---
@@ -212,15 +227,18 @@ curl http://openclaw-vm/api/auto-trade
 | Parameter           | Value   | Description                         |
 |---------------------|---------|-------------------------------------|
 | TOTAL_CAPITAL       | $17     | Budget                              |
-| MAX_POSITION_SIZE   | 35%     | Max ~$6 per trade                   |
+| MAX_POSITION_SIZE_PCT | 0.15  | 15% of capital per trade            |
 | MIN_CONFIDENCE      | 75%     | Minimum signal confidence           |
 | MAX_DAILY_LOSS      | 5%      | $0.85/day max loss                  |
-| MAX_OPEN_POSITIONS  | 2       | Concurrent positions                |
+| MAX_OPEN_POSITIONS  | 5       | Concurrent positions                |
 | MAX_TRADES_PER_DAY  | 3       | Daily trade limit                   |
 | MIN_ORDER_VALUE     | $5.50   | Binance minimum                     |
 | TRAILING_STOP       | 1%      | Below high water mark               |
 | SPOT_ONLY           | true    | Only BUY, never short-sell          |
 | AI_VALIDATION       | true    | GROK AI second opinion on signals   |
+| SIGNAL_POOL_PCT     | 0.65    | Capital allocated to signal trades  |
+| GRID_POOL_PCT       | 0.25    | Capital allocated to grid trading   |
+| RESERVE_PCT         | 0.10    | Capital held in reserve             |
 
 ### Scanned Pairs (15)
 
@@ -281,7 +299,7 @@ cryonix-agent-army/
   Dockerfile                 # Multi-stage Next.js build
   Dockerfile.scripts         # Lightweight auto-trader + ws-server
   docker-compose.yml         # Local dev (engine, redis, postgres)
-  docker-compose.prod.yml    # Production (7 containers)
+  docker-compose.prod.yml    # Production (8 containers)
   Caddyfile                  # Reverse proxy config
   .env.prod                  # Template for production env vars
   scripts/
@@ -316,3 +334,13 @@ All previously documented issues have been resolved (2026-02-14):
 **Notes:**
 - VM runs `openclaw` alongside Cryonix. Total memory ~870MB / 3.8GB available.
 - Low-liquidity USDC pairs (OP, ARB, SUI) may show RSI at 1 or 99 due to thin candle data. This is real market data, not a bug.
+
+---
+
+## Backup
+
+Postgres backup runs daily at **03:00 UTC** via `scripts/backup-postgres.sh`.
+
+- Destination: `/home/azureuser/cryonix/backups/`
+- Rotation: 7-day (older dumps auto-deleted)
+- Cron: `0 3 * * *`
