@@ -147,72 +147,50 @@ docker compose -f docker-compose.prod.yml ps
 
 ## Deploy Process
 
-### First-time setup on VM
+### Git-based deploy (recommended)
+
+The repo is cloned on both laptop and VM. Both push/pull to `origin/main`.
 
 ```bash
-# 1. SSH into the VM
+# From laptop: push changes
+git add -A && git commit -m "feat: ..." && git push
+
+# On VM: pull + rebuild (via SSH or Copilot agent)
+cd ~/cryonix && git pull
+docker compose -f docker-compose.prod.yml up -d --build --no-deps web engine
+```
+
+### Rebuild specific containers
+
+```bash
+# Just web (API + dashboard changes)
+docker compose -f docker-compose.prod.yml up -d --build --no-deps web
+
+# Just engine (Python quant/scanner changes)
+docker compose -f docker-compose.prod.yml up -d --build --no-deps engine
+
+# Everything
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+### Quick commands (from laptop via SSH)
+
+```bash
+# SSH to VM
 ssh azureuser@openclaw-vm
 
-# 2. Create project directory
-mkdir -p ~/cryonix
+# Check containers
+ssh azureuser@openclaw-vm "docker ps --format 'table {{.Names}}\t{{.Status}}'"
 
-# 3. Create .env file with real API keys
-cat > ~/cryonix/.env << 'EOF'
-POSTGRES_PASSWORD=password
-BINANCE_API_KEY=your-key
-BINANCE_API_SECRET=your-secret
-XAI_API_KEY=xai-your-key
-EOF
-
-# 4. Copy code (from your laptop, since repo is private)
-cd c:\Projects\Code\Crypto\cryonix-agent-army
-git archive --format=tar HEAD | ssh azureuser@openclaw-vm "cd ~/cryonix && tar xf -"
-
-# 5. Build and start everything
-ssh azureuser@openclaw-vm "cd ~/cryonix && docker compose -f docker-compose.prod.yml up -d --build"
-
-# 6. Seed positions into Redis (if needed)
-ssh azureuser@openclaw-vm "docker exec cryonix-redis-1 redis-cli SET 'position:BTC/USDC' '{...}'"
-```
-
-### Deploy updates (routine)
-
-Run these commands from your laptop:
-
-```bash
-# 1. Push code to VM
-cd c:\Projects\Code\Crypto\cryonix-agent-army
-git archive --format=tar HEAD | ssh azureuser@openclaw-vm "cd ~/cryonix && tar xf -"
-
-# 2a. Rebuild everything
-ssh azureuser@openclaw-vm "cd ~/cryonix && docker compose -f docker-compose.prod.yml up -d --build"
-
-# 2b. Or rebuild only specific containers (faster)
-ssh azureuser@openclaw-vm "cd ~/cryonix && docker compose -f docker-compose.prod.yml up -d --build engine"
-ssh azureuser@openclaw-vm "cd ~/cryonix && docker compose -f docker-compose.prod.yml up -d --build web"
-```
-
-### Quick commands
-
-```bash
-# Check all containers
-ssh azureuser@openclaw-vm "docker ps"
-
-# View logs (follow)
+# View logs
 ssh azureuser@openclaw-vm "docker logs -f cryonix-engine-1"
 ssh azureuser@openclaw-vm "docker logs -f cryonix-auto-trader-1"
 ssh azureuser@openclaw-vm "docker logs -f cryonix-web-1"
 
-# Restart a single container
+# Restart a container
 ssh azureuser@openclaw-vm "docker restart cryonix-engine-1"
 
-# Stop everything
-ssh azureuser@openclaw-vm "cd ~/cryonix && docker compose -f docker-compose.prod.yml down"
-
-# Stop everything AND delete data volumes (destructive!)
-ssh azureuser@openclaw-vm "cd ~/cryonix && docker compose -f docker-compose.prod.yml down -v"
-
-# Check Redis queue
+# Check Redis
 ssh azureuser@openclaw-vm "docker exec cryonix-redis-1 redis-cli KEYS '*'"
 ssh azureuser@openclaw-vm "docker exec cryonix-redis-1 redis-cli LRANGE trades:pending 0 -1"
 
@@ -227,22 +205,30 @@ curl http://openclaw-vm/api/auto-trade
 
 ```
 1. Python Engine (cryonix-engine-1)
-   - MarketScout scans 15 USDC pairs every 10s via CCXT (Binance)
-   - Detects patterns: RSI, Bollinger, Volume Spike, MACD, EMA Cross, Dip Buy
-   - RiskGate approves signals with confidence >= 75%
-   - Approved signals -> Redis approval queue
+   - MarketScout scans 45 USDC pairs every 10s via CCXT (Binance)
+   - 8 pattern detectors: RSI, Bollinger, Volume, MACD, EMA, Dip, Deep Value, Momentum
+   - ADX regime detection → written to Redis (market:regime)
+   - SELL signals skipped early (spot-only mode)
+   - RiskGate approves signals with confidence >= 65%
+   - Approved signals → Redis pending queue
+   - [DEV MODE: signals logged but NOT queued]
 
 2. Auto-Trader (cryonix-auto-trader-1)
    - Polls GET /api/auto-trade every 30s
-   - Reads pending signals from Redis queue
-   - Filters: SPOT_ONLY (rejects SELL), min $5.50 order, max 2 open positions
-   - GROK AI validates each signal (second opinion)
-   - If approved: executes BUY on Binance via CCXT
-   - Sets stop-loss, take-profit, trailing stop on position
+   - Capital Allocator checks budget (signal pool vs grid pool vs reserve)
+   - Regime check: volatile → grid paused
+   - EV model filter (reject negative-EV patterns, min 5 trades)
+   - X sentiment alert check (12 keywords: hack, exploit, delist, scam...)
+   - GROK AI validates (fail-closed: rejects on parse error)
+   - Order book spread check
+   - Binance BUY (spot) + native STOP_LOSS_LIMIT order
+   - Position monitor (30s: SL/TP/trailing stop with persistence)
+   - [DEV MODE: all execution blocked]
 
 3. Position Monitoring (also in auto-trader loop)
    - Checks live prices for open positions
-   - Updates trailing stop (1% below high water mark)
+   - Updates trailing stop (3% below high water mark) — persisted to Redis
+   - Cancels native SL before software-side exit (prevent double execution)
    - Triggers stop-loss or take-profit exits
 ```
 
@@ -252,19 +238,21 @@ curl http://openclaw-vm/api/auto-trade
 
 | Parameter           | Value   | Description                         |
 |---------------------|---------|-------------------------------------|
-| TOTAL_CAPITAL       | $17     | Budget                              |
+| TOTAL_CAPITAL       | dynamic | Fetched from Binance every 5min     |
 | MAX_POSITION_SIZE_PCT | 0.15  | 15% of capital per trade            |
-| MIN_CONFIDENCE      | 75%     | Minimum signal confidence           |
-| MAX_DAILY_LOSS      | 5%      | $0.85/day max loss                  |
-| MAX_OPEN_POSITIONS  | 5       | Concurrent positions                |
-| MAX_TRADES_PER_DAY  | 3       | Daily trade limit                   |
-| MIN_ORDER_VALUE     | $5.50   | Binance minimum                     |
-| TRAILING_STOP       | 1%      | Below high water mark               |
+| MIN_CONFIDENCE      | 65%     | Minimum signal confidence           |
+| MAX_DAILY_LOSS      | 5%      | Daily loss circuit breaker          |
+| MAX_OPEN_POSITIONS  | 5       | Total concurrent positions          |
+| MAX_SIGNAL_POSITIONS| 4       | Signal strategy positions           |
+| MAX_GRID_POSITIONS  | 2       | Grid strategy positions             |
+| MAX_TRADES_PER_DAY  | 6       | Daily trade limit                   |
+| MIN_ORDER_VALUE     | $1.00   | Minimum order (pair-specific from Binance) |
+| TRAILING_STOP       | 3%      | Below high water mark               |
 | SPOT_ONLY           | true    | Only BUY, never short-sell          |
-| AI_VALIDATION       | true    | GROK AI second opinion on signals   |
-| SIGNAL_POOL_PCT     | 0.65    | Capital allocated to signal trades  |
-| GRID_POOL_PCT       | 0.25    | Capital allocated to grid trading   |
-| RESERVE_PCT         | 0.10    | Capital held in reserve             |
+| AI_VALIDATION       | true    | GROK AI (fail-closed)               |
+| SIGNAL_POOL_PCT     | 0.65    | 65% capital → signal trades         |
+| GRID_POOL_PCT       | 0.25    | 25% capital → grid trading          |
+| RESERVE_PCT         | 0.10    | 10% always held in reserve          |
 
 ### Scanned Pairs (15)
 
@@ -288,18 +276,162 @@ curl http://openclaw-vm/api/auto-trade
 
 ---
 
-## Local Development
+## 🖥️ Remote Development (VM — Copilot Agent)
+
+The Azure VM is where production runs and where Copilot agents work. You interact with it via SSH or through Copilot CLI.
+
+### What runs here
+
+| Component | How | Persistent |
+|---|---|---|
+| 8 Docker containers | `docker-compose.prod.yml` | Yes — `restart: always` |
+| Evolution pipeline | Cron every 2h | Yes |
+| X sentiment scanning | Cron every 15min | Yes |
+| Calibration | Cron every 6h | Yes |
+| Postgres backup | Cron daily 03:00 UTC | Yes |
+| Morning report | Cron daily 06:00 UTC | Yes |
+
+### Copilot agent workflow
+
+Copilot agents (like me) run directly on the VM and can:
+- Edit code, run builds, deploy containers
+- Read logs, query Redis/Postgres, check Binance state
+- Run evolution, calibration, diagnostics
+- Commit and push to GitHub
 
 ```bash
-# Start infrastructure (Redis, Postgres, Python engine)
+# Typical agent workflow
+cd ~/cryonix
+git pull                                    # Sync latest
+# ... make changes ...
+docker compose -f docker-compose.prod.yml up -d --build --no-deps web engine
+git add -A && git commit -m "feat: ..." && git push
+```
+
+### Monitoring from laptop
+
+```bash
+# Dashboard
+open http://openclaw-vm              # or http://100.81.85.80
+
+# API health
+curl http://openclaw-vm/api/auto-trade | jq '.budget'
+curl http://openclaw-vm/api/health
+
+# Live logs
+ssh azureuser@openclaw-vm "docker logs -f cryonix-auto-trader-1"
+
+# Strategy Lab morning report
+ssh azureuser@openclaw-vm "cat ~/cryonix/logs/strategy-lab/report-$(date +%Y-%m-%d).txt"
+
+# Evolution log
+ssh azureuser@openclaw-vm "tail -50 /tmp/evolution-cron.log"
+```
+
+---
+
+## 💻 Local Development (Laptop)
+
+Local Docker runs the full stack but with **execution guards** — no real orders can hit Binance.
+
+### What's different from production
+
+| Aspect | Local (`docker-compose.yml`) | Production (`docker-compose.prod.yml`) |
+|---|---|---|
+| `CRYONIX_ENV` | `development` | `production` |
+| `BINANCE_TESTNET` | `true` | `false` |
+| Order execution | ⛔ **BLOCKED** | ✅ Live Binance |
+| Signal queuing | ⛔ Logged but not queued | ✅ Queued to Redis |
+| Engine scanning | ✅ Real market data (read-only) | ✅ Real market data |
+| Postgres logging | ✅ Signals saved for analysis | ✅ Full trade history |
+| Redis | Own isolated instance | Own isolated instance |
+| Postgres | Own isolated instance | Own isolated instance |
+| Containers | 3 (engine, redis, postgres) | 8 (+ web, auto-trader, ws, telegram, caddy) |
+
+### Getting started
+
+```bash
+# 1. Clone (if not already)
+git clone https://github.com/joelkvarnsmyr/cryonix-agent-army.git
+cd cryonix-agent-army
+
+# 2. Install dependencies
+pnpm install
+
+# 3. Create local .env (NO prod API keys!)
+cat > apps/web/.env.local << 'EOF'
+KV_URL=redis://localhost:6379
+POSTGRES_URL=postgres://postgres:password@localhost:5432/cryonix
+BINANCE_API_KEY=           # Leave empty or use testnet key
+BINANCE_API_SECRET=        # Leave empty or use testnet key
+BINANCE_TESTNET=true
+CRYONIX_ENV=development
+XAI_API_KEY=               # Optional: for AI validation testing
+EOF
+
+# 4. Start infrastructure (engine + redis + postgres)
 docker compose up -d
 
-# Start Next.js + WebSocket server
-pnpm dev                           # Next.js on :3000
-npx ts-node apps/web/scripts/ws-server.ts  # WS on :3004
+# 5. Start Next.js dashboard
+pnpm dev                              # http://localhost:3000
 
-# Start auto-trader (optional, for testing)
+# 6. (Optional) Start WebSocket server
+npx ts-node apps/web/scripts/ws-server.ts   # ws://localhost:3004
+
+# 7. (Optional) Start auto-trader loop (safe — orders blocked)
 npx ts-node apps/web/scripts/auto-trader.ts
+```
+
+### Full local Docker (all 8 containers)
+
+If you want to run the full prod-like stack locally (but with guards):
+
+```bash
+# Use the dev compose (CRYONIX_ENV=development baked in)
+docker compose up -d --build
+
+# Or override prod compose with dev env:
+CRYONIX_ENV=development BINANCE_TESTNET=true \
+  docker compose -f docker-compose.prod.yml up -d --build
+```
+
+⚠️ **Never put prod Binance API keys in local `.env`** — the execution guards will block orders regardless, but keys should only exist on the VM.
+
+### What you can do locally
+
+✅ **Safe to do:**
+- Develop dashboard UI (`pnpm dev`)
+- Edit API routes and test endpoints
+- Watch engine scan real market data
+- See signals generated (logged to Postgres)
+- Test AI validation prompts (needs XAI_API_KEY)
+- Run Strategy Lab scripts against local DB
+- Run `pnpm build` to check for TypeScript errors
+
+⛔ **Cannot do (by design):**
+- Execute real trades on Binance
+- Queue signals for auto-trader execution
+- Place stop-loss orders
+- Sell/exit positions
+
+### Claude Code / Copilot on laptop
+
+When running Copilot or Claude Code locally, it can:
+- Edit code and run builds
+- Test against local Docker
+- Push changes to GitHub (then VM pulls + deploys)
+
+Typical local agent workflow:
+```bash
+# Edit code, test locally
+pnpm build                            # Type-check
+docker compose up -d --build           # Rebuild engine
+
+# Push for production
+git add -A && git commit -m "feat: ..." && git push
+
+# Then on VM (or via Copilot on VM):
+# git pull && docker compose -f docker-compose.prod.yml up -d --build --no-deps web engine
 ```
 
 ### Local Caddy (optional)
