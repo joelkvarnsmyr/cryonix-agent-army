@@ -35,5 +35,10 @@
     "ioredis": "^5.9.2",
     "pg": "^8.18.0",
     "protobufjs": "^8.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "drizzle-orm": "0.36.4"
+    }
   }
 }
