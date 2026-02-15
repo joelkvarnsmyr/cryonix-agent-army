@@ -1,14 +1,22 @@
 """
 NewsScout Tank - Market Sentiment Analysis
-Scans news RSS feeds, performs sentiment analysis, and stores scores in Redis.
+Scans news RSS feeds, performs AI-powered sentiment analysis via GROK, and stores scores in Redis.
 """
 import asyncio
 import feedparser
+import json
+import os
 import re
 import time
 from bs4 import BeautifulSoup
 from redis import Redis
 from typing import Dict, List, Set
+
+try:
+    import httpx
+    HAS_HTTPX = True
+except ImportError:
+    HAS_HTTPX = False
 
 from src.tanks.base import BaseTank, TankState
 
@@ -81,12 +89,54 @@ class NewsScoutTank(BaseTank):
         return text.lower()
 
     def _calculate_sentiment(self, text: str) -> int:
-        """Calculate a simple sentiment score based on keywords."""
+        """Keyword-based sentiment fallback."""
         score = 0
         words = set(re.findall(r'\b\w+\b', text))
         score += len(words.intersection(POSITIVE_WORDS))
         score -= len(words.intersection(NEGATIVE_WORDS))
         return score
+
+    async def _ai_sentiment_batch(self, headlines: List[Dict[str, str]]) -> Dict[str, int]:
+        """Use GROK to analyze sentiment for a batch of headlines."""
+        api_key = os.environ.get('XAI_API_KEY', '')
+        if not api_key or not HAS_HTTPX or not headlines:
+            return {}
+
+        headline_text = "\n".join(
+            f"- [{h['symbol']}] {h['text'][:120]}" for h in headlines[:20]
+        )
+
+        prompt = f"""Analyze crypto news sentiment. For each symbol mentioned, give a score from -3 (very bearish) to +3 (very bullish).
+
+Headlines:
+{headline_text}
+
+Return JSON only: {{"BTC": 1, "ETH": -2, ...}} — only include symbols with non-zero sentiment."""
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    "https://api.x.ai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": "grok-3-mini",
+                        "messages": [
+                            {"role": "system", "content": "You are a crypto market sentiment analyst. Respond with JSON only."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "temperature": 0.1,
+                        "max_tokens": 150,
+                    }
+                )
+                data = resp.json()
+                content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+                match = re.search(r'\{[^}]+\}', content)
+                if match:
+                    scores = json.loads(match.group())
+                    return {k: int(v) for k, v in scores.items() if k in SYMBOL_KEYWORDS}
+        except Exception as e:
+            print(f"[{self.name}] AI sentiment failed: {e}")
+        return {}
 
     async def process(self) -> Dict:
         """Main processing loop for the tank."""
@@ -98,6 +148,7 @@ class NewsScoutTank(BaseTank):
         self.last_run_time = time.time()
 
         sentiment_scores: Dict[str, int] = {symbol: 0 for symbol in SYMBOL_KEYWORDS}
+        all_headlines: List[Dict[str, str]] = []
 
         for source, url in RSS_FEEDS.items():
             try:
@@ -108,18 +159,28 @@ class NewsScoutTank(BaseTank):
 
                 for entry in feed.entries:
                     clean_text = self._get_clean_text(entry)
-                    entry_sentiment = self._calculate_sentiment(clean_text)
 
+                    for symbol, keywords in SYMBOL_KEYWORDS.items():
+                        if any(keyword in clean_text for keyword in keywords):
+                            all_headlines.append({"symbol": symbol, "text": entry.get("title", "")})
+
+                    entry_sentiment = self._calculate_sentiment(clean_text)
                     if entry_sentiment == 0:
                         continue
-
-                    # Check which symbols this news applies to
                     for symbol, keywords in SYMBOL_KEYWORDS.items():
                         if any(keyword in clean_text for keyword in keywords):
                             sentiment_scores[symbol] += entry_sentiment
 
             except Exception as e:
                 print(f"[{self.name}] Error fetching or parsing {source}: {e}")
+
+        # Try AI sentiment (overrides keyword scores)
+        if all_headlines:
+            ai_scores = await self._ai_sentiment_batch(all_headlines)
+            if ai_scores:
+                print(f"[{self.name}] AI sentiment: {ai_scores}")
+                for symbol, score in ai_scores.items():
+                    sentiment_scores[symbol] = score
 
         # Store the aggregated sentiment scores in Redis
         try:

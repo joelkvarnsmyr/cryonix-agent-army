@@ -64,8 +64,9 @@ class QuantGuild:
         if deep_value:
             patterns.append(deep_value)
 
-        # Generate final signal
-        signal = self._generate_signal(patterns, indicators, df)
+        # Generate final signal (with multi-TF trend filter)
+        htf_trend = self._get_higher_tf_trend(multi_tf_data)
+        signal = self._generate_signal(patterns, indicators, df, htf_trend)
 
         return {
             "status": "success",
@@ -73,6 +74,7 @@ class QuantGuild:
             "indicators": indicators,
             "patterns": patterns,
             "signal": signal,
+            "htf_trend": htf_trend,
             "candles_analyzed": len(df),
         }
 
@@ -98,6 +100,13 @@ class QuantGuild:
         # MACD
         macd, macd_signal, macd_hist = self._calculate_macd(close)
 
+        # ADX (14-period) for market regime detection
+        adx, plus_di, minus_di = self._calculate_adx(high, low, close, 14)
+
+        # EMA 9/21 for trend direction
+        ema9 = close.ewm(span=9).mean()
+        ema21 = close.ewm(span=21).mean()
+
         # Get latest values
         latest_idx = -1
 
@@ -115,6 +124,16 @@ class QuantGuild:
             "macd_signal": round(macd_signal.iloc[latest_idx], 4) if not pd.isna(macd_signal.iloc[latest_idx]) else 0,
             "macd_hist": round(macd_hist.iloc[latest_idx], 4) if not pd.isna(macd_hist.iloc[latest_idx]) else 0,
             "price": float(close.iloc[latest_idx]),
+            "adx": round(float(adx.iloc[latest_idx]), 2) if not pd.isna(adx.iloc[latest_idx]) else 0,
+            "plus_di": round(float(plus_di.iloc[latest_idx]), 2) if not pd.isna(plus_di.iloc[latest_idx]) else 0,
+            "minus_di": round(float(minus_di.iloc[latest_idx]), 2) if not pd.isna(minus_di.iloc[latest_idx]) else 0,
+            "ema9": round(float(ema9.iloc[latest_idx]), 8),
+            "ema21": round(float(ema21.iloc[latest_idx]), 8),
+            "market_regime": self._classify_regime(
+                float(adx.iloc[latest_idx]) if not pd.isna(adx.iloc[latest_idx]) else 0,
+                float(atr.iloc[latest_idx]) if not pd.isna(atr.iloc[latest_idx]) else 0,
+                atr, bb_width
+            ),
         }
 
     def _detect_patterns(self, df: pd.DataFrame, indicators: Dict) -> List[Dict]:
@@ -503,7 +522,8 @@ class QuantGuild:
         self,
         patterns: List[Dict],
         indicators: Dict,
-        df: pd.DataFrame
+        df: pd.DataFrame,
+        htf_trend: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """
         Combine all patterns into a final trading signal.
@@ -514,6 +534,7 @@ class QuantGuild:
         - 3+ patterns: +15% confidence boost
         - Trend alignment (price vs MA): +5% boost
         - Volume confirmation: +5% boost
+        - Higher timeframe alignment: +5% boost / -10% penalty
         """
         price = indicators['price']
         atr = indicators['atr']
@@ -569,7 +590,12 @@ class QuantGuild:
         volume_ratio = indicators.get('volume_ratio', 1)
         volume_confirmed = bool(volume_ratio > 1.2)  # 20% above average
 
-        def calculate_consensus_confidence(signals: List[Dict], trend_aligned: bool) -> tuple:
+        # Higher timeframe and regime context
+        htf_bullish = htf_trend and htf_trend.get('bias') == 'bullish'
+        htf_bearish = htf_trend and htf_trend.get('bias') == 'bearish'
+        market_regime = indicators.get('market_regime', 'unknown')
+
+        def calculate_consensus_confidence(signals: List[Dict], trend_aligned: bool, action: str) -> tuple:
             """Calculate confidence with consensus boosts"""
             if not signals:
                 return 0, []
@@ -595,11 +621,27 @@ class QuantGuild:
                 base_confidence += 0.05
                 boosts.append("+5% (volume confirmed)")
 
+            # Higher timeframe alignment
+            if htf_trend:
+                if (action == 'BUY' and htf_bullish) or (action == 'SELL' and htf_bearish):
+                    base_confidence += 0.05
+                    boosts.append(f"+5% (HTF {htf_trend['bias']})")
+                elif (action == 'BUY' and htf_bearish) or (action == 'SELL' and htf_bullish):
+                    base_confidence -= 0.10
+                    boosts.append(f"-10% (against HTF {htf_trend['bias']})")
+
+            # Market regime penalty for trend signals in ranging markets
+            if market_regime == 'ranging':
+                trend_patterns = {'MACD_BULLISH_CROSS', 'MACD_BEARISH_CROSS', 'EMA_BULLISH_CROSS', 'EMA_BEARISH_CROSS'}
+                if any(p.get('pattern') in trend_patterns for p in signals):
+                    base_confidence -= 0.05
+                    boosts.append("-5% (trend signal in ranging market)")
+
             return min(0.95, base_confidence), boosts
 
         # Calculate weighted confidence for each direction
         if buy_signals and not sell_signals:
-            confidence, boosts = calculate_consensus_confidence(buy_signals, trend_bullish)
+            confidence, boosts = calculate_consensus_confidence(buy_signals, trend_bullish, 'BUY')
             reasons = [p['reason'] for p in buy_signals]
 
             return {
@@ -614,10 +656,12 @@ class QuantGuild:
                 "consensus_boosts": boosts,
                 "trend_aligned": trend_bullish,
                 "volume_confirmed": volume_confirmed,
+                "htf_trend": htf_trend.get('bias') if htf_trend else None,
+                "market_regime": market_regime,
             }
 
         elif sell_signals and not buy_signals:
-            confidence, boosts = calculate_consensus_confidence(sell_signals, trend_bearish)
+            confidence, boosts = calculate_consensus_confidence(sell_signals, trend_bearish, 'SELL')
             reasons = [p['reason'] for p in sell_signals]
 
             return {
@@ -632,6 +676,8 @@ class QuantGuild:
                 "consensus_boosts": boosts,
                 "trend_aligned": trend_bearish,
                 "volume_confirmed": volume_confirmed,
+                "htf_trend": htf_trend.get('bias') if htf_trend else None,
+                "market_regime": market_regime,
             }
 
         else:
@@ -684,6 +730,75 @@ class QuantGuild:
                 }
 
     # === Helper Methods ===
+
+    def _get_higher_tf_trend(self, multi_tf_data: Optional[Dict[str, List[list]]]) -> Optional[Dict]:
+        """Determine the higher-timeframe trend bias from 1h and 4h data"""
+        if not multi_tf_data:
+            return None
+
+        bullish_votes = 0
+        bearish_votes = 0
+        details = {}
+
+        for tf_name in ['1h', '4h']:
+            data = multi_tf_data.get(tf_name)
+            if not data or len(data) < 21:
+                continue
+            df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            ema9 = df['close'].ewm(span=9).mean().iloc[-1]
+            ema21 = df['close'].ewm(span=21).mean().iloc[-1]
+            price = df['close'].iloc[-1]
+
+            if price > ema21 and ema9 > ema21:
+                bullish_votes += 1
+                details[tf_name] = 'bullish'
+            elif price < ema21 and ema9 < ema21:
+                bearish_votes += 1
+                details[tf_name] = 'bearish'
+            else:
+                details[tf_name] = 'neutral'
+
+        if bullish_votes > bearish_votes:
+            bias = 'bullish'
+        elif bearish_votes > bullish_votes:
+            bias = 'bearish'
+        else:
+            bias = 'neutral'
+
+        return {'bias': bias, 'details': details}
+
+    def _calculate_adx(self, high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14):
+        """Calculate ADX, +DI, -DI for market regime detection"""
+        plus_dm = high.diff()
+        minus_dm = -low.diff()
+        plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0)
+        minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0)
+
+        tr = pd.concat([
+            high - low,
+            (high - close.shift()).abs(),
+            (low - close.shift()).abs()
+        ], axis=1).max(axis=1)
+
+        atr = tr.rolling(window=period).mean()
+        plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr.replace(0, np.nan))
+        minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr.replace(0, np.nan))
+
+        dx = (100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)))
+        adx = dx.rolling(window=period).mean()
+        return adx.fillna(0), plus_di.fillna(0), minus_di.fillna(0)
+
+    def _classify_regime(self, adx: float, atr_now: float, atr_series: pd.Series, bb_width_series: pd.Series) -> str:
+        """Classify market regime: trending, ranging, or volatile"""
+        atr_mean = float(atr_series.rolling(50).mean().iloc[-1]) if len(atr_series) >= 50 else float(atr_series.mean())
+        atr_expansion = atr_now / atr_mean if atr_mean > 0 else 1.0
+
+        if atr_expansion > 2.0:
+            return "volatile"
+        elif adx >= 25:
+            return "trending"
+        else:
+            return "ranging"
 
     def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
         """Calculate RSI (handles zero-loss and zero-gain edge cases)"""

@@ -115,20 +115,14 @@ class MarketScoutTank(BaseTank):
         print(f"[{self.name}] Analyzing {symbol} with QuantGuild...")
 
         try:
-            # Pre-filter: check for potential deep value crash (8%+ drawdown)
-            # This is cheap - just check last 20 candles before fetching multi-TF data
+            # Always fetch multi-TF data for trend context (1h + 4h)
             multi_tf_data = None
-            if len(ohlcv) >= 20:
-                closes = [c[4] for c in ohlcv[-20:]]  # Close prices
-                recent_high = max(closes)
-                current = closes[-1]
-                drawdown = (recent_high - current) / recent_high if recent_high > 0 else 0
+            try:
+                multi_tf_data = market_data.fetch_multi_timeframe(symbol)
+            except Exception as e:
+                print(f"[{self.name}] Multi-TF fetch failed for {symbol}: {e}")
 
-                if drawdown >= 0.08:  # 8% threshold
-                    print(f"[{self.name}] {symbol} DEEP VALUE pre-filter triggered: {drawdown:.1%} drawdown")
-                    multi_tf_data = market_data.fetch_multi_timeframe(symbol)
-
-            # Run full technical analysis (with optional multi-TF data for deep value)
+            # Run full technical analysis with multi-TF data
             analysis = quant.analyze(ohlcv, symbol, multi_tf_data=multi_tf_data)
 
             if analysis['status'] != 'success':
@@ -178,6 +172,11 @@ class MarketScoutTank(BaseTank):
                     "ema9": round(indicators.get('ema9', 0), 6),
                     "ema21": round(indicators.get('ema21', 0), 6),
                     "price": round(indicators.get('price', 0), 6),
+                    "adx": indicators.get('adx', 0),
+                    "plus_di": indicators.get('plus_di', 0),
+                    "minus_di": indicators.get('minus_di', 0),
+                    "market_regime": indicators.get('market_regime', 'unknown'),
+                    "htf_trend": analysis.get('htf_trend', {}).get('bias') if analysis.get('htf_trend') else None,
                     "consensus_score": signal.get('consensus_score', 0),
                     "trend_aligned": bool(signal.get('trend_aligned', False)),
                     "volume_confirmed": bool(signal.get('volume_confirmed', False)),

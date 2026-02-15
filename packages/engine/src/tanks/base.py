@@ -184,10 +184,15 @@ class BaseTank:
                     "ema9": indicators.get("ema9"),
                     "ema21": indicators.get("ema21"),
                     "price": indicators.get("price"),
+                    "adx": indicators.get("adx"),
+                    "plus_di": indicators.get("plus_di"),
+                    "minus_di": indicators.get("minus_di"),
+                    "market_regime": indicators.get("market_regime"),
                     "consensus_score": signal.get("consensus_score"),
                     "consensus_boosts": signal.get("consensus_boosts"),
                     "trend_aligned": bool(signal.get("trend_aligned", False)),
                     "volume_confirmed": bool(signal.get("volume_confirmed", False)),
+                    "htf_trend": signal.get("htf_trend"),
                 }
                 # Remove None values to keep it clean
                 metadata = {k: v for k, v in metadata.items() if v is not None}

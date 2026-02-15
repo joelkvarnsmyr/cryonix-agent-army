@@ -554,6 +554,7 @@ JSON: {"approve": boolean, "confidence": number(0-100), "reasoning": "one senten
 - **BB:** lower=$${signal.indicators?.bb_lower ?? 'N/A'} mid=$${signal.indicators?.bb_mid ?? 'N/A'} upper=$${signal.indicators?.bb_upper ?? 'N/A'}
 - **ATR:** ${signal.indicators?.atr_pct ?? 'N/A'}% | **EMA9/21:** ${signal.indicators?.ema9 ?? 'N/A'}/${signal.indicators?.ema21 ?? 'N/A'}
 - **Volume:** ${signal.indicators?.volume_ratio ?? 'N/A'}x avg | **Trend aligned:** ${signal.indicators?.trend_aligned ?? 'N/A'}
+- **ADX:** ${signal.indicators?.adx ?? 'N/A'} | **Market Regime:** ${signal.indicators?.market_regime ?? 'N/A'} | **HTF Trend:** ${signal.indicators?.htf_trend ?? 'N/A'}
 
 **Live Market:**
 - **Price:** $${ticker.last?.toFixed(4)} | **24h:** ${ticker.percentage?.toFixed(2)}%
@@ -561,18 +562,26 @@ JSON: {"approve": boolean, "confidence": number(0-100), "reasoning": "one senten
 
 ${portfolioCtx}
 
-Approve if the technical pattern is valid and not contradicted by price action. Consider position concentration — reject if we already hold this asset or are overexposed.
+**Decision rules:**
+- Approve if 2+ indicators confirm AND market regime supports the pattern type (trending patterns need ADX>25, mean-reversion needs ranging market).
+- REJECT if signal goes AGAINST higher timeframe trend (HTF).
+- Consider position concentration — reject if we already hold this asset.
 
 JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one sentence", "sl": number|null, "tp": number|null}`;
+
+    // xAI search parameter for real-time X/news context
+    const searchConfig: Record<string, unknown> = {};
+    try { (searchConfig as any).search = { mode: 'auto' }; } catch {}
 
     const response = await ai.chat.completions.create({
       model: 'grok-3-mini',
       messages: [
-        { role: 'system', content: 'You are RISK-BOT 9000, a strict trading risk analyst. You REJECT more signals than you approve. Only approve signals with clear technical confluence (2+ confirming indicators). Reject if: RSI is neutral (35-65), volume is below average, pattern is weak, or risk/reward is marginal. Your job is to PROTECT capital, not find trades. Respond with a single minified JSON object only.' },
+        { role: 'system', content: 'You are RISK-BOT 9000, a strict trading risk analyst. You REJECT more signals than you approve. Only approve signals with clear technical confluence (2+ confirming indicators). Reject if: RSI is neutral (35-65), volume is below average, pattern is weak, risk/reward is marginal, or signal goes against higher timeframe trend. Your job is to PROTECT capital, not find trades. Respond with a single minified JSON object only.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.1,
       max_tokens: 200,
+      ...searchConfig,
     });
 
     const content = response.choices[0]?.message?.content || '';
@@ -670,6 +679,24 @@ async function executeBuy(signal: Signal): Promise<{
     }
 
     console.log(`[AUTO-TRADE] BUY ${signal.symbol}: qty=${quantity}, ~$${positionValue.toFixed(2)}, minNotional=${market.limits?.cost?.min || '?'}`);
+
+    // Order book spread check — skip illiquid pairs
+    try {
+      const orderBook = await ex.fetchOrderBook(signal.symbol, 5);
+      if (orderBook.bids?.length && orderBook.asks?.length) {
+        const bestBid = orderBook.bids[0]?.[0];
+        const bestAsk = orderBook.asks[0]?.[0];
+        if (bestBid && bestAsk && bestBid > 0) {
+          const spreadPct = ((bestAsk - bestBid) / bestBid) * 100;
+          if (spreadPct > 0.3) {
+            return { success: false, error: `Spread too wide: ${spreadPct.toFixed(3)}% (max 0.3%)` };
+          }
+          console.log(`[AUTO-TRADE] ${signal.symbol} spread: ${spreadPct.toFixed(3)}%`);
+        }
+      }
+    } catch (e) {
+      // Non-fatal — proceed without spread check
+    }
 
     const ticker = await ex.fetchTicker(signal.symbol);
     const currentPrice = ticker.last || signal.entry_price;
