@@ -310,8 +310,9 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
       console.log(`  ✅ Restored: ${file}`);
     }
 
-    // Restore stashed manual changes
+    // Restore stashed manual changes (only once — reset flag to prevent double-pop)
     if (this.hadUncommittedChanges) {
+      this.hadUncommittedChanges = false; // Prevent double-pop on retry
       console.log('  📦 Restoring stashed manual changes...');
       try {
         await this.execCommand('git stash pop');
@@ -358,6 +359,23 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
       // Save Copilot's output
       await writeFile(join(promptDir, `${this.runId}-copilot-output.txt`), result);
       console.log('📤 Copilot output saved');
+
+      // Validate: did Copilot actually change any files?
+      const diffCheck = await this.execCommand('git diff --stat');
+      if (!diffCheck.trim()) {
+        console.warn('⚠️  Copilot CLI made no file changes — treating as failed mutation');
+        return false;
+      }
+      const changedFiles = diffCheck.trim().split('\n').length - 1; // last line is summary
+      console.log(`   Copilot changed ${changedFiles} file(s)`);
+
+      // Validate: reject if output looks like a refusal or error
+      const lowerResult = result.toLowerCase();
+      if (lowerResult.includes('i cannot') || lowerResult.includes('i\'m unable') || lowerResult.includes('error:')) {
+        console.warn('⚠️  Copilot output appears to be a refusal or error');
+        return false;
+      }
+
       console.log('\n✅ Copilot evolution completed');
       return true;
 
@@ -600,8 +618,35 @@ Based on ALL the data above (not just patterns), generate the Copilot CLI instru
   async commitChanges(message) {
     console.log('\n📝 Committing changes...');
 
-    await this.execCommand('git add .');
-    await this.execCommand(`git commit -m "${message}"`);
+    // Only add critical files (not temp/backup/prompt files)
+    for (const file of CONFIG.CRITICAL_FILES) {
+      try {
+        await this.execCommand(`git add ${file}`);
+      } catch { /* file may not have changes */ }
+    }
+
+    // Diff-size guard: reject mutations that change too many lines
+    try {
+      const diffStat = await this.execCommand('git diff --cached --numstat');
+      const totalLines = diffStat.trim().split('\n')
+        .filter(l => l.trim())
+        .reduce((sum, line) => {
+          const [added, deleted] = line.split('\t');
+          return sum + parseInt(added || 0) + parseInt(deleted || 0);
+        }, 0);
+      if (totalLines > 100) {
+        console.error(`❌ Mutation too large: ${totalLines} lines changed (max 100). Aborting commit.`);
+        await this.execCommand('git reset HEAD');
+        throw new Error(`Mutation too large: ${totalLines} lines`);
+      }
+      console.log(`   Diff size: ${totalLines} lines (max 100)`);
+    } catch (e) {
+      if (e.message?.includes('too large')) throw e;
+    }
+
+    await this.execCommand(`git commit -m "${message}
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"`);
 
     let pushed = false;
     try {
@@ -744,6 +789,7 @@ Based on ALL the data above (not just patterns), generate the Copilot CLI instru
 
         // Restore stashed manual changes after successful commit
         if (this.hadUncommittedChanges) {
+          this.hadUncommittedChanges = false; // Prevent double-pop
           console.log('  📦 Restoring stashed manual changes...');
           try {
             await this.execCommand('git stash pop');
@@ -764,6 +810,11 @@ Based on ALL the data above (not just patterns), generate the Copilot CLI instru
 
       if (!mutationApplied) {
         console.log(`\n❌ Evolution failed after ${CONFIG.MAX_EVOLUTION_ATTEMPTS} attempts`);
+        // Restore stashed changes that were never popped
+        if (this.hadUncommittedChanges) {
+          this.hadUncommittedChanges = false;
+          try { await this.execCommand('git stash pop'); } catch {}
+        }
         await this.logEvolutionResult(false, {
           reason: 'max_attempts_reached',
           performance: performanceData,
