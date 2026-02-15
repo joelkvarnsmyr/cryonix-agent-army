@@ -42,6 +42,12 @@ touch "$LOCK_FILE"
   echo "=== Auto-deploy started ==="
   git log --oneline "$LOCAL".."$REMOTE"
 
+  # Stash any local uncommitted changes (prevents wiping agent work-in-progress)
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "  Stashing local changes before deploy..."
+    git stash --include-untracked
+  fi
+
   # Pull new code
   git reset --hard origin/main
 

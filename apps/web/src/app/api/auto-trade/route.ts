@@ -18,15 +18,34 @@ if (!IS_PRODUCTION) {
 }
 
 // ============================================================================
+// INSTANCE LOCK — prevent multiple environments from trading the same account
+// ============================================================================
+
+const INSTANCE_ID = `${require('os').hostname()}-${process.pid}`;
+const INSTANCE_LOCK_KEY = 'instance:trading_lock';
+const INSTANCE_LOCK_TTL = 90; // seconds — must be > auto-trader poll interval (30s)
+
+async function acquireInstanceLock(): Promise<{ acquired: boolean; holder?: string }> {
+  const result = await redis.set(INSTANCE_LOCK_KEY, INSTANCE_ID, 'EX', INSTANCE_LOCK_TTL, 'NX');
+  if (result === 'OK') return { acquired: true };
+  const holder = await redis.get(INSTANCE_LOCK_KEY);
+  if (holder === INSTANCE_ID) {
+    await redis.expire(INSTANCE_LOCK_KEY, INSTANCE_LOCK_TTL);
+    return { acquired: true };
+  }
+  return { acquired: false, holder: holder as string };
+}
+
+// ============================================================================
 // CONFIGURATION
 // ============================================================================
 
 const CONFIG = {
-  TOTAL_CAPITAL: 17,
-  MAX_POSITION_SIZE_PCT: 0.15,     // 15% per position (~$2.55) — fewer but larger positions
+  TOTAL_CAPITAL: 0,                // Dynamically fetched from Binance — 0 = force fetch on first cycle
+  MAX_POSITION_SIZE_PCT: 0.25,     // 25% per position (~$10 at ~$41 capital) — clears NOTIONAL min
   MIN_CONFIDENCE: 0.65,
-  MAX_DAILY_LOSS_PCT: 0.05,        // 5% (~$0.85)
-  MAX_OPEN_POSITIONS: 5,           // Realistic for $17 capital (min ~$1.50/position after fees)
+  MAX_DAILY_LOSS_PCT: 0.05,        // 5% daily loss circuit breaker
+  MAX_OPEN_POSITIONS: 3,           // Realistic for ~$41 capital with NOTIONAL minimums
   MAX_TRADES_PER_DAY: 6,
   MAX_SLIPPAGE_PCT: 0.5,
   SPOT_ONLY: true,                  // Margin account not available — spot only
@@ -41,8 +60,8 @@ const CONFIG = {
   SIGNAL_POOL_PCT: 0.65,           // 65% for signal-based trades
   GRID_POOL_PCT: 0.25,             // 25% for grid trades
   RESERVE_PCT: 0.10,               // 10% always kept as reserve
-  MAX_SIGNAL_POSITIONS: 4,         // Max signal-based positions
-  MAX_GRID_POSITIONS: 2,           // Max grid positions
+  MAX_SIGNAL_POSITIONS: 2,         // Max signal-based positions (~$41 capital, $7.50+ each)
+  MAX_GRID_POSITIONS: 1,           // Max grid positions
 };
 
 // ============================================================================
@@ -103,7 +122,7 @@ const CAPITAL_CACHE_MS = 5 * 60 * 1000; // refresh every 5 min
 
 async function getTotalCapital(): Promise<number> {
   const now = Date.now();
-  if (now - capitalLastFetched < CAPITAL_CACHE_MS) return cachedCapital;
+  if (cachedCapital > 0 && (now - capitalLastFetched < CAPITAL_CACHE_MS)) return cachedCapital;
   try {
     const ex = getExchange();
     await ex.loadMarkets();
@@ -1066,7 +1085,14 @@ async function calculatePositionSize(signal: Signal): Promise<number> {
   const p = signal.confidence;
   const q = 1 - p;
   const kellyFraction = Math.max(0, ((p * b - q) / b) * 0.5);
-  const positionValue = Math.min(capital * kellyFraction, maxPositionValue);
+  let positionValue = Math.min(capital * kellyFraction, maxPositionValue);
+
+  // Ensure position clears NOTIONAL minimum (with 1.5x buffer).
+  // With small capital, Kelly often produces values below NOTIONAL.
+  const SAFE_MIN = 7.50;  // Binance NOTIONAL ~$5 × 1.5 buffer
+  if (positionValue < SAFE_MIN && availableBudget >= SAFE_MIN) {
+    positionValue = SAFE_MIN;
+  }
 
   if (isDeepValue) {
     console.log(`[SIZING] Deep value ${signal.symbol}: Kelly=${(kellyFraction * 100).toFixed(1)}%, value=$${positionValue.toFixed(2)} (max $${maxPositionValue.toFixed(2)})`);
@@ -1492,6 +1518,18 @@ async function checkGridTriggers(): Promise<GridResult[]> {
 
 export async function POST() {
   try {
+    // INSTANCE LOCK: ensure only one environment trades this Binance account
+    const lock = await acquireInstanceLock();
+    if (!lock.acquired) {
+      console.warn(`[INSTANCE-LOCK] Trading blocked — another instance holds lock: ${lock.holder}`);
+      return NextResponse.json({
+        success: false,
+        error: `Instance lock held by ${lock.holder}. Only one trading instance allowed per Binance account.`,
+        instanceId: INSTANCE_ID,
+        lockHolder: lock.holder,
+      }, { status: 409 });
+    }
+
     resetDailyStateIfNeeded();
 
     // STEP 1: Monitor existing positions (check SL/TP/trailing)
@@ -1779,5 +1817,7 @@ export async function GET() {
     queues: { pending: pendingCount, approved: approvedCount },
     grids: gridConfigs,
     isTestnet: process.env.BINANCE_TESTNET === 'true',
+    instanceId: INSTANCE_ID,
+    lockHolder: await redis.get(INSTANCE_LOCK_KEY),
   });
 }
