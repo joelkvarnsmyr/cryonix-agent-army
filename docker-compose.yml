@@ -10,6 +10,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - KV_URL=redis://redis:6379
+      - CRYONIX_ENV=development
+      - BINANCE_TESTNET=true
     networks:
       - cryonix-net
     depends_on:

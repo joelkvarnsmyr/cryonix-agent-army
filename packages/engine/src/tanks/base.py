@@ -139,6 +139,14 @@ class BaseTank:
     async def execute_order(self, state: TankState) -> TankState:
         # In Glass Tank architecture, we don't execute immediately.
         # We Request Approval via Redis.
+        from src.core.config import settings
+
+        # ENVIRONMENT GUARD: in dev mode, log signal but don't queue for execution
+        if not settings.is_production:
+            print(f"[{self.name}] [DEV-MODE] Signal generated but NOT queued (CRYONIX_ENV={settings.CRYONIX_ENV})")
+            await self._persist_signal(state)  # Still log to Postgres for analysis
+            return {"status": "dev_mode_blocked"}
+
         redis_ok = False
         for attempt in range(3):
             try:

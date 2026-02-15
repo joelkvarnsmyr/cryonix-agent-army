@@ -7,6 +7,17 @@ import OpenAI from 'openai';
 export const dynamic = 'force-dynamic';
 
 // ============================================================================
+// ENVIRONMENT GUARD — prevent accidental real trading from dev/local
+// ============================================================================
+
+const CRYONIX_ENV = process.env.CRYONIX_ENV || 'development';
+const IS_PRODUCTION = CRYONIX_ENV === 'production';
+
+if (!IS_PRODUCTION) {
+  console.warn(`⚠️ [AUTO-TRADE] Running in ${CRYONIX_ENV} mode — real order execution BLOCKED`);
+}
+
+// ============================================================================
 // CONFIGURATION
 // ============================================================================
 
@@ -463,6 +474,13 @@ async function monitorPositions(): Promise<MonitorResult[]> {
         // Close the position (sell for LONG, buy-back for SHORT)
         const closeSide = pos.side === 'SELL' ? 'buy' : 'sell';
         console.log(`[MONITOR] Closing ${pos.side} ${pos.symbol}: ${exitReason}`);
+
+        // ENVIRONMENT GUARD: block real sells outside production
+        if (!IS_PRODUCTION) {
+          console.log(`[DEV-MODE] Would SELL ${pos.symbol} — blocked (CRYONIX_ENV=${CRYONIX_ENV})`);
+          continue;
+        }
+
         try {
           // Cancel Binance-native SL order before selling (prevent double execution)
           if (pos.nativeSlOrderId) {
@@ -994,6 +1012,12 @@ async function executeBuy(signal: Signal): Promise<{
   quantity?: number;
   error?: string;
 }> {
+  // ENVIRONMENT GUARD: block real orders outside production
+  if (!IS_PRODUCTION) {
+    console.log(`[DEV-MODE] Would BUY ${signal.symbol} — blocked (CRYONIX_ENV=${CRYONIX_ENV})`);
+    return { success: false, error: `Execution blocked: CRYONIX_ENV=${CRYONIX_ENV} (not production)` };
+  }
+
   const ex = getExchange();
   const rawQuantity = await calculatePositionSize(signal);
 
@@ -1112,6 +1136,12 @@ async function executeMarginSell(signal: Signal): Promise<{
 }> {
   if (CONFIG.TRADING_MODE === 'spot') {
     return { success: false, error: 'Margin sell not available in spot mode' };
+  }
+
+  // ENVIRONMENT GUARD: block real orders outside production
+  if (!IS_PRODUCTION) {
+    console.log(`[DEV-MODE] Would MARGIN SELL ${signal.symbol} — blocked (CRYONIX_ENV=${CRYONIX_ENV})`);
+    return { success: false, error: `Execution blocked: CRYONIX_ENV=${CRYONIX_ENV} (not production)` };
   }
 
   const ex = getExchange();

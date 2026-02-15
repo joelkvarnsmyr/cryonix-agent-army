@@ -3,12 +3,38 @@
 ## Infrastructure Overview
 
 ```
-                    Your Laptop (Dev)                     Azure VM (Prod, 24/7)
-                    ────────────────                      ─────────────────────
-                    pnpm dev (localhost:3000)              Docker Compose (8 containers)
-                    Docker: engine, redis, postgres        Caddy reverse proxy on :80
-                                                          Tailscale: openclaw-vm
+  Your Laptop (Dev)                           Azure VM (Prod, 24/7)
+  ──────────────────                          ─────────────────────
+  docker compose up (local containers)        docker compose -f docker-compose.prod.yml
+  CRYONIX_ENV=development                     CRYONIX_ENV=production
+  BINANCE_TESTNET=true                        BINANCE_TESTNET=false
+  ⛔ Orders BLOCKED (env guard)               ✅ Real Binance execution
+  ⛔ Signals NOT queued to Redis              ✅ Signals → Redis → auto-trader
+  ✅ Engine scans + analysis (read-only)      ✅ Full pipeline active
+  ✅ Postgres signal logging                  ✅ Cron: evolution, calibration, backup
+  Own Redis + Postgres (isolated)             Own Redis + Postgres (production data)
 ```
+
+### Environment Isolation (CRITICAL)
+
+The system uses `CRYONIX_ENV` as a hard execution guard:
+
+| Guard Location | What it blocks | Env var check |
+|---|---|---|
+| `executeBuy()` in auto-trade | Real BUY orders on Binance | `CRYONIX_ENV !== 'production'` |
+| `executeMarginSell()` | Real SELL orders on Binance | `CRYONIX_ENV !== 'production'` |
+| `monitorPositions()` sell path | Real position exits | `CRYONIX_ENV !== 'production'` |
+| `execute_order()` in base.py | Signal queuing to Redis | `settings.is_production == False` |
+
+**Local Docker** (`docker-compose.yml`) sets:
+- `CRYONIX_ENV=development` → all execution blocked
+- `BINANCE_TESTNET=true` → CCXT points to testnet if accidentally called
+
+**Production Docker** (`docker-compose.prod.yml`) sets:
+- `CRYONIX_ENV=production` → execution enabled
+- `BINANCE_TESTNET=false` → real Binance
+
+⚠️ **Never copy `.env` with prod API keys to your laptop's Docker.** Local Docker uses its own isolated Redis + Postgres and cannot execute real trades regardless, but API keys should stay on the VM.
 
 ### Azure VM
 

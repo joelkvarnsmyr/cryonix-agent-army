@@ -4,6 +4,7 @@ class Settings(BaseSettings):
     # App
     APP_NAME: str = "Cryonix Engine"
     ENV: str = "development"
+    CRYONIX_ENV: str = "development"    # production | development — guards execution
     
     # Redis (State Sync)
     # Default to localhost if not provided (for local docker)
@@ -21,6 +22,10 @@ class Settings(BaseSettings):
     
     # AI (Optional for now)
     XAI_API_KEY: str = ""
+
+    @property
+    def is_production(self) -> bool:
+        return self.CRYONIX_ENV == "production"
 
     class Config:
         env_file = ".env"

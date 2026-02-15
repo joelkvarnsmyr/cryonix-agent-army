@@ -55,6 +55,7 @@ services:
       - BINANCE_API_KEY=${BINANCE_API_KEY}
       - BINANCE_API_SECRET=${BINANCE_API_SECRET}
       - BINANCE_TESTNET=false
+      - CRYONIX_ENV=production
       - TRADING_MODE=${TRADING_MODE:-margin}
       - MARGIN_TYPE=${MARGIN_TYPE:-cross}
       - DEFAULT_LEVERAGE=${DEFAULT_LEVERAGE:-3}
@@ -80,6 +81,7 @@ services:
 
     environment:
       - NODE_ENV=production
+      - CRYONIX_ENV=production
       - PORT=3000
       - KV_URL=redis://redis:6379
       - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
