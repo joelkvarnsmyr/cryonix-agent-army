@@ -2,9 +2,11 @@
 MarketScout Tank - Real Market Scanner
 Scans markets using CCXT and analyzes with QuantGuild
 """
+import json
 from typing import Dict, Any
 from src.tanks.base import BaseTank, TankState
 from src.core.market_data import market_data
+from src.core.state_sync import state_manager
 from src.guilds.quant import quant
 
 
@@ -142,6 +144,31 @@ class MarketScoutTank(BaseTank):
             indicators = analysis['indicators']
             patterns = analysis.get('patterns', [])
 
+            # MOMENTUM_GAINER: inject pattern if symbol is a GainerScanner top mover
+            # with RSI + volume confirmation (QuantGuild stays pure, no Redis dependency)
+            momentum = await self._detect_momentum_gainer(symbol, indicators)
+            if momentum:
+                patterns.append(momentum)
+                # Re-evaluate signal if QuantGuild said HOLD but momentum says BUY
+                if signal['action'] == 'HOLD' and momentum['action'] == 'BUY':
+                    signal = {
+                        **signal,
+                        'action': 'BUY',
+                        'confidence': momentum['confidence'],
+                        'reason': momentum['reason'],
+                        'patterns': [momentum['pattern']],
+                        'entry_price': indicators.get('price', 0),
+                        'stop_loss': indicators.get('price', 0) * (1 - 2 * indicators.get('atr_percent', 2) / 100),
+                        'target_price': indicators.get('price', 0) * (1 + 4 * indicators.get('atr_percent', 2) / 100),
+                    }
+                elif signal['action'] == 'BUY':
+                    # Boost existing BUY signal with momentum confirmation
+                    signal['confidence'] = min(0.95, signal['confidence'] + 0.08)
+                    if 'MOMENTUM_GAINER' not in signal.get('reason', ''):
+                        signal['reason'] += f' + MOMENTUM_GAINER ({momentum["scanner_change"]:+.1f}% 1h)'
+                    if 'MOMENTUM_GAINER' not in (signal.get('patterns') or []):
+                        signal.setdefault('patterns', []).append('MOMENTUM_GAINER')
+
             # Log detected patterns
             if patterns:
                 pattern_names = [p['pattern'] for p in patterns]
@@ -219,3 +246,94 @@ class MarketScoutTank(BaseTank):
                 },
                 "status": "error"
             }
+
+    async def _detect_momentum_gainer(self, symbol: str, indicators: dict) -> dict | None:
+        """
+        MOMENTUM_GAINER pattern: GainerScanner top mover + RSI/volume confirmation.
+
+        Triggers when:
+        1. Symbol appears in scanner:top_movers with change_1h >= 3%
+        2. RSI < 45 (not overbought — room to run) OR recovering from oversold
+        3. Volume ratio > 1.2 (above-average interest)
+        4. ADX > 18 (some directional movement)
+
+        Returns pattern dict or None.
+        """
+        try:
+            raw = await state_manager.redis.get('scanner:top_movers')
+            if not raw:
+                return None
+
+            scanner = json.loads(raw)
+            gainers = scanner.get('gainers', [])
+
+            # Find this symbol in gainers
+            match = next((g for g in gainers if g['symbol'] == symbol), None)
+            if not match:
+                return None
+
+            change_1h = match.get('change_1h', 0)
+            if change_1h < 3.0:
+                return None
+
+            # Confirmation checks
+            rsi = indicators.get('rsi', 50)
+            vol_ratio = indicators.get('volume_ratio', 1.0)
+            adx = indicators.get('adx', 0)
+
+            # Don't chase overbought momentum
+            if rsi > 72:
+                return None
+            # Need some volume interest
+            if vol_ratio < 1.2:
+                return None
+            # Need some directional movement
+            if adx < 18:
+                return None
+
+            # Calculate confidence
+            confidence = 0.72  # Base for momentum signal
+
+            # Stronger momentum = higher confidence
+            if change_1h >= 5.0:
+                confidence += 0.06
+            elif change_1h >= 4.0:
+                confidence += 0.03
+
+            # Volume surge bonus
+            if vol_ratio >= 2.0:
+                confidence += 0.05
+            elif vol_ratio >= 1.5:
+                confidence += 0.03
+
+            # RSI in sweet spot (oversold = better entry)
+            if rsi < 35:
+                confidence += 0.05
+            elif rsi < 45:
+                confidence += 0.02
+
+            # Strong trend bonus
+            if adx > 25:
+                confidence += 0.03
+
+            confidence = min(0.93, confidence)
+
+            change_24h = match.get('change_24h', 0)
+            print(f"[{self.name}] {symbol} MOMENTUM_GAINER detected: "
+                  f"{change_1h:+.1f}% 1h, {change_24h:+.1f}% 24h, "
+                  f"RSI={rsi:.0f}, vol={vol_ratio:.1f}x, ADX={adx:.0f}, "
+                  f"conf={confidence:.0%}")
+
+            return {
+                'pattern': 'MOMENTUM_GAINER',
+                'action': 'BUY',
+                'confidence': confidence,
+                'reason': (f'GainerScanner top mover {change_1h:+.1f}% (1h), '
+                           f'{change_24h:+.1f}% (24h) with RSI={rsi:.0f} '
+                           f'vol={vol_ratio:.1f}x ADX={adx:.0f}'),
+                'scanner_change': change_1h,
+            }
+
+        except Exception as e:
+            # Scanner data unavailable — silently skip
+            return None
