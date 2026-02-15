@@ -586,6 +586,75 @@ async function monitorPositions(): Promise<MonitorResult[]> {
           });
         } catch (closeError) {
           const errMsg = closeError instanceof Error ? closeError.message : String(closeError);
+
+          // NOTIONAL filter: position value too small for Binance to accept the sell order.
+          // Write off as dust — remove from tracking and record the realized loss.
+          if (errMsg.includes('NOTIONAL') || errMsg.includes('MIN_NOTIONAL')) {
+            const dustValue = pos.quantity * currentPrice;
+            console.warn(`[MONITOR] ${pos.symbol} DUST: value $${dustValue.toFixed(2)} below NOTIONAL minimum — writing off`);
+
+            await removePosition(pos.symbol);
+            await addDailyPnl(pnl);
+
+            // Cancel native SL if present (position is gone, SL would be orphaned)
+            if (pos.nativeSlOrderId) {
+              try { await ex.cancelOrder(pos.nativeSlOrderId, pos.symbol); } catch {}
+            }
+
+            await logTrade({
+              symbol: pos.symbol,
+              side: 'SELL',
+              quantity: String(pos.quantity),
+              entryPrice: String(pos.entryPrice),
+              exitPrice: String(currentPrice),
+              pnl: String(pnl),
+              confidence: String(pos.confidence),
+              pattern: pos.pattern,
+              reasoning: `DUST write-off: value $${dustValue.toFixed(2)} below NOTIONAL`,
+              status: 'CLOSED',
+              agentId: 'auto-trader',
+            });
+
+            try {
+              await archivePosition({
+                symbol: pos.symbol,
+                side: pos.side,
+                quantity: String(pos.quantity),
+                entryPrice: String(pos.entryPrice),
+                exitPrice: String(currentPrice),
+                stopLoss: String(pos.stopLoss),
+                takeProfit: String(pos.takeProfit),
+                pnl: String(pnl),
+                pnlPercent: String(pnlPct),
+                fees: '0',
+                holdingPeriod: Math.round((Date.now() - new Date(pos.openedAt || Date.now()).getTime()) / 1000),
+                openedAt: new Date(pos.openedAt || Date.now()),
+                closedAt: new Date(),
+                closeReason: 'DUST_NOTIONAL',
+                pattern: pos.pattern,
+                metadata: {
+                  highWaterMark: pos.highWaterMark,
+                  trailingStop: pos.trailingStop,
+                  confidence: pos.confidence,
+                  dustValue,
+                },
+                agentId: 'auto-trader',
+              });
+            } catch (archiveErr) {
+              console.warn(`[MONITOR] dust archive failed:`, archiveErr);
+            }
+
+            results.push({
+              symbol: pos.symbol,
+              action: 'DUST_NOTIONAL' as any,
+              currentPrice,
+              pnl,
+              pnlPct,
+              reason: `Dust write-off: value $${dustValue.toFixed(2)} below NOTIONAL`,
+            });
+            continue;
+          }
+
           console.error(`[MONITOR] Failed to close ${pos.symbol}:`, errMsg);
           results.push({
             symbol: pos.symbol,
@@ -1039,10 +1108,12 @@ async function executeBuy(signal: Signal): Promise<{
     const qty = parseFloat(quantity);
 
     const positionValue = qty * signal.entry_price;
-    // Use pair's actual Binance NOTIONAL minimum (not hardcoded)
+    // Use pair's actual Binance NOTIONAL minimum with 50% buffer.
+    // Without buffer, a $5.00 buy that drops 5% becomes $4.75 → unsellable dust.
     const pairMinNotional = market.limits?.cost?.min || CONFIG.MIN_ORDER_VALUE;
-    if (positionValue < pairMinNotional) {
-      return { success: false, error: `Value $${positionValue.toFixed(2)} < $${pairMinNotional} min (${signal.symbol})` };
+    const safeMinNotional = pairMinNotional * 1.5;
+    if (positionValue < safeMinNotional) {
+      return { success: false, error: `Value $${positionValue.toFixed(2)} < $${safeMinNotional.toFixed(2)} safe min (${signal.symbol}, notional=${pairMinNotional})` };
     }
 
     console.log(`[AUTO-TRADE] BUY ${signal.symbol}: qty=${quantity}, ~$${positionValue.toFixed(2)}, minNotional=${market.limits?.cost?.min || '?'}`);
