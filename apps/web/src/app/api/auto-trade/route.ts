@@ -140,34 +140,87 @@ interface OpenPosition {
   trailingStop: number;    // Dynamic stop that follows price up
   highWaterMark: number;   // Highest price seen since entry
   orderId: string;
+  nativeSlOrderId?: string; // Binance-native stop-loss order (safety net)
   openedAt: string;
   pattern: string;
   confidence: number;
 }
 
 // ============================================================================
-// DAILY STATE (resets on server restart or new day)
+// DAILY STATE (Redis-backed, shared across workers, survives restarts)
 // ============================================================================
 
-let dailyState = {
+interface DailyState {
+  date: string;
+  tradesExecuted: number;
+  dailyPnl: number;
+}
+
+async function getDailyState(): Promise<DailyState> {
+  const today = new Date().toDateString();
+  try {
+    const raw = await redis.get('daily:state');
+    if (raw) {
+      const state = JSON.parse(raw as string) as DailyState;
+      if (state.date === today) return state;
+    }
+  } catch {}
+  // New day or no state — return fresh
+  return { date: today, tradesExecuted: 0, dailyPnl: 0 };
+}
+
+async function saveDailyState(state: DailyState): Promise<void> {
+  await redis.set('daily:state', JSON.stringify(state), 'EX', 172800); // 48h TTL
+}
+
+// In-memory cache refreshed from Redis each cycle
+let dailyState: DailyState = {
   date: new Date().toDateString(),
   tradesExecuted: 0,
   dailyPnl: 0,
 };
 
+async function syncDailyState(): Promise<void> {
+  dailyState = await getDailyState();
+}
+
+async function incrementTradeCount(): Promise<void> {
+  dailyState.tradesExecuted++;
+  await saveDailyState(dailyState);
+}
+
+async function addDailyPnl(pnl: number): Promise<void> {
+  dailyState.dailyPnl += pnl;
+  await saveDailyState(dailyState);
+}
+
 function resetDailyStateIfNeeded() {
   const today = new Date().toDateString();
   if (dailyState.date !== today) {
     dailyState = { date: today, tradesExecuted: 0, dailyPnl: 0 };
+    saveDailyState(dailyState).catch(() => {});
   }
 }
 
 // ============================================================================
-// POSITION STORAGE (Redis-backed, survives restarts)
+// POSITION STORAGE (Redis-backed with atomic operations)
 // ============================================================================
 
+const POSITIONS_KEY = 'positions:open';
+const POSITION_LOCK_KEY = 'positions:lock';
+const LOCK_TTL = 5; // 5 second lock
+
+async function acquirePositionLock(): Promise<boolean> {
+  const result = await redis.set(POSITION_LOCK_KEY, Date.now().toString(), 'EX', LOCK_TTL, 'NX');
+  return result === 'OK';
+}
+
+async function releasePositionLock(): Promise<void> {
+  await redis.del(POSITION_LOCK_KEY);
+}
+
 async function getOpenPositions(): Promise<OpenPosition[]> {
-  const raw = await redis.get('positions:open');
+  const raw = await redis.get(POSITIONS_KEY);
   if (!raw) return [];
   try {
     return JSON.parse(raw as string);
@@ -177,16 +230,55 @@ async function getOpenPositions(): Promise<OpenPosition[]> {
 }
 
 async function saveOpenPositions(positions: OpenPosition[]): Promise<void> {
-  await redis.set('positions:open', JSON.stringify(positions));
+  await redis.set(POSITIONS_KEY, JSON.stringify(positions));
 }
 
 async function addPosition(pos: OpenPosition): Promise<void> {
+  // Retry with lock to prevent race conditions
+  for (let i = 0; i < 3; i++) {
+    if (await acquirePositionLock()) {
+      try {
+        const positions = await getOpenPositions();
+        // Prevent duplicate
+        if (positions.some(p => p.symbol === pos.symbol)) {
+          console.warn(`[POSITIONS] Duplicate prevented: ${pos.symbol} already open`);
+          return;
+        }
+        positions.push(pos);
+        await saveOpenPositions(positions);
+        return;
+      } finally {
+        await releasePositionLock();
+      }
+    }
+    await new Promise(r => setTimeout(r, 200 * (i + 1)));
+  }
+  // Fallback without lock if retries exhausted
+  console.warn('[POSITIONS] Lock acquisition failed, proceeding without lock');
   const positions = await getOpenPositions();
-  positions.push(pos);
-  await saveOpenPositions(positions);
+  if (!positions.some(p => p.symbol === pos.symbol)) {
+    positions.push(pos);
+    await saveOpenPositions(positions);
+  }
 }
 
 async function removePosition(symbol: string): Promise<OpenPosition | null> {
+  for (let i = 0; i < 3; i++) {
+    if (await acquirePositionLock()) {
+      try {
+        const positions = await getOpenPositions();
+        const idx = positions.findIndex(p => p.symbol === symbol);
+        if (idx === -1) return null;
+        const removed = positions.splice(idx, 1)[0];
+        await saveOpenPositions(positions);
+        return removed;
+      } finally {
+        await releasePositionLock();
+      }
+    }
+    await new Promise(r => setTimeout(r, 200 * (i + 1)));
+  }
+  // Fallback
   const positions = await getOpenPositions();
   const idx = positions.findIndex(p => p.symbol === symbol);
   if (idx === -1) return null;
@@ -282,6 +374,17 @@ async function monitorPositions(): Promise<MonitorResult[]> {
         const closeSide = pos.side === 'SELL' ? 'buy' : 'sell';
         console.log(`[MONITOR] Closing ${pos.side} ${pos.symbol}: ${exitReason}`);
         try {
+          // Cancel Binance-native SL order before selling (prevent double execution)
+          if (pos.nativeSlOrderId) {
+            try {
+              await ex.cancelOrder(pos.nativeSlOrderId, pos.symbol);
+              console.log(`[MONITOR] Cancelled native SL ${pos.nativeSlOrderId}`);
+            } catch (cancelErr) {
+              // May already be triggered or expired — non-fatal
+              console.warn(`[MONITOR] Native SL cancel failed (may already be triggered):`, cancelErr instanceof Error ? cancelErr.message : '');
+            }
+          }
+
           const closeParams: any = {};
           if (pos.side === 'SELL' && CONFIG.TRADING_MODE === 'margin') {
             closeParams.marginMode = CONFIG.MARGIN_TYPE;
@@ -304,8 +407,8 @@ async function monitorPositions(): Promise<MonitorResult[]> {
           // Remove from open positions
           await removePosition(pos.symbol);
 
-          // Update daily P&L
-          dailyState.dailyPnl += realizedPnl - fees;
+          // Update daily P&L (persisted to Redis)
+          await addDailyPnl(realizedPnl - fees);
 
           // Log to database
           await logTrade({
@@ -397,9 +500,16 @@ async function monitorPositions(): Promise<MonitorResult[]> {
   }
 
   // Save updated positions (trailing stops may have moved)
-  const currentPositions = await getOpenPositions();
-  if (currentPositions.length > 0) {
-    await saveOpenPositions(currentPositions);
+  // CRITICAL: Save the SAME positions array that was mutated in the loop above,
+  // NOT a fresh read from Redis (which would lose trailing stop updates)
+  const updatedPositions = positions.filter(p =>
+    !results.some(r => r.symbol === p.symbol && r.action !== 'HOLD' && r.action !== 'ERROR')
+  );
+  if (updatedPositions.length > 0) {
+    await saveOpenPositions(updatedPositions);
+  } else if (positions.length > 0) {
+    // All positions were closed — clear Redis
+    await saveOpenPositions([]);
   }
 
   return results;
@@ -475,6 +585,7 @@ async function calculateExpectedValue(signal: Signal, cal?: Record<string, Patte
 // ============================================================================
 
 async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason: string }> {
+  await syncDailyState();
   resetDailyStateIfNeeded();
 
   if (signal.confidence < CONFIG.MIN_CONFIDENCE) {
@@ -809,6 +920,28 @@ async function executeBuy(signal: Signal): Promise<{
     const executedPrice = order.average || order.price || currentPrice;
     const executedQty = Number(order.filled) || qty;
 
+    // Place Binance-native stop-loss order as safety net
+    // This protects against auto-trader container crashes
+    let nativeSlOrderId: string | undefined;
+    try {
+      const slPrice = ex.priceToPrecision(signal.symbol, signal.stop_loss);
+      // Stop-limit: trigger at SL price, limit slightly below to ensure fill
+      const slLimitPrice = ex.priceToPrecision(signal.symbol, signal.stop_loss * 0.995);
+      const slOrder = await ex.createOrder(
+        signal.symbol,
+        'STOP_LOSS_LIMIT',
+        'sell',
+        executedQty,
+        parseFloat(slLimitPrice),
+        { stopPrice: parseFloat(slPrice) }
+      );
+      nativeSlOrderId = slOrder.id;
+      console.log(`[AUTO-TRADE] Native SL placed: ${slOrder.id} @ $${slPrice} (limit $${slLimitPrice})`);
+    } catch (slErr) {
+      // Non-fatal — software SL still active as fallback
+      console.warn(`[AUTO-TRADE] Native SL failed (software SL active):`, slErr instanceof Error ? slErr.message : String(slErr));
+    }
+
     // Store position in Redis for monitoring
     await addPosition({
       symbol: signal.symbol,
@@ -820,12 +953,13 @@ async function executeBuy(signal: Signal): Promise<{
       trailingStop: signal.stop_loss,   // Starts at stop-loss
       highWaterMark: executedPrice,      // Starts at entry
       orderId: order.id,
+      nativeSlOrderId,                  // Track native SL for cancellation on exit
       openedAt: new Date().toISOString(),
       pattern: signal.patterns?.join(', ') || '',
       confidence: signal.confidence,
     });
 
-    dailyState.tradesExecuted++;
+    await incrementTradeCount();
 
     console.log(`[AUTO-TRADE] Filled ${order.id} @ $${executedPrice}`);
 
@@ -902,7 +1036,7 @@ async function executeMarginSell(signal: Signal): Promise<{
       confidence: signal.confidence,
     });
 
-    dailyState.tradesExecuted++;
+    await incrementTradeCount();
 
     console.log(`[AUTO-TRADE] SHORT Filled ${order.id} @ $${executedPrice}`);
 
@@ -1124,7 +1258,7 @@ export async function POST() {
       if (scannerRaw) {
         const scannerData = JSON.parse(scannerRaw);
         const gainers = (scannerData.gainers || [])
-          .filter((g: any) => g.change_pct >= 3.0)
+          .filter((g: any) => (g.change_1h ?? g.change_pct ?? 0) >= 3.0)
           .map((g: any) => g.symbol);
         const volSurges = (scannerData.volume_surges || [])
           .map((v: any) => v.symbol);
