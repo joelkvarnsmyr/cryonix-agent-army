@@ -74,6 +74,46 @@ class MarketDataFetcher:
             print(f"[MarketData] Error fetching ticker {symbol}: {e}")
             return {'symbol': symbol, 'price': 0, 'error': str(e)}
 
+    def fetch_total_capital(self) -> float:
+        """Fetch actual total portfolio value from Binance in USD."""
+        import time
+        cache_key = "_total_capital"
+        cached = self._cache.get(cache_key)
+        if cached and (time.time() - cached['ts']) < 300:  # 5min cache
+            return cached['data']
+
+        try:
+            # Use spot balance regardless of trading mode
+            spot_exchange = ccxt.binance({
+                'apiKey': settings.BINANCE_API_KEY or None,
+                'secret': settings.BINANCE_API_SECRET or None,
+                'enableRateLimit': True,
+                'options': {'defaultType': 'spot'},
+            })
+            if settings.BINANCE_TESTNET:
+                spot_exchange.set_sandbox_mode(True)
+
+            bal = spot_exchange.fetch_balance()
+            total = 0.0
+            for coin, amount in (bal.get('free', {}) or {}).items():
+                amt = float(amount or 0)
+                if amt <= 0:
+                    continue
+                if coin in ('USDC', 'USDT', 'BUSD', 'USD'):
+                    total += amt
+                else:
+                    try:
+                        t = spot_exchange.fetch_ticker(f"{coin}/USDC")
+                        total += amt * (t.get('last', 0) or 0)
+                    except:
+                        pass
+            self._cache[cache_key] = {'data': total, 'ts': time.time()}
+            print(f"[MarketData] Total capital from Binance: ${total:.2f}")
+            return total
+        except Exception as e:
+            print(f"[MarketData] Capital fetch error: {e}")
+            return cached['data'] if cached else 42.0
+
     def fetch_multi_timeframe(
         self,
         symbol: str,

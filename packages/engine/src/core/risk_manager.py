@@ -12,7 +12,7 @@ import json
 
 @dataclass
 class RiskLimits:
-    """Configurable risk limits - tuned for $17 USDC micro-budget, diversified"""
+    """Configurable risk limits - tuned for dynamic capital, diversified"""
     max_daily_loss_pct: float = 0.05          # 5% max daily loss (~$0.85)
     max_weekly_loss_pct: float = 0.10         # 10% max weekly loss (~$1.70)
     max_position_size_pct: float = 0.12       # 12% max per position (~$2) — diversify
@@ -20,7 +20,7 @@ class RiskLimits:
     min_confidence: float = 0.65              # 65% min signal confidence
     max_correlation: float = 0.70             # Max position correlation
     volatility_pause_atr_pct: float = 5.0     # Pause if ATR > 5%
-    max_trades_per_day: int = 15              # Max 15 trades per day (diversified)
+    max_trades_per_day: int = 6              # Max 6 trades per day
     max_consecutive_losses: int = 5           # Pause after 5 losses
     max_leverage: int = 3                     # Max leverage for margin trading
     liquidation_buffer_pct: float = 0.15      # 15% buffer before liquidation price
@@ -62,12 +62,25 @@ class RiskManager:
         self._redis_key = "risk:portfolio_state"
 
     async def initialize(self):
-        """Load portfolio state from Redis"""
+        """Load portfolio state from Redis, sync capital from Binance"""
         try:
             state_json = await state_manager.redis.get(self._redis_key)
             if state_json:
                 state_dict = json.loads(state_json)
                 self.portfolio = PortfolioState(**state_dict)
+
+            # Sync actual capital from Binance (overrides stored value)
+            try:
+                from src.core.market_data import MarketDataFetcher
+                mdf = MarketDataFetcher()
+                live_capital = mdf.fetch_total_capital()
+                if live_capital > 0:
+                    self.portfolio.total_capital = live_capital
+                    self.portfolio.available_capital = live_capital
+                    print(f"[RiskManager] Synced capital from Binance: ${live_capital:.2f}")
+            except Exception as e:
+                print(f"[RiskManager] Capital sync failed (using stored): {e}")
+
             await self._check_reset_periods()
         except Exception as e:
             print(f"[RiskManager] Error loading state: {e}")

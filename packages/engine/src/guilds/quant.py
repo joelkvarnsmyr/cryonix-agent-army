@@ -562,12 +562,12 @@ class QuantGuild:
 
         # Check for trend alignment (price vs BB middle)
         bb_mid = indicators.get('bb_mid', price)
-        trend_bullish = price > bb_mid
-        trend_bearish = price < bb_mid
+        trend_bullish = bool(price > bb_mid)
+        trend_bearish = bool(price < bb_mid)
 
         # Check volume confirmation
         volume_ratio = indicators.get('volume_ratio', 1)
-        volume_confirmed = volume_ratio > 1.2  # 20% above average
+        volume_confirmed = bool(volume_ratio > 1.2)  # 20% above average
 
         def calculate_consensus_confidence(signals: List[Dict], trend_aligned: bool) -> tuple:
             """Calculate confidence with consensus boosts"""

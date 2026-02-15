@@ -496,6 +496,22 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
     if (sentimentScore > 0) sentimentLabel = 'Positive';
     if (sentimentScore < 0) sentimentLabel = 'Negative';
 
+    // === DYNAMIC PORTFOLIO CONTEXT ===
+    const [totalCapital, openPositions] = await Promise.all([
+      getTotalCapital(),
+      getOpenPositions(),
+    ]);
+    const positionValue = openPositions.reduce((sum, p) => sum + (p.entryPrice * p.quantity), 0);
+    const availableCash = Math.max(0, totalCapital - positionValue);
+    const positionList = openPositions.map(p =>
+      `${p.symbol} $${(p.entryPrice * p.quantity).toFixed(2)}`
+    ).join(', ') || 'none';
+
+    const portfolioCtx = `**Portfolio (live from Binance):**
+- **Total capital:** $${totalCapital.toFixed(2)} | **Available cash:** ~$${availableCash.toFixed(2)}
+- **Open positions:** ${openPositions.length}/${CONFIG.MAX_OPEN_POSITIONS} [${positionList}]
+- **Today:** ${dailyState.tradesExecuted}/${CONFIG.MAX_TRADES_PER_DAY} trades | P&L: $${dailyState.dailyPnl.toFixed(2)}`;
+
     // Use specialized prompt for deep value crash signals
     const isDeepValue = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
 
@@ -515,16 +531,11 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
 - **24h Change:** ${ticker.percentage?.toFixed(2)}%
 - **Sentiment:** ${sentimentLabel} (${sentimentScore})
 
+${portfolioCtx}
+
 **CRITICAL ANALYSIS:**
-Is this PANIC SELLING (opportunity - people overreacting) or a FALLING KNIFE (fundamental breakdown, rug pull, continued collapse)?
-
-Consider:
-1. Drop velocity: Too fast (>15%/h = potential rug pull) or healthy correction pace?
-2. Volume: Capitulation (good - sellers exhausted) or distribution (bad - smart money leaving)?
-3. Multi-TF RSI: All oversold = stronger signal. Only 15m oversold = weak.
-4. Is this an isolated crash or broader market selloff?
-
-For a micro-account ($17), we can ONLY afford REAL opportunities. Be EXTRA skeptical of falling knives.
+Is this PANIC SELLING (opportunity) or a FALLING KNIFE (avoid)?
+Consider: drop velocity, volume pattern, multi-TF RSI alignment, isolated vs broad selloff.
 
 JSON: {"approve": boolean, "confidence": number(0-100), "reasoning": "one sentence", "sl": number|null, "tp": number|null}`
       : `You are "RISK-BOT 9000", a pragmatic crypto trading risk analyst. Your job is to quickly validate trading signals. Approve signals with clear technical backing; reject only obvious traps.
@@ -538,15 +549,19 @@ JSON: {"approve": boolean, "confidence": number(0-100), "reasoning": "one senten
 - **Reason:** ${signal.reason}
 - **Entry:** $${signal.entry_price.toFixed(4)}, SL: $${signal.stop_loss.toFixed(4)}, TP: $${signal.target_price.toFixed(4)}
 
+**Indicators:**
+- **RSI:** ${signal.indicators?.rsi ?? 'N/A'} | **MACD hist:** ${signal.indicators?.macd_hist ?? 'N/A'}
+- **BB:** lower=$${signal.indicators?.bb_lower ?? 'N/A'} mid=$${signal.indicators?.bb_mid ?? 'N/A'} upper=$${signal.indicators?.bb_upper ?? 'N/A'}
+- **ATR:** ${signal.indicators?.atr_pct ?? 'N/A'}% | **EMA9/21:** ${signal.indicators?.ema9 ?? 'N/A'}/${signal.indicators?.ema21 ?? 'N/A'}
+- **Volume:** ${signal.indicators?.volume_ratio ?? 'N/A'}x avg | **Trend aligned:** ${signal.indicators?.trend_aligned ?? 'N/A'}
+
 **Live Market:**
 - **Price:** $${ticker.last?.toFixed(4)} | **24h:** ${ticker.percentage?.toFixed(2)}%
-- **RSI:** ${signal.indicators.rsi} | **Vol Ratio:** ${signal.indicators.volume_ratio}x
 - **Sentiment:** ${sentimentLabel} (${sentimentScore})
 
-**Context:** ${CONFIG.TRADING_MODE} trading with ${CONFIG.DEFAULT_LEVERAGE}x leverage, $17 capital.
-${signal.action === 'SELL' ? 'This is a SHORT/SELL signal via margin trading - evaluate if bearish setup is valid.' : 'This is a BUY signal - evaluate if bullish setup is valid.'}
+${portfolioCtx}
 
-Approve if the technical pattern is valid and not contradicted by price action. Be practical, not paranoid.
+Approve if the technical pattern is valid and not contradicted by price action. Consider position concentration — reject if we already hold this asset or are overexposed.
 
 JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one sentence", "sl": number|null, "tp": number|null}`;
 

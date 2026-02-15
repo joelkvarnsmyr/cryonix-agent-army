@@ -153,7 +153,7 @@ class MarketScoutTank(BaseTank):
                 pattern_names = [p['pattern'] for p in patterns]
                 print(f"[{self.name}] {symbol} patterns: {pattern_names}")
 
-            # Build comprehensive signal
+            # Build comprehensive signal with full indicator context
             trading_signal = {
                 "symbol": symbol,
                 "action": signal['action'],
@@ -164,10 +164,23 @@ class MarketScoutTank(BaseTank):
                 "stop_loss": signal['stop_loss'],
                 "target_price": signal['target_price'],
                 "indicators": {
-                    "rsi": indicators['rsi'],
+                    "rsi": round(indicators['rsi'], 2),
                     "bb_width_pct": indicators['bb_width_percentile'],
-                    "volume_ratio": indicators['volume_ratio'],
-                    "atr_pct": indicators['atr_percent'],
+                    "bb_upper": round(indicators.get('bb_upper', 0), 6),
+                    "bb_lower": round(indicators.get('bb_lower', 0), 6),
+                    "bb_mid": round(indicators.get('bb_mid', 0), 6),
+                    "volume_ratio": round(indicators['volume_ratio'], 2),
+                    "atr": round(indicators.get('atr', 0), 6),
+                    "atr_pct": round(indicators['atr_percent'], 2),
+                    "macd": round(indicators.get('macd', 0), 6),
+                    "macd_signal": round(indicators.get('macd_signal', 0), 6),
+                    "macd_hist": round(indicators.get('macd_hist', 0), 6),
+                    "ema9": round(indicators.get('ema9', 0), 6),
+                    "ema21": round(indicators.get('ema21', 0), 6),
+                    "price": round(indicators.get('price', 0), 6),
+                    "consensus_score": signal.get('consensus_score', 0),
+                    "trend_aligned": bool(signal.get('trend_aligned', False)),
+                    "volume_confirmed": bool(signal.get('volume_confirmed', False)),
                 }
             }
 
