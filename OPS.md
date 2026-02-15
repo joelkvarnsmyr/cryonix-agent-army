@@ -54,8 +54,10 @@ The system uses `CRYONIX_ENV` as a hard execution guard:
 
 | Schedule         | Job                          | Details                                              |
 |------------------|------------------------------|------------------------------------------------------|
+| `* * * * *`     | **Auto-deploy**              | `scripts/auto-deploy.sh` — pulls origin/main, rebuilds if new commits |
 | `0 */2 * * *`   | Evolution                    | `scripts/run_evolution.sh` — RE-ENABLED              |
 | `*/15 * * * *`  | X sentiment                  | `scripts/strategy-lab/x_sentiment.py` — standalone Python |
+| `*/5 * * * *`   | Health monitor               | `scripts/health-monitor.sh` — container health + alerts |
 | `0 */6 * * *`   | Calibration                  | `scripts/strategy-lab/calibrate.py --days 30`        |
 | `0 3 * * *`     | Postgres backup              | `scripts/backup-postgres.sh` — 7-day rotation        |
 | `0 6 * * *`     | Morning report               | `scripts/strategy-lab/run.sh`                        |
@@ -147,17 +149,29 @@ docker compose -f docker-compose.prod.yml ps
 
 ## Deploy Process
 
-### Git-based deploy (recommended)
+### Auto-deploy (active — cron pull-based)
 
-The repo is cloned on both laptop and VM. Both push/pull to `origin/main`.
+A cron job runs every minute and checks if `origin/main` has new commits. If yes, it pulls and rebuilds automatically.
+
+```
+git push → (within 60s) → VM fetches → git reset --hard → docker compose build → health check
+```
+
+- Script: `scripts/auto-deploy.sh`
+- Lock file: `/tmp/cryonix-deploy.lock` (prevents concurrent deploys, auto-clears after 15min)
+- Log: `/tmp/auto-deploy.log`
+- Stale lock protection: locks older than 900s are auto-removed
+
+**To deploy:** just `git push origin main` from anywhere. No SSH needed.
+
+### Manual deploy (fallback)
 
 ```bash
 # From laptop: push changes
 git add -A && git commit -m "feat: ..." && git push
 
-# On VM: pull + rebuild (via SSH or Copilot agent)
-cd ~/cryonix && git pull
-docker compose -f docker-compose.prod.yml up -d --build --no-deps web engine
+# If auto-deploy is broken, SSH in and run manually:
+ssh azureuser@openclaw-vm "bash ~/cryonix/scripts/deploy-vm.sh"
 ```
 
 ### Rebuild specific containers
@@ -206,7 +220,7 @@ curl http://openclaw-vm/api/auto-trade
 ```
 1. Python Engine (cryonix-engine-1)
    - MarketScout scans 45 USDC pairs every 10s via CCXT (Binance)
-   - 8 pattern detectors: RSI, Bollinger, Volume, MACD, EMA, Dip, Deep Value, Momentum
+   - 9 pattern detectors: RSI, Bollinger, Volume, MACD, EMA, Dip, Deep Value, Momentum Gainer
    - ADX regime detection → written to Redis (market:regime)
    - SELL signals skipped early (spot-only mode)
    - RiskGate approves signals with confidence >= 65%
@@ -215,14 +229,18 @@ curl http://openclaw-vm/api/auto-trade
 
 2. Auto-Trader (cryonix-auto-trader-1)
    - Polls GET /api/auto-trade every 30s
+   - Queue trim: if pending > 30, oldest signals dropped (logged)
+   - Top-15 signals processed per cycle (sorted by confidence)
    - Capital Allocator checks budget (signal pool vs grid pool vs reserve)
    - Regime check: volatile → grid paused
    - EV model filter (reject negative-EV patterns, min 5 trades)
    - X sentiment alert check (12 keywords: hack, exploit, delist, scam...)
-   - GROK AI validates (fail-closed: rejects on parse error)
-   - Order book spread check
+   - GROK AI validates (pragmatic prompt, fail-closed on parse error)
+   - Order book spread check (max 0.3%)
+   - NOTIONAL check: buy value must be >= 1.5x pair's Binance minimum
    - Binance BUY (spot) + native STOP_LOSS_LIMIT order
    - Position monitor (30s: SL/TP/trailing stop with persistence)
+   - Live P&L persisted to Redis (pnlPct, currentPrice) for Telegram
    - [DEV MODE: all execution blocked]
 
 3. Position Monitoring (also in auto-trader loop)
@@ -230,6 +248,9 @@ curl http://openclaw-vm/api/auto-trade
    - Updates trailing stop (3% below high water mark) — persisted to Redis
    - Cancels native SL before software-side exit (prevent double execution)
    - Triggers stop-loss or take-profit exits
+   - NOTIONAL dust handling: if sell fails due to NOTIONAL filter,
+     position is written off as dust (removed from tracking, loss recorded,
+     archived with closeReason=DUST_NOTIONAL)
 ```
 
 ---
@@ -246,7 +267,7 @@ curl http://openclaw-vm/api/auto-trade
 | MAX_SIGNAL_POSITIONS| 4       | Signal strategy positions           |
 | MAX_GRID_POSITIONS  | 2       | Grid strategy positions             |
 | MAX_TRADES_PER_DAY  | 6       | Daily trade limit                   |
-| MIN_ORDER_VALUE     | $1.00   | Minimum order (pair-specific from Binance) |
+| MIN_ORDER_VALUE     | $1.00   | Global floor (actual: 1.5x pair's Binance NOTIONAL) |
 | TRAILING_STOP       | 3%      | Below high water mark               |
 | SPOT_ONLY           | true    | Only BUY, never short-sell          |
 | AI_VALIDATION       | true    | GROK AI (fail-closed)               |
@@ -265,14 +286,16 @@ curl http://openclaw-vm/api/auto-trade
 
 ---
 
-## Current Portfolio (2026-02-14)
+## Current Portfolio (2026-02-15)
 
-| Asset | Amount   | Entry Price | Notes           |
-|-------|----------|-------------|-----------------|
-| BTC   | 0.00008  | $68,794     | +1.2% unrealized|
-| ETH   | 0.0029   | $2,046      | +1.4% unrealized|
-| BNB   | 0.0388   | -           | Fee reserve     |
-| USDC  | 6.21     | -           | Trading reserve |
+Portfolio is dynamic — check live state via:
+```bash
+docker exec cryonix-redis-1 redis-cli GET positions:open
+docker exec cryonix-redis-1 redis-cli GET risk:portfolio_state
+curl http://openclaw-vm/api/portfolio
+```
+
+**Capital:** ~$17 | **Positions tracked in Redis** `positions:open`
 
 ---
 
@@ -461,37 +484,68 @@ cryonix-agent-army/
   Caddyfile                  # Reverse proxy config
   .env.prod                  # Template for production env vars
   scripts/
+    auto-deploy.sh           # Cron pull-based auto-deploy (every 1min)
+    deploy-vm.sh             # Manual deploy script (runs on VM)
     auto-trader.mjs          # Docker-compatible auto-trader (ESM)
     ws-server.mjs            # Docker-compatible WebSocket server (ESM)
+    telegram-interactive.mjs # Interactive Telegram bot (@cryptonixis_bot)
+    telegram-bot.mjs         # Evolution report bot (@cryonixEvolution_bot)
+    health-monitor.sh        # Container health monitor (cron every 5min)
+    strategy-lab/
+      calibrate.py           # Pattern EV calibration (--days 30)
+      x_sentiment.py         # X/Twitter sentiment scanner (standalone)
+      morning_report.py      # Daily strategy report
+      engine_diagnostik.py   # Engine health diagnostics
+      backtest_momentum.py   # Momentum gainer backtesting
   apps/web/
     src/app/page.tsx          # Dashboard UI
-    src/app/api/auto-trade/   # Auto-trade API (GROK validation)
+    src/app/api/auto-trade/   # Auto-trade API (GROK validation + execution)
     src/app/api/health/       # Health check
-    scripts/
-      auto-trader.ts          # TypeScript auto-trader (local dev)
-      ws-server.ts            # TypeScript WS server (local dev)
   packages/engine/
     src/main.py               # FastAPI entry point (starts tanks)
-    src/tanks/market_scout.py # 15-pair scanner with QuantGuild patterns
+    src/tanks/market_scout.py # 45-pair scanner with QuantGuild patterns
+    src/tanks/gainer_scanner.py # Momentum gainer detection
     src/tanks/news_scout.py   # RSS sentiment analysis
     src/tanks/base.py         # BaseTank with LangGraph pipeline
+    src/core/market_data.py   # CCXT wrapper (singleton, multi-TF cache)
     src/core/risk_gate.py     # Risk gate (confidence, position limits)
-    src/core/risk_manager.py  # Advanced risk management
+    src/core/risk_manager.py  # Risk management (uses singleton market_data)
     src/core/state_sync.py    # Redis state sync
+    src/guilds/quant.py       # QuantGuild: all technical analysis
 ```
 
 ---
 
-## Known Issues
+## Telegram Bots
 
-All previously documented issues have been resolved (2026-02-14):
+| Bot | Handle | Purpose |
+|-----|--------|---------|
+| Interactive | `@cryptonixis_bot` | Pipeline health, /status, /report, /positions |
+| Evolution   | `@cryonixEvolution_bot` | Automated evolution reports |
+
+### Interactive bot reports include:
+- Portfolio state (capital, cash %, day P&L)
+- Live P&L per open position (color-coded)
+- Signal funnel metrics (24h signals → trades, conversion %)
+- Pipeline health (queue depth, trades/hour)
+
+---
+
+## Known Issues & Fixes (2026-02-15)
+
+### Resolved
 - Postgres schema: pushed (13 tables created)
 - Health check: fixed (`ENGINE_URL` env var, 4/4 healthy)
 - RSI calculation: fixed (clamped to [1, 99], no more false 0/100)
+- **CCXT connection leak**: Engine crashed every ~70min due to leaked `MarketDataFetcher()` and `spot_exchange` instances. Fixed with singleton pattern.
+- **NOTIONAL dust positions**: Positions below Binance's minimum sell value got stuck in infinite retry loop. Now auto-written-off as dust with loss recorded.
+- **Telegram P&L always 0%**: `pnlPct` and `currentPrice` now persisted to Redis during monitoring.
+- **Signal pipeline 0.036% conversion**: Fixed queue trim logging, top-N 5→15, softened GROK AI prompt.
 
-**Notes:**
+### Notes
 - VM runs `openclaw` alongside Cryonix. Total memory ~870MB / 3.8GB available.
 - Low-liquidity USDC pairs (OP, ARB, SUI) may show RSI at 1 or 99 due to thin candle data. This is real market data, not a bug.
+- Auto-deploy log: `cat /tmp/auto-deploy.log`
 
 ---
 
