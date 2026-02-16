@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
-import { logTrade, saveValidation, archivePosition } from '@cryonix/database';
+import { logTrade, saveValidation, archivePosition, createPosition, closePositionBySymbol, markLatestSignalExecuted } from '@cryonix/database';
+import { RISK_CONFIG } from '@cryonix/types';
+import { loadConfig } from '@/lib/config';
 import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
 
@@ -40,29 +42,7 @@ async function acquireInstanceLock(): Promise<{ acquired: boolean; holder?: stri
 // CONFIGURATION
 // ============================================================================
 
-const CONFIG = {
-  TOTAL_CAPITAL: 0,                // Dynamically fetched from Binance — 0 = force fetch on first cycle
-  MAX_POSITION_SIZE_PCT: 0.25,     // 25% per position (~$10 at ~$41 capital) — clears NOTIONAL min
-  MIN_CONFIDENCE: 0.65,
-  MAX_DAILY_LOSS_PCT: 0.05,        // 5% daily loss circuit breaker
-  MAX_OPEN_POSITIONS: 3,           // Realistic for ~$41 capital with NOTIONAL minimums
-  MAX_TRADES_PER_DAY: 6,
-  MAX_SLIPPAGE_PCT: 0.5,
-  SPOT_ONLY: true,                  // Margin account not available — spot only
-  TRADING_MODE: 'spot' as 'spot' | 'margin' | 'future',
-  MARGIN_TYPE: (process.env.MARGIN_TYPE || 'cross') as 'cross' | 'isolated',
-  DEFAULT_LEVERAGE: parseInt(process.env.DEFAULT_LEVERAGE || '3'),
-  MIN_ORDER_VALUE: 7.50,           // Absolute floor for any order (Binance NOTIONAL ~$5 + buffer)
-  TRAILING_STOP_PCT: 3.0,          // 3% trailing stop — let positions breathe
-  MAX_PENDING_QUEUE: 30,           // Auto-trim queue beyond this
-  AI_VALIDATION: true,             // Use GROK AI for signal validation
-  // Capital allocation between strategies
-  SIGNAL_POOL_PCT: 0.65,           // 65% for signal-based trades
-  GRID_POOL_PCT: 0.25,             // 25% for grid trades
-  RESERVE_PCT: 0.10,               // 10% always kept as reserve
-  MAX_SIGNAL_POSITIONS: 2,         // Max signal-based positions (~$41 capital, $7.50+ each)
-  MAX_GRID_POSITIONS: 1,           // Max grid positions
-};
+const CONFIG = loadConfig();
 
 // ============================================================================
 // GROK AI SINGLETON (Information Edge)
@@ -355,6 +335,35 @@ async function saveOpenPositions(positions: OpenPosition[]): Promise<void> {
   await redis.set(POSITIONS_KEY, JSON.stringify(positions));
 }
 
+async function syncRiskState(): Promise<void> {
+  try {
+    const positions = await getOpenPositions();
+    const budget = await getCapitalBudget();
+    const state = {
+      total_capital: budget.totalCapital,
+      available_capital: budget.signalRemaining + budget.gridRemaining,
+      open_positions: positions.map(p => ({
+        symbol: p.symbol,
+        side: p.side || 'BUY',
+        entry_price: p.entryPrice,
+        quantity: p.quantity,
+        stop_loss: p.stopLoss,
+      })),
+      daily_pnl: dailyState.dailyPnl,
+      weekly_pnl: 0,
+      daily_trades: dailyState.tradesExecuted,
+      consecutive_losses: 0,
+      last_reset_date: new Date().toISOString().split('T')[0],
+      circuit_breaker_active: false,
+      circuit_breaker_reason: '',
+      circuit_breaker_until: null,
+    };
+    await redis.set('risk:portfolio_state', JSON.stringify(state));
+  } catch (err) {
+    console.error('[SYNC] Failed to sync risk:portfolio_state:', err);
+  }
+}
+
 async function addPosition(pos: OpenPosition): Promise<void> {
   // Retry with lock to prevent race conditions
   for (let i = 0; i < 3; i++) {
@@ -548,6 +557,9 @@ async function monitorPositions(): Promise<MonitorResult[]> {
               console.warn(`[RECONCILE] position_history archive failed:`, archiveErr);
             }
 
+            // Sync close to Postgres positions table
+            try { await closePositionBySymbol(pos.symbol, String(fillPrice), String(realizedPnl), String(pnlPct)); } catch {}
+
             results.push({
               symbol: pos.symbol,
               action: 'SOLD_SL',
@@ -733,6 +745,9 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             console.warn(`[MONITOR] position_history archive failed (non-critical):`, archiveErr);
           }
 
+          // Sync close to Postgres positions table
+          try { await closePositionBySymbol(pos.symbol, String(closePrice), String(realizedPnl - fees), String(pnlPct)); } catch {}
+
           console.log(`[MONITOR] ${pos.symbol} ${exitType}: PnL $${(realizedPnl - fees).toFixed(4)} (${pnlPct.toFixed(2)}%)`);
 
           results.push({
@@ -803,6 +818,9 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             } catch (archiveErr) {
               console.warn(`[MONITOR] dust archive failed:`, archiveErr);
             }
+
+            // Sync close to Postgres positions table
+            try { await closePositionBySymbol(pos.symbol, String(currentPrice), String(pnl), String(pnlPct)); } catch {}
 
             results.push({
               symbol: pos.symbol,
@@ -1361,6 +1379,19 @@ async function executeBuy(signal: Signal): Promise<{
       isGridPosition: !!(signal as any).is_grid_buy,
     });
 
+    // Sync to Postgres positions table
+    try {
+      await createPosition({
+        symbol: signal.symbol,
+        quantity: String(executedQty),
+        entryPrice: String(executedPrice),
+        stopLoss: signal.stop_loss ? String(signal.stop_loss) : undefined,
+        takeProfit: signal.target_price ? String(signal.target_price) : undefined,
+      });
+    } catch (err) {
+      console.error('[SYNC] Failed to create position in Postgres:', err);
+    }
+
     await incrementTradeCount();
 
     console.log(`[AUTO-TRADE] Filled ${order.id} @ $${executedPrice}`);
@@ -1443,6 +1474,19 @@ async function executeMarginSell(signal: Signal): Promise<{
       pattern: signal.patterns?.join(', ') || '',
       confidence: signal.confidence,
     });
+
+    // Sync to Postgres positions table
+    try {
+      await createPosition({
+        symbol: signal.symbol,
+        quantity: String(executedQty),
+        entryPrice: String(executedPrice),
+        stopLoss: signal.stop_loss ? String(signal.stop_loss) : undefined,
+        takeProfit: signal.target_price ? String(signal.target_price) : undefined,
+      });
+    } catch (err) {
+      console.error('[SYNC] Failed to create short position in Postgres:', err);
+    }
 
     await incrementTradeCount();
 
@@ -1679,9 +1723,15 @@ export async function POST() {
 
     resetDailyStateIfNeeded();
 
+    // Push shared risk config to Redis for Python engine
+    await redis.set('config:risk', JSON.stringify(CONFIG), 'EX', 3600);
+
     // STEP 1: Monitor existing positions (check SL/TP/trailing)
     const monitorResults = await monitorPositions();
     const sells = monitorResults.filter(r => r.action !== 'HOLD' && r.action !== 'ERROR');
+
+    // Sync risk state after monitoring (positions may have closed)
+    await syncRiskState();
 
     // STEP 2: Trim queue to prevent overflow
     const trimmed = await trimQueue();
@@ -1787,6 +1837,15 @@ export async function POST() {
       // STEP 3b: AI Validation (Information Edge)
       const aiResult = await getAIValidation(signal);
 
+      // Calculate consensus from confidence delta
+      const confDelta = Math.abs(aiResult.aiConfidence - signal.confidence);
+      const consensusScore = confDelta < 0.1 ? 0.8 : confDelta < 0.2 ? 0.6 : confDelta < 0.3 ? 0.4 : 0.2;
+      const consensusLevel = consensusScore >= 0.8 ? 'STRONG'
+        : consensusScore >= 0.6 ? 'MODERATE'
+        : consensusScore >= 0.4 ? 'WEAK'
+        : 'CONFLICTING';
+      const riskLevel = signal.confidence >= 0.8 ? 'LOW' : signal.confidence >= 0.65 ? 'MEDIUM' : 'HIGH';
+
       // Log validation attempt (regardless of outcome)
       try {
         await saveValidation({
@@ -1795,7 +1854,7 @@ export async function POST() {
           action: signal.action,
           originalConfidence: String(signal.confidence),
           adjustedConfidence: String(aiResult.aiConfidence),
-          consensusLevel: 'UNKNOWN',
+          consensusLevel,
           sourceVotes: [],
           technicalIndicators: signal.indicators,
           priceTargets: {
@@ -1803,7 +1862,7 @@ export async function POST() {
             adjusted: { sl: aiResult.adjustedSL, tp: aiResult.adjustedTP }
           },
           entryTiming: 'IMMEDIATE',
-          riskLevel: 'UNKNOWN',
+          riskLevel,
           approved: aiResult.approved,
           reasoning: aiResult.reasoning,
           agentId: 'grok-validator',
@@ -1829,8 +1888,8 @@ export async function POST() {
       if (aiResult.adjustedSL) signal.stop_loss = aiResult.adjustedSL;
       if (aiResult.adjustedTP) signal.target_price = aiResult.adjustedTP;
 
-      // Blend TA + AI confidence (50% TA, 50% AI)
-      signal.confidence = signal.confidence * 0.5 + aiResult.aiConfidence * 0.5;
+      // Blend TA + AI confidence (50% TA, 50% AI), rounded to avoid floating-point artifacts
+      signal.confidence = Math.round((signal.confidence * 0.5 + aiResult.aiConfidence * 0.5) * 10000) / 10000;
 
       // Execute based on signal action
       const execution = signal.action === 'SELL'
@@ -1848,6 +1907,8 @@ export async function POST() {
           aiValidation: aiResult.reasoning,
           blendedConfidence: signal.confidence,
         }));
+        // Keep only last 50 approved trades (prevent unbounded growth)
+        await redis.ltrim('trades:approved', 0, 49);
 
         await logTrade({
           symbol: signal.symbol,
@@ -1860,6 +1921,13 @@ export async function POST() {
           status: 'FILLED',
           agentId: 'auto-trader',
         });
+
+        // Mark matching signal as executed in Postgres
+        try {
+          await markLatestSignalExecuted(signal.symbol, signal.action);
+        } catch (err) {
+          console.error('[SYNC] Failed to mark signal executed:', err);
+        }
 
         executed++;
         buyResults.push({
@@ -1877,6 +1945,11 @@ export async function POST() {
           error: execution.error,
         });
       }
+    }
+
+    // Sync risk state after all position changes
+    if (executed > 0 || sells.length > 0) {
+      await syncRiskState();
     }
 
     return NextResponse.json({

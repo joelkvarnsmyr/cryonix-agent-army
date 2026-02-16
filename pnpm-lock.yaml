@@ -54,6 +54,9 @@ importers:
       '@cryonix/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@iarna/toml':
+        specifier: ^2.2.5
+        version: 2.2.5
       '@motionone/react':
         specifier: ^10.16.4
         version: 10.16.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -855,6 +858,9 @@ packages:
 
   '@floating-ui/utils@0.2.10':
     resolution: {integrity: sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ==}
+
+  '@iarna/toml@2.2.5':
+    resolution: {integrity: sha512-trnsAYxU3xnS1gPHPyU961coFyLkh4gAD/0zQ5mymY4yOZ+CYvsPqUbOFSw0aDM4y0tV7tiFxL/1XfXPNC6IPg==}
 
   '@img/colour@1.0.0':
     resolution: {integrity: sha512-A5P/LfWGFSl6nsckYtjw9da+19jB8hkJ6ACTGcDfEJ0aE+l2n2El7dsVM7UVHZQ9s2lmYMWlrS21YLy2IR1LUw==}
@@ -3844,6 +3850,8 @@ snapshots:
       react-dom: 19.2.3(react@19.2.3)
 
   '@floating-ui/utils@0.2.10': {}
+
+  '@iarna/toml@2.2.5': {}
 
   '@img/colour@1.0.0':
     optional: true

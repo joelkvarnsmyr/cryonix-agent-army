@@ -47,6 +47,8 @@ services:
       context: ./packages/engine
       dockerfile: Dockerfile
     restart: always
+    volumes:
+      - ./cryonix.toml:/app/cryonix.toml:ro
     environment:
       - PYTHONUNBUFFERED=1
       - KV_URL=redis://redis:6379
@@ -78,7 +80,8 @@ services:
     restart: always
     ports:
       - "3000:3000"
-
+    volumes:
+      - ./cryonix.toml:/app/cryonix.toml:ro
     environment:
       - NODE_ENV=production
       - CRYONIX_ENV=production
@@ -109,7 +112,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)throw 1}).catch(()=>process.exit(1))"]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -125,6 +128,8 @@ services:
       dockerfile: Dockerfile.scripts
     restart: always
     command: [ "node", "scripts/auto-trader.mjs" ]
+    volumes:
+      - ./cryonix.toml:/app/cryonix.toml:ro
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_APP_URL=http://web:3000
@@ -143,6 +148,8 @@ services:
       dockerfile: Dockerfile.scripts
     restart: always
     command: [ "node", "scripts/ws-server.mjs" ]
+    volumes:
+      - ./cryonix.toml:/app/cryonix.toml:ro
     ports:
       - "${WS_PORT:-3004}:3004"
     environment:
@@ -161,6 +168,8 @@ services:
       dockerfile: Dockerfile.scripts
     restart: always
     command: [ "node", "scripts/telegram-interactive.mjs" ]
+    volumes:
+      - ./cryonix.toml:/app/cryonix.toml:ro
     environment:
       - NODE_ENV=production
       - TELEGRAM_INTERACTIVE_BOT_TOKEN=${TELEGRAM_INTERACTIVE_BOT_TOKEN}
