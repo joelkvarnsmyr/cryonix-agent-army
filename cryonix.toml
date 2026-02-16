@@ -1,0 +1,207 @@
+# ============================================================================
+# CRYONIX CONFIGURATION — Single source of truth
+# ============================================================================
+#
+# This file centralizes ALL trading, risk, timing, and operational parameters.
+# Read by both TypeScript (auto-trade) and Python (engine) via Docker volume.
+#
+# Secrets (API keys, DB URLs, tokens) stay in .env — NOT here.
+#
+# To apply changes: restart affected containers
+#   docker compose -f docker-compose.prod.yml restart web auto-trader engine
+#
+# ============================================================================
+
+# --- Trading Mode -----------------------------------------------------------
+
+[trading]
+mode = "spot"                       # "spot" | "margin" | "future"
+spot_only = true                    # Block all SELL/SHORT signals
+margin_type = "cross"               # "cross" | "isolated" (only if mode != spot)
+default_leverage = 3                # Max leverage (margin/future only)
+
+# --- Capital & Position Sizing ----------------------------------------------
+
+[capital]
+max_position_size_pct = 0.25        # Max % of capital per position
+min_order_value = 7.50              # Absolute floor for any order (Binance NOTIONAL ~$5 + buffer)
+signal_pool_pct = 0.65              # % allocated to signal-based trades
+grid_pool_pct = 0.25                # % allocated to grid trades
+reserve_pct = 0.10                  # % always kept as cash reserve
+
+# Kelly criterion
+kelly_fraction_multiplier = 0.5     # Half-Kelly (conservative)
+deep_value_max_pct = 0.20           # Deep value: allow up to 20% of capital
+deep_value_min_confidence = 0.80    # Deep value requires 80%+ confidence
+
+# --- Position Limits --------------------------------------------------------
+
+[limits]
+max_open_positions = 3              # Total concurrent positions
+max_signal_positions = 2            # Signal-based positions
+max_grid_positions = 1              # Grid positions
+max_trades_per_day = 6              # Daily trade limit
+max_pending_queue = 30              # Auto-trim signal queue beyond this
+
+# --- Risk Management --------------------------------------------------------
+
+[risk]
+max_daily_loss_pct = 0.05           # 5% daily loss circuit breaker
+max_weekly_loss_pct = 0.10          # 10% weekly loss circuit breaker
+max_consecutive_losses = 5          # Pause after N consecutive losses
+max_correlation = 0.70              # Max correlation between open positions
+volatility_pause_atr_pct = 5.0      # Pause if ATR > this %
+liquidation_buffer_pct = 0.15       # 15% buffer before liquidation (margin)
+min_confidence = 0.65               # Minimum signal confidence to trade
+min_risk_reward = 1.3               # Minimum reward/risk ratio
+
+# --- Stop-Loss, Take-Profit & Trailing Stop ---------------------------------
+
+[exits]
+trailing_stop_pct = 3.0             # Trailing stop distance (%)
+trailing_activation_pct = 1.5       # Only trail after this % profit
+max_slippage_pct = 0.5              # Reject if entry slippage > this %
+max_spread_pct = 0.3                # Skip pairs with spread > this %
+orderbook_depth = 5                 # Check top N bids/asks for spread
+
+# ATR-based SL/TP multipliers (applied to ATR value)
+sl_atr_multiplier = 3.5             # Normal: SL = entry - 3.5 * ATR
+tp_atr_multiplier = 5.0             # Normal: TP = entry + 5.0 * ATR
+deep_value_sl_atr = 3.0             # Deep value: tighter SL
+deep_value_tp_atr = 4.0             # Deep value: tighter TP
+
+# Native Binance safety net
+native_sl_limit_offset = 0.005      # SL limit price = SL * (1 - offset) for fill assurance
+
+# --- Technical Indicators ---------------------------------------------------
+
+[indicators]
+rsi_period = 14
+rsi_oversold = 35                   # RSI below this = oversold signal
+rsi_overbought = 70                 # RSI above this = overbought signal
+
+bollinger_period = 20
+bollinger_std = 2.0
+bollinger_squeeze_pct = 20          # Bottom 20% width = squeeze
+
+macd_fast = 12
+macd_slow = 26
+macd_signal = 9
+
+ema_fast = 9
+ema_slow = 21
+
+atr_period = 14
+adx_period = 14
+adx_trending_threshold = 25         # ADX >= 25 = trending regime
+
+volume_sma_period = 20
+volume_spike_threshold = 2.0        # 2x average = volume spike
+volume_confirmation = 1.2           # 1.2x average = volume confirmed
+
+min_candles = 50                    # Minimum candles required for analysis
+
+# --- Pattern Detection ------------------------------------------------------
+
+[patterns]
+dip_buy_drawdown = 0.05             # 5% below recent high triggers dip buy
+dip_buy_lookback = 20               # Bars to look back for recent high
+dip_buy_max_rsi = 50                # RSI must be below this for dip buy
+
+deep_value_threshold = 0.08         # 8% drawdown triggers deep value analysis
+deep_value_support_lookback_days = 14
+deep_value_rug_pull_velocity = 20.0 # % per hour = too fast, likely rug pull
+
+# --- Pattern Consensus Gate -------------------------------------------------
+
+[consensus]
+single_pattern_penalty = 0.5        # Multiply confidence by this if only 1 pattern
+two_pattern_boost = 0.10            # +10% confidence for 2 confirming patterns
+three_pattern_boost = 0.15          # +15% confidence for 3+ patterns
+ranging_trend_penalty = 0.05        # -5% for trend signals in ranging markets
+
+# --- Market Regime Classification -------------------------------------------
+
+[regime]
+volatile_atr_expansion = 2.0        # ATR > 2x mean = volatile
+# Regime-based capital allocation overrides
+volatile_signal_pct = 0.70
+volatile_grid_pct = 0.00            # Pause grid in volatility
+volatile_reserve_pct = 0.30
+trending_signal_pct = 0.72
+trending_grid_pct = 0.18
+trending_reserve_pct = 0.10
+
+# --- Signal Boosting --------------------------------------------------------
+
+[boosting]
+gainer_min_change_pct = 3.0         # 1h change >= 3% qualifies as top mover
+gainer_confidence_boost = 0.10      # +10% confidence for top movers
+telegram_window_minutes = 30        # Ignore Telegram signals older than this
+telegram_boost_enabled = false      # Phase 1: log only, no active boost
+
+# --- EV Model & Calibration ------------------------------------------------
+
+[ev_model]
+min_trades_for_ev = 5               # Require N+ trades for meaningful EV
+calibration_lookback_days = 30      # Default calibration window
+calibration_min_trades = 3          # Min trades per pattern for calibration
+
+# --- X Sentiment & Risk Alerts ---------------------------------------------
+
+[sentiment]
+expiration_seconds = 3600           # Sentiment scores expire after 1 hour
+alert_keywords = [
+    "hack", "exploit", "rug", "sec", "crash", "delist",
+    "lawsuit", "ban", "scam", "fraud", "investigation", "vulnerability"
+]
+
+# --- AI Validation (GROK) --------------------------------------------------
+
+[ai]
+enabled = true                      # Use GROK AI for signal validation
+model = "grok-3-mini"
+temperature = 0.1
+max_tokens = 200
+ta_weight = 0.5                     # TA confidence weight in blend
+ai_weight = 0.5                     # AI confidence weight in blend
+
+# --- Timing & Polling -------------------------------------------------------
+
+[timing]
+auto_trader_poll_ms = 30_000        # Auto-trader polls every 30s
+health_check_interval_ms = 300_000  # Health check every 5 min
+telegram_poll_ms = 1_000            # Telegram bot polls every 1s
+trade_alert_poll_ms = 15_000        # Check for new trades every 15s
+ws_heartbeat_ms = 30_000            # WebSocket ping interval
+ws_timeout_ms = 90_000              # Disconnect idle WS clients after this
+
+# Cache TTLs
+capital_cache_ms = 300_000          # Refresh capital from Binance every 5 min
+calibration_cache_ms = 1_800_000    # Refresh pattern calibration every 30 min
+regime_ttl_seconds = 3600           # Market regime expires after 1 hour
+
+# Reconciliation
+reconcile_interval_ms = 600_000     # Balance reconciliation every 10 min
+instance_lock_ttl_seconds = 90      # Instance lock TTL (must be > poll interval)
+position_lock_ttl_seconds = 5       # Per-position lock timeout
+
+# --- Engine (Python) --------------------------------------------------------
+
+[engine]
+timeframe = "15m"                   # Candle timeframe for scanning
+candle_limit = 100                  # Fetch last N candles per scan
+news_scan_interval_seconds = 900    # NewsScout runs every 15 min
+
+# --- Grid Trading -----------------------------------------------------------
+
+[grid]
+level_trigger_tolerance = 0.0015    # 0.15% — trigger within this % of grid level
+
+# --- Reconciliation & Dust Prevention ---------------------------------------
+
+[reconciliation]
+phantom_threshold = 0.10            # Remove position if actual < 10% of Redis qty
+mismatch_warning_low = 0.10         # Log warning if actual < 10% of expected
+mismatch_warning_high = 0.90        # Log warning if actual < 90% of expected
+dust_sell_floor = 5.0               # Minimum value to attempt sell (Binance NOTIONAL)
