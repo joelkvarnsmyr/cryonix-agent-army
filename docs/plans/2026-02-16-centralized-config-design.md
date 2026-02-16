@@ -1,7 +1,18 @@
 # Design: Centralized Configuration (cryonix.toml)
 
 **Date:** 2026-02-16
-**Status:** Approved for implementation
+**Status:** Phases 1-3 complete, deployed & running in production
+
+## Progress
+
+| Phase | Status | Commit | Notes |
+|-------|--------|--------|-------|
+| 1. Config Loader | Done | `c986299` | TS `loadConfig()` + Python `get_toml()` + Docker mounts |
+| 2. auto-trade/route.ts | Done | `8192be5` | 30 hardcoded values migrated |
+| 3. Python engine | Done | `2484bc9` | ~47 values across quant.py, risk_manager.py, tanks |
+| 4. Scripts | Pending | — | auto-trader.mjs, ws-server.mjs, telegram bots |
+| 5. Fix conflicts & clean | Done (implicitly) | Via Phase 2-3 | All 3 conflicts resolved through TOML |
+| 6. Validation & logging | Pending | — | Config hash, schema validation |
 
 ## Problem
 
@@ -36,62 +47,42 @@ cryonix.toml (repo root)
 
 ## Migration Plan
 
-### Phase 1: Config Loader (no behavior change)
+### Phase 1: Config Loader (no behavior change) — DONE
 
-**Goal:** Add TOML reading capability. All values still come from code defaults but TOML overrides if present.
+**Commit:** `c986299`
 
-1. **Add `@iarna/toml` to apps/web** — TypeScript TOML parser
-2. **Create `apps/web/src/lib/config.ts`:**
-   - Read `/app/cryonix.toml` (Docker) or `../../cryonix.toml` (dev)
-   - Export typed CONFIG object matching current shape
-   - Fallback to current hardcoded values if TOML missing
-3. **Update Python `config.py`:**
-   - Read `/app/cryonix.toml` via `tomllib` (Python 3.11 stdlib)
-   - Export config dict matching current shape
-   - Fallback to current hardcoded values if TOML missing
-4. **Mount TOML in docker-compose.prod.yml:**
-   ```yaml
-   volumes:
-     - ./cryonix.toml:/app/cryonix.toml:ro
-   ```
-   Add to: web, engine, auto-trader, ws-server, telegram-bot
-5. **Verify:** Deploy, check logs — no behavior change expected
+Implemented:
+- **TypeScript:** `apps/web/src/lib/config.ts` — `loadConfig()` returns typed CONFIG, `fullConfig()` returns raw TOML object. Uses `@iarna/toml`.
+- **Python:** `packages/engine/src/core/config.py` — `load_toml_config()` + `get_toml(section, key, default)`. Uses `tomllib` (stdlib). Fixed `IndexError` for Docker path depth.
+- **Docker:** `./cryonix.toml:/app/cryonix.toml:ro` mounted to web, engine, auto-trader, ws-server, telegram-bot.
+- **Pattern:** Both loaders cache on first call, log source path, fall back gracefully.
 
-### Phase 2: Migrate auto-trade/route.ts
+### Phase 2: Migrate auto-trade/route.ts — DONE
 
-**Goal:** Replace hardcoded CONFIG object with TOML-loaded values.
+**Commit:** `8192be5`
 
-1. **Replace CONFIG block** (lines 43-65) with:
-   ```typescript
-   import { loadConfig } from '@/lib/config';
-   const CONFIG = loadConfig();
-   ```
-2. **Remove hardcoded values** from:
-   - `calculatePositionSize()` — uses CONFIG.* already
-   - `executeBuy()` — uses CONFIG.* already
-   - `monitorPositions()` — trailing stop, dust prevention
-   - Capital allocator — regime adjustments
-3. **Remove hardcoded spread/slippage** — use CONFIG.exits.*
-4. **Verify:** Build, deploy, check that auto-trader behaves identically
+Migrated 30 hardcoded values using pattern `TOML?.section.key ?? fallback`:
+- **Timing (7):** cycle interval, health check, regime refresh, queue poll, instance lock TTL, reconcile interval
+- **Regime (6):** volatile/trending/ranging multipliers, volatile risk reduction
+- **Position sizing (3):** min order value, boost allocations
+- **AI validation (5):** confidence thresholds, temperature, timeout, model
+- **Exits (4):** trailing stop, profit lock, spread limit
+- **Boosting (3):** gainer thresholds, telegram boost
+- **Risk (3):** daily drawdown limit, reconciliation variance
 
-### Phase 3: Migrate Python engine
+Key fix: Moved CONFIG/TOML declarations before INSTANCE_LOCK section to resolve TypeScript temporal dead zone error.
 
-**Goal:** Replace hardcoded values in quant.py and risk_manager.py.
+### Phase 3: Migrate Python engine — DONE
 
-1. **Update `quant.py`:**
-   - Replace hardcoded indicator periods (RSI 14, BB 20, etc.)
-   - Replace pattern thresholds (dip_buy_drawdown, deep_value_threshold)
-   - Replace consensus gate multipliers
-   - Replace ATR-based SL/TP multipliers
-2. **Update `risk_manager.py`:**
-   - Replace max_position_size_pct, max_open_positions, etc.
-   - Remove conflicting values (now aligned via TOML)
-3. **Update `risk_gate.py`:**
-   - Read min_confidence from config
-4. **Update tanks:**
-   - market_scout.py: timeframe, candle_limit from config
-   - news_scout.py: scan interval, sentiment expiration from config
-5. **Verify:** Restart engine, check scanning/signal generation unchanged
+**Commit:** `2484bc9`
+
+Migrated ~47 values across 5 files using pattern `get_toml('section', 'key', default)`:
+
+- **`quant.py` (~25 values):** RSI period, Bollinger period/std, MACD params, EMA periods, ADX period. Pattern thresholds: dip buy drawdown/lookback/max_rsi, deep value threshold/rug pull velocity, volume spike/Bollinger squeeze. Consensus boosts. Exit SL/TP ATR multipliers. Regime: volatile ATR expansion, ADX trending, volume confirmation.
+- **`risk_manager.py` (~15 values):** RiskLimits dataclass uses `__post_init__` to load TOML overrides for max_daily_loss_pct, max_position_size_pct, max_open_positions, min_confidence, etc. ATR-based SL/TP multipliers. Kelly fraction multiplier.
+- **`market_scout.py` (~5 values):** timeframe, candle_limit, regime TTL, gainer min change, volume confirmation.
+- **`news_scout.py` (2 values):** sentiment expiration, scan interval.
+- **`config.py` fix:** Wrapped `Path(__file__).parents[4]` in try/except for Docker path depth.
 
 ### Phase 4: Migrate scripts
 
@@ -102,15 +93,16 @@ cryonix.toml (repo root)
 3. **telegram-interactive.mjs:** poll intervals from TOML
 4. **Verify:** Restart all workers, check polling behavior
 
-### Phase 5: Fix conflicts & clean docker-compose
+### Phase 5: Fix conflicts & clean docker-compose — DONE (resolved via Phase 2-3)
 
-**Goal:** Resolve the 3 critical conflicts found in audit.
+All 3 critical conflicts are resolved — both TS and Python now read from the same TOML:
+- **MAX_OPEN_POSITIONS:** `limits.max_open_positions = 3` (was TS=3, Python=5)
+- **MAX_POSITION_SIZE_PCT:** `capital.max_position_size_pct = 0.25` (was TS=25%, Python=15%)
+- **TRADING_MODE:** `trading.mode = "spot"` (was code='spot', compose default='margin')
 
-1. **Remove TRADING_MODE default from docker-compose.prod.yml** — TOML is source of truth
-2. **Remove DEFAULT_LEVERAGE from docker-compose.prod.yml** — TOML handles it
-3. **Verify MAX_OPEN_POSITIONS=3** in TOML (resolves TS=3 vs Python=5 conflict)
-4. **Verify MAX_POSITION_SIZE_PCT=0.25** in TOML (resolves TS=25% vs Python=15%)
-5. **Clean .env:** Remove non-secret config that's now in TOML
+Remaining cleanup (low priority):
+- Remove TRADING_MODE/DEFAULT_LEVERAGE defaults from docker-compose.prod.yml environment
+- Clean non-secret config from .env
 
 ### Phase 6: Validation & logging
 
@@ -227,11 +219,17 @@ Only secrets:
 - **`:ro` mount** prevents containers from modifying the config
 - **Config caching** means TOML is read once at startup, not on every request
 
-## Estimated Effort per Phase
+## cryonix.toml Documentation
 
-- Phase 1: Config loaders + Docker mount — small
-- Phase 2: Migrate auto-trade/route.ts — medium (largest file, most values)
-- Phase 3: Migrate Python engine — medium (quant.py has ~30 values)
-- Phase 4: Migrate scripts — small (5-6 values each)
-- Phase 5: Fix conflicts + clean compose — small
-- Phase 6: Validation + logging — small
+The TOML file (658 lines) contains comprehensive inline documentation for every value:
+- Section headers explain the category, when to change it, and what it affects
+- Every value has comments explaining what it does, the math behind it, and practical guidance
+- Values are grouped into 16 sections: trading, capital, limits, risk, exits, indicators, patterns, consensus, regime, boosting, timing, engine, sentiment, ai, ev_model, grid
+
+To edit configuration: modify `cryonix.toml` at repo root, then redeploy affected containers.
+No code changes needed — all values have safe fallback defaults in the code itself.
+
+## Remaining Work
+
+- **Phase 4 (scripts):** Migrate timing values in auto-trader.mjs, ws-server.mjs, telegram bots
+- **Phase 6 (validation):** Config hash in /api/health, schema validation on startup
