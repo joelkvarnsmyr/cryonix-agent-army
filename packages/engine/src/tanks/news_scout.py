@@ -19,6 +19,7 @@ except ImportError:
     HAS_HTTPX = False
 
 from src.tanks.base import BaseTank, TankState
+from src.core.config import get_toml
 
 # --- CONFIGURATION ---
 
@@ -57,7 +58,7 @@ NEGATIVE_WORDS = {
     "lawsuit", "scam", "theft", "slump", "drop", "decline", "fear", "risk"
 }
 
-SENTIMENT_EXPIRATION_SECONDS = 3600  # 1 hour
+SENTIMENT_EXPIRATION_SECONDS = get_toml('sentiment', 'expiration_seconds', 3600)
 
 class NewsScoutTank(BaseTank):
     """
@@ -73,7 +74,7 @@ class NewsScoutTank(BaseTank):
         super().__init__(name="NewsScout", symbols=[])
         self.redis_client = Redis.from_url(kv_url, decode_responses=True)
         self.last_run_time = 0
-        self.run_interval = 900  # Run every 15 minutes
+        self.run_interval = get_toml('engine', 'news_scan_interval_seconds', 900)
 
     def should_run(self) -> bool:
         """Check if it's time to run the news scan."""

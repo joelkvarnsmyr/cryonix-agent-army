@@ -8,6 +8,7 @@ from src.tanks.base import BaseTank, TankState
 from src.core.market_data import market_data
 from src.core.state_sync import state_manager
 from src.guilds.quant import quant
+from src.core.config import get_toml
 
 
 class MarketScoutTank(BaseTank):
@@ -45,8 +46,8 @@ class MarketScoutTank(BaseTank):
                 "STRK/USDC", "MANTA/USDC",
             ]
         )
-        self.timeframe = "15m"  # 15-minute candles
-        self.candle_limit = 100  # Fetch last 100 candles
+        self.timeframe = get_toml('engine', 'timeframe', '15m')
+        self.candle_limit = get_toml('engine', 'candle_limit', 100)
 
     async def scan_market(self, state: TankState) -> TankState:
         """
@@ -230,7 +231,7 @@ class MarketScoutTank(BaseTank):
             regime = indicators.get('market_regime', 'unknown')
             if regime != 'unknown':
                 try:
-                    await state_manager.redis.set('market:regime', regime, ex=3600)
+                    await state_manager.redis.set('market:regime', regime, ex=get_toml('timing', 'regime_ttl_seconds', 3600))
                 except Exception:
                     pass
 
@@ -291,7 +292,7 @@ class MarketScoutTank(BaseTank):
                 return None
 
             change_1h = match.get('change_1h', 0)
-            if change_1h < 3.0:
+            if change_1h < get_toml('boosting', 'gainer_min_change_pct', 3.0):
                 return None
 
             # Confirmation checks
@@ -303,7 +304,7 @@ class MarketScoutTank(BaseTank):
             if rsi > 72:
                 return None
             # Need some volume interest
-            if vol_ratio < 1.2:
+            if vol_ratio < get_toml('indicators', 'volume_confirmation', 1.2):
                 return None
             # Need some directional movement
             if adx < 18:

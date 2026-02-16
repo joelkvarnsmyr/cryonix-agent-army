@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
+from src.core.config import get_toml
 
 @dataclass
 class PatternSignal:
@@ -30,8 +31,8 @@ class QuantGuild:
     """
 
     def __init__(self):
-        self.min_candles = 50  # Minimum candles needed for analysis
-        self.deep_value_threshold = 0.08  # 8% drawdown triggers deep value analysis
+        self.min_candles = get_toml('indicators', 'min_candles', 50)
+        self.deep_value_threshold = get_toml('patterns', 'deep_value_threshold', 0.08)
 
     def analyze(self, ohlcv: List[list], symbol: str, multi_tf_data: Optional[Dict[str, List[list]]] = None) -> Dict[str, Any]:
         """
@@ -85,27 +86,29 @@ class QuantGuild:
         low = df['low']
         volume = df['volume']
 
-        # RSI (14-period)
-        rsi = self._calculate_rsi(close, 14)
+        # RSI
+        rsi = self._calculate_rsi(close, get_toml('indicators', 'rsi_period', 14))
 
-        # Bollinger Bands (20-period, 2 std)
-        bb_mid, bb_upper, bb_lower, bb_width = self._calculate_bollinger(close, 20, 2)
+        # Bollinger Bands
+        bb_mid, bb_upper, bb_lower, bb_width = self._calculate_bollinger(
+            close, get_toml('indicators', 'bollinger_period', 20), get_toml('indicators', 'bollinger_std', 2))
 
-        # ATR (14-period) for volatility
-        atr = self._calculate_atr(high, low, close, 14)
+        # ATR for volatility
+        atr = self._calculate_atr(high, low, close, get_toml('indicators', 'atr_period', 14))
 
-        # Volume SMA (20-period)
-        vol_sma = volume.rolling(20).mean()
+        # Volume SMA
+        vol_sma = volume.rolling(get_toml('indicators', 'volume_sma_period', 20)).mean()
 
         # MACD
-        macd, macd_signal, macd_hist = self._calculate_macd(close)
+        macd, macd_signal, macd_hist = self._calculate_macd(
+            close, get_toml('indicators', 'macd_fast', 12), get_toml('indicators', 'macd_slow', 26), get_toml('indicators', 'macd_signal', 9))
 
-        # ADX (14-period) for market regime detection
-        adx, plus_di, minus_di = self._calculate_adx(high, low, close, 14)
+        # ADX for market regime detection
+        adx, plus_di, minus_di = self._calculate_adx(high, low, close, get_toml('indicators', 'adx_period', 14))
 
-        # EMA 9/21 for trend direction
-        ema9 = close.ewm(span=9).mean()
-        ema21 = close.ewm(span=21).mean()
+        # EMA fast/slow for trend direction
+        ema9 = close.ewm(span=get_toml('indicators', 'ema_fast', 9)).mean()
+        ema21 = close.ewm(span=get_toml('indicators', 'ema_slow', 21)).mean()
 
         # Get latest values
         latest_idx = -1
@@ -181,8 +184,8 @@ class QuantGuild:
         bb_upper = indicators['bb_upper']
         bb_lower = indicators['bb_lower']
 
-        # Squeeze detected when width is in bottom 20%
-        if bb_width_pct < 20:
+        # Squeeze detected when width is in bottom N%
+        if bb_width_pct < get_toml('indicators', 'bollinger_squeeze_pct', 20):
             # Determine direction based on price position
             position = (price - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
 
@@ -215,16 +218,19 @@ class QuantGuild:
         """
         rsi = indicators['rsi']
 
-        if rsi < 35:
-            confidence = 0.75 + (35 - rsi) / 80  # Boosted: RSI_OVERSOLD is strong signal
+        rsi_oversold = get_toml('indicators', 'rsi_oversold', 35)
+        rsi_overbought = get_toml('indicators', 'rsi_overbought', 70)
+
+        if rsi < rsi_oversold:
+            confidence = 0.75 + (rsi_oversold - rsi) / 80
             return {
                 "pattern": "RSI_OVERSOLD",
                 "action": "BUY",
                 "confidence": min(0.92, confidence),
                 "reason": f"RSI oversold at {rsi:.1f}",
             }
-        elif rsi > 70:
-            confidence = 0.70 + (rsi - 70) / 100
+        elif rsi > rsi_overbought:
+            confidence = 0.70 + (rsi - rsi_overbought) / 100
             return {
                 "pattern": "RSI_OVERBOUGHT",
                 "action": "SELL",
@@ -240,7 +246,7 @@ class QuantGuild:
         """
         vol_ratio = indicators['volume_ratio']
 
-        if vol_ratio > 2.0:
+        if vol_ratio > get_toml('indicators', 'volume_spike_threshold', 2.0):
             # Check if price is moving up or down with the volume
             price_change = (df['close'].iloc[-1] - df['close'].iloc[-2]) / df['close'].iloc[-2]
 
@@ -271,10 +277,10 @@ class QuantGuild:
 
         # Need at least 2 candles to detect crossover
         close = df['close']
-        ema12 = close.ewm(span=12).mean()
-        ema26 = close.ewm(span=26).mean()
+        ema12 = close.ewm(span=get_toml('indicators', 'macd_fast', 12)).mean()
+        ema26 = close.ewm(span=get_toml('indicators', 'macd_slow', 26)).mean()
         macd_line = ema12 - ema26
-        signal_line = macd_line.ewm(span=9).mean()
+        signal_line = macd_line.ewm(span=get_toml('indicators', 'macd_signal', 9)).mean()
 
         prev_hist = (macd_line.iloc[-2] - signal_line.iloc[-2])
         curr_hist = hist
@@ -304,21 +310,22 @@ class QuantGuild:
         now showing signs of recovery. Good for spot buying on dips.
         """
         close = df['close']
-        high_20 = close.rolling(20).max().iloc[-1]  # 20-bar high
+        dip_lookback = get_toml('patterns', 'dip_buy_lookback', 20)
+        high_20 = close.rolling(dip_lookback).max().iloc[-1]
         current = close.iloc[-1]
         prev = close.iloc[-2]
 
         if high_20 <= 0:
             return None
 
-        # Price is 5%+ below recent high AND current candle is green (recovering)
         drawdown = (high_20 - current) / high_20
         is_recovering = current > prev
 
-        if drawdown >= 0.05 and is_recovering:
-            # RSI should be below 50 (not overbought)
+        dip_min_drawdown = get_toml('patterns', 'dip_buy_drawdown', 0.05)
+        if drawdown >= dip_min_drawdown and is_recovering:
             rsi = indicators.get('rsi', 50)
-            if rsi < 50:
+            dip_max_rsi = get_toml('patterns', 'dip_buy_max_rsi', 50)
+            if rsi < dip_max_rsi:
                 confidence = 0.70 + drawdown * 2  # More drawdown = more confidence
                 return {
                     "pattern": "DIP_BUY",
@@ -334,11 +341,11 @@ class QuantGuild:
         EMA 9/21 Crossover: Fast EMA crosses above slow EMA = bullish
         """
         close = df['close']
-        ema9 = close.ewm(span=9).mean()
-        ema21 = close.ewm(span=21).mean()
+        ema_fast = close.ewm(span=get_toml('indicators', 'ema_fast', 9)).mean()
+        ema_slow = close.ewm(span=get_toml('indicators', 'ema_slow', 21)).mean()
 
-        prev_diff = ema9.iloc[-2] - ema21.iloc[-2]
-        curr_diff = ema9.iloc[-1] - ema21.iloc[-1]
+        prev_diff = ema_fast.iloc[-2] - ema_slow.iloc[-2]
+        curr_diff = ema_fast.iloc[-1] - ema_slow.iloc[-1]
 
         # Bullish crossover
         if prev_diff < 0 and curr_diff > 0:
@@ -477,7 +484,7 @@ class QuantGuild:
         confidence = min(0.95, base_confidence)
 
         # --- Reject if drop is too fast (potential rug pull / flash crash artifact) ---
-        if drop_velocity > 20:  # >20% per hour is suspicious
+        if drop_velocity > get_toml('patterns', 'deep_value_rug_pull_velocity', 20.0):
             confidence *= 0.7  # Heavy penalty
             boosts.append(f"WARNING: extreme velocity ({drop_velocity:.1f}%/h)")
 
@@ -491,8 +498,8 @@ class QuantGuild:
         atr = indicators['atr']
         entry_price = current_price
         dec = 2 if entry_price >= 1 else (4 if entry_price >= 0.01 else (6 if entry_price >= 0.0001 else 8))
-        stop_loss = round(entry_price - 3 * atr, dec)
-        target_price = round(entry_price + 4 * atr, dec)
+        stop_loss = round(entry_price - get_toml('exits', 'deep_value_sl_atr', 3.0) * atr, dec)
+        target_price = round(entry_price + get_toml('exits', 'deep_value_tp_atr', 4.0) * atr, dec)
 
         reason_parts = [
             f"Deep value crash: {drawdown:.1%} drawdown from recent high",
@@ -628,7 +635,7 @@ class QuantGuild:
 
         # Check volume confirmation
         volume_ratio = indicators.get('volume_ratio', 1)
-        volume_confirmed = bool(volume_ratio > 1.2)  # 20% above average
+        volume_confirmed = bool(volume_ratio > get_toml('indicators', 'volume_confirmation', 1.2))
 
         # Higher timeframe and regime context
         htf_bullish = htf_trend and htf_trend.get('bias') == 'bullish'
@@ -644,12 +651,14 @@ class QuantGuild:
             boosts = []
 
             # Multi-pattern consensus boost
+            three_boost = get_toml('consensus', 'three_pattern_boost', 0.15)
+            two_boost = get_toml('consensus', 'two_pattern_boost', 0.10)
             if len(signals) >= 3:
-                base_confidence += 0.15
-                boosts.append("+15% (3+ confirming patterns)")
+                base_confidence += three_boost
+                boosts.append(f"+{three_boost:.0%} (3+ confirming patterns)")
             elif len(signals) >= 2:
-                base_confidence += 0.10
-                boosts.append("+10% (2 confirming patterns)")
+                base_confidence += two_boost
+                boosts.append(f"+{two_boost:.0%} (2 confirming patterns)")
 
             # Trend alignment boost
             if trend_aligned:
@@ -674,8 +683,9 @@ class QuantGuild:
             if market_regime == 'ranging':
                 trend_patterns = {'MACD_BULLISH_CROSS', 'MACD_BEARISH_CROSS', 'EMA_BULLISH_CROSS', 'EMA_BEARISH_CROSS'}
                 if any(p.get('pattern') in trend_patterns for p in signals):
-                    base_confidence -= 0.05
-                    boosts.append("-5% (trend signal in ranging market)")
+                    ranging_penalty = get_toml('consensus', 'ranging_trend_penalty', 0.05)
+                    base_confidence -= ranging_penalty
+                    boosts.append(f"-{ranging_penalty:.0%} (trend signal in ranging market)")
 
             return min(0.95, base_confidence), boosts
 
@@ -690,8 +700,8 @@ class QuantGuild:
                 "reason": " | ".join(reasons),
                 "patterns": [p['pattern'] for p in buy_signals],
                 "entry_price": price,
-                "stop_loss": rp(price - 3.5 * atr),
-                "target_price": rp(price + 5 * atr),
+                "stop_loss": rp(price - get_toml('exits', 'sl_atr_multiplier', 3.5) * atr),
+                "target_price": rp(price + get_toml('exits', 'tp_atr_multiplier', 5.0) * atr),
                 "consensus_score": len(buy_signals),
                 "consensus_boosts": boosts,
                 "trend_aligned": trend_bullish,
@@ -710,8 +720,8 @@ class QuantGuild:
                 "reason": " | ".join(reasons),
                 "patterns": [p['pattern'] for p in sell_signals],
                 "entry_price": price,
-                "stop_loss": rp(price + 3.5 * atr),
-                "target_price": rp(price - 5 * atr),
+                "stop_loss": rp(price + get_toml('exits', 'sl_atr_multiplier', 3.5) * atr),
+                "target_price": rp(price - get_toml('exits', 'tp_atr_multiplier', 5.0) * atr),
                 "consensus_score": len(sell_signals),
                 "consensus_boosts": boosts,
                 "trend_aligned": trend_bearish,
@@ -833,9 +843,9 @@ class QuantGuild:
         atr_mean = float(atr_series.rolling(50).mean().iloc[-1]) if len(atr_series) >= 50 else float(atr_series.mean())
         atr_expansion = atr_now / atr_mean if atr_mean > 0 else 1.0
 
-        if atr_expansion > 2.0:
+        if atr_expansion > get_toml('regime', 'volatile_atr_expansion', 2.0):
             return "volatile"
-        elif adx >= 25:
+        elif adx >= get_toml('indicators', 'adx_trending_threshold', 25):
             return "trending"
         else:
             return "ranging"

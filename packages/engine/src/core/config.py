@@ -51,10 +51,11 @@ def load_toml_config() -> dict:
         return _toml_config or {}
     _toml_loaded = True
 
-    paths = [
-        Path("/app/cryonix.toml"),                          # Docker container
-        Path(__file__).parents[4] / "cryonix.toml",         # Dev (repo root)
-    ]
+    paths = [Path("/app/cryonix.toml")]                          # Docker container
+    try:
+        paths.append(Path(__file__).parents[4] / "cryonix.toml")  # Dev (repo root)
+    except IndexError:
+        pass  # In Docker, path depth is shorter
 
     for p in paths:
         if p.exists():

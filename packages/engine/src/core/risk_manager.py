@@ -7,24 +7,38 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from src.core.state_sync import state_manager
+from src.core.config import get_toml
 import json
 
 
 @dataclass
 class RiskLimits:
-    """Configurable risk limits — synced with auto-trade CONFIG"""
-    max_daily_loss_pct: float = 0.05          # 5% max daily loss (~$0.85)
-    max_weekly_loss_pct: float = 0.10         # 10% max weekly loss (~$1.70)
-    max_position_size_pct: float = 0.15       # 15% max per position (synced with auto-trade)
-    max_total_exposure_pct: float = 0.90      # 90% max total exposure (10% reserve)
-    min_confidence: float = 0.65              # 65% min signal confidence
-    max_correlation: float = 0.70             # Max position correlation
-    volatility_pause_atr_pct: float = 5.0     # Pause if ATR > 5%
-    max_trades_per_day: int = 6              # Max 6 trades per day
-    max_open_positions: int = 5              # Synced with auto-trade CONFIG
-    max_consecutive_losses: int = 5           # Pause after 5 losses
-    max_leverage: int = 3                     # Max leverage for margin trading
-    liquidation_buffer_pct: float = 0.15      # 15% buffer before liquidation price
+    """Configurable risk limits — loaded from cryonix.toml"""
+    max_daily_loss_pct: float = 0.05
+    max_weekly_loss_pct: float = 0.10
+    max_position_size_pct: float = 0.15
+    max_total_exposure_pct: float = 0.90
+    min_confidence: float = 0.65
+    max_correlation: float = 0.70
+    volatility_pause_atr_pct: float = 5.0
+    max_trades_per_day: int = 6
+    max_open_positions: int = 5
+    max_consecutive_losses: int = 5
+    max_leverage: int = 3
+    liquidation_buffer_pct: float = 0.15
+
+    def __post_init__(self):
+        """Override defaults with TOML values if available"""
+        self.max_daily_loss_pct = get_toml('risk', 'max_daily_loss_pct', self.max_daily_loss_pct)
+        self.max_weekly_loss_pct = get_toml('risk', 'max_weekly_loss_pct', self.max_weekly_loss_pct)
+        self.max_position_size_pct = get_toml('capital', 'max_position_size_pct', self.max_position_size_pct)
+        self.min_confidence = get_toml('risk', 'min_confidence', self.min_confidence)
+        self.max_correlation = get_toml('risk', 'max_correlation', self.max_correlation)
+        self.volatility_pause_atr_pct = get_toml('risk', 'volatility_pause_atr_pct', self.volatility_pause_atr_pct)
+        self.max_trades_per_day = get_toml('limits', 'max_trades_per_day', self.max_trades_per_day)
+        self.max_open_positions = get_toml('limits', 'max_open_positions', self.max_open_positions)
+        self.max_consecutive_losses = get_toml('risk', 'max_consecutive_losses', self.max_consecutive_losses)
+        self.liquidation_buffer_pct = get_toml('risk', 'liquidation_buffer_pct', self.liquidation_buffer_pct)
 
 
 @dataclass
@@ -272,12 +286,14 @@ class RiskManager:
             atr = market_data.get("atr", 0)
             dec = 2 if entry_price >= 1 else (4 if entry_price >= 0.01 else (6 if entry_price >= 0.0001 else 8))
 
+            sl_mult = get_toml('exits', 'sl_atr_multiplier', 3.5)
+            tp_mult = get_toml('exits', 'tp_atr_multiplier', 5.0)
             if signal.get("action") == "BUY":
-                dynamic_stop = entry_price - (3.0 * atr)
-                dynamic_target = entry_price + (4.5 * atr)
+                dynamic_stop = entry_price - (sl_mult * atr)
+                dynamic_target = entry_price + (tp_mult * atr)
             else:  # SELL
-                dynamic_stop = entry_price + (3.0 * atr)
-                dynamic_target = entry_price - (4.5 * atr)
+                dynamic_stop = entry_price + (sl_mult * atr)
+                dynamic_target = entry_price - (tp_mult * atr)
 
             result["adjustments"]["stop_loss"] = round(dynamic_stop, dec)
             result["adjustments"]["take_profit"] = round(dynamic_target, dec)
@@ -321,7 +337,7 @@ class RiskManager:
         """
         # Get signal confidence as win probability proxy
         confidence = signal.get("confidence", 0.5)
-        p = min(max(confidence, 0.3), 0.8)  # Cap between 30-80%
+        p = min(max(confidence, 0.3), 0.8)
         q = 1 - p
 
         # Estimate win/loss ratio from stop/target
@@ -335,10 +351,10 @@ class RiskManager:
 
         # Kelly fraction
         kelly = (b * p - q) / b if b > 0 else 0
-        kelly = max(0, min(kelly, 0.25))  # Cap at 25%
+        kelly = max(0, min(kelly, 0.25))
 
         # Half-Kelly for safety
-        kelly = kelly * 0.5
+        kelly = kelly * get_toml('capital', 'kelly_fraction_multiplier', 0.5)
 
         # Base position size
         base_size = self.portfolio.available_capital * kelly
