@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
 import { logTrade, saveValidation, archivePosition, createPosition, closePositionBySymbol, markLatestSignalExecuted } from '@cryonix/database';
 import { RISK_CONFIG } from '@cryonix/types';
-import { loadConfig } from '@/lib/config';
+import { loadConfig, fullConfig } from '@/lib/config';
 import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
 
@@ -20,12 +20,19 @@ if (!IS_PRODUCTION) {
 }
 
 // ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const CONFIG = loadConfig();
+const TOML = fullConfig();
+
+// ============================================================================
 // INSTANCE LOCK — prevent multiple environments from trading the same account
 // ============================================================================
 
 const INSTANCE_ID = `${require('os').hostname()}-${process.pid}`;
 const INSTANCE_LOCK_KEY = 'instance:trading_lock';
-const INSTANCE_LOCK_TTL = 90; // seconds — must be > auto-trader poll interval (30s)
+const INSTANCE_LOCK_TTL = TOML?.timing.instance_lock_ttl_seconds ?? 90;
 
 async function acquireInstanceLock(): Promise<{ acquired: boolean; holder?: string }> {
   const result = await redis.set(INSTANCE_LOCK_KEY, INSTANCE_ID, 'EX', INSTANCE_LOCK_TTL, 'NX');
@@ -37,12 +44,6 @@ async function acquireInstanceLock(): Promise<{ acquired: boolean; holder?: stri
   }
   return { acquired: false, holder: holder as string };
 }
-
-// ============================================================================
-// CONFIGURATION
-// ============================================================================
-
-const CONFIG = loadConfig();
 
 // ============================================================================
 // GROK AI SINGLETON (Information Edge)
@@ -98,7 +99,7 @@ function getExchange(): Exchange {
 
 let cachedCapital = CONFIG.TOTAL_CAPITAL;
 let capitalLastFetched = 0;
-const CAPITAL_CACHE_MS = 5 * 60 * 1000; // refresh every 5 min
+const CAPITAL_CACHE_MS = TOML?.timing.capital_cache_ms ?? 5 * 60 * 1000;
 
 async function getTotalCapital(): Promise<number> {
   const now = Date.now();
@@ -200,15 +201,15 @@ async function getCapitalBudget(): Promise<CapitalBudget> {
   // Regime-based adjustments
   if (regime === 'volatile') {
     // Volatile: pause grid, increase reserve, reduce signal pool
-    gridPct = 0;
-    reservePct = 0.30;
-    signalPct = 0.70;
+    gridPct = TOML?.regime.volatile_grid_pct ?? 0;
+    reservePct = TOML?.regime.volatile_reserve_pct ?? 0.30;
+    signalPct = TOML?.regime.volatile_signal_pct ?? 0.70;
     console.log('[ALLOCATOR] Volatile regime: grid paused, reserve increased to 30%');
   } else if (regime === 'trending') {
     // Trending: boost signal pool (trend strategies excel)
-    signalPct = 0.72;
-    gridPct = 0.18;
-    reservePct = 0.10;
+    signalPct = TOML?.regime.trending_signal_pct ?? 0.72;
+    gridPct = TOML?.regime.trending_grid_pct ?? 0.18;
+    reservePct = TOML?.regime.trending_reserve_pct ?? 0.10;
   }
   // ranging: default allocation (grid works well in ranges)
 
@@ -244,7 +245,7 @@ async function getCapitalBudget(): Promise<CapitalBudget> {
 // Persist regime from engine signals so allocator can read it
 async function updateMarketRegime(regime: string): Promise<void> {
   if (regime && regime !== 'unknown') {
-    await redis.set('market:regime', regime, 'EX', 3600); // 1h TTL
+    await redis.set('market:regime', regime, 'EX', TOML?.timing.regime_ttl_seconds ?? 3600);
   }
 }
 
@@ -310,7 +311,7 @@ function resetDailyStateIfNeeded() {
 
 const POSITIONS_KEY = 'positions:open';
 const POSITION_LOCK_KEY = 'positions:lock';
-const LOCK_TTL = 5; // 5 second lock
+const LOCK_TTL = TOML?.timing.position_lock_ttl_seconds ?? 5;
 
 async function acquirePositionLock(): Promise<boolean> {
   const result = await redis.set(POSITION_LOCK_KEY, Date.now().toString(), 'EX', LOCK_TTL, 'NX');
@@ -437,7 +438,7 @@ interface MonitorResult {
 // ============================================================================
 
 let lastReconcileTime = 0;
-const RECONCILE_INTERVAL_MS = 10 * 60 * 1000; // Every 10 minutes
+const RECONCILE_INTERVAL_MS = TOML?.timing.reconcile_interval_ms ?? 10 * 60 * 1000;
 
 async function reconcilePositions(): Promise<void> {
   const now = Date.now();
@@ -456,7 +457,7 @@ async function reconcilePositions(): Promise<void> {
       const baseAsset = pos.symbol.split('/')[0];
       const actualQty = balTotal[baseAsset] || 0;
 
-      if (actualQty < pos.quantity * 0.1) {
+      if (actualQty < pos.quantity * (TOML?.reconciliation.phantom_threshold ?? 0.1)) {
         // Binance has <10% of what Redis claims — phantom position
         console.warn(`[RECONCILE] PHANTOM detected: ${pos.symbol} Redis=${pos.quantity}, Binance=${actualQty}. Removing.`);
         const removed = await removePosition(pos.symbol);
@@ -477,7 +478,7 @@ async function reconcilePositions(): Promise<void> {
             agentId: 'auto-trader',
           });
         }
-      } else if (actualQty < pos.quantity * 0.9) {
+      } else if (actualQty < pos.quantity * (TOML?.reconciliation.mismatch_warning_low ?? 0.9)) {
         // Partial mismatch — log warning but don't auto-fix
         console.warn(`[RECONCILE] Quantity mismatch: ${pos.symbol} Redis=${pos.quantity}, Binance=${actualQty}`);
       }
@@ -595,9 +596,9 @@ async function monitorPositions(): Promise<MonitorResult[]> {
       // Update high water mark and trailing stop
       if (currentPrice > pos.highWaterMark) {
         pos.highWaterMark = currentPrice;
-        // Only start trailing after 1.5% profit (let positions breathe)
+        // Only start trailing after activation threshold (let positions breathe)
         const profitPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
-        if (profitPct >= 1.5) {
+        if (profitPct >= (TOML?.exits.trailing_activation_pct ?? 1.5)) {
           const newTrailingStop = currentPrice * (1 - CONFIG.TRAILING_STOP_PCT / 100);
           if (newTrailingStop > pos.trailingStop) {
             pos.trailingStop = newTrailingStop;
@@ -892,7 +893,7 @@ interface PatternStats {
 
 let calibrationCache: Record<string, PatternStats> = {};
 let calibrationLastFetched = 0;
-const CALIBRATION_CACHE_MS = 30 * 60 * 1000; // refresh every 30 min
+const CALIBRATION_CACHE_MS = TOML?.timing.calibration_cache_ms ?? 30 * 60 * 1000;
 
 async function getPatternCalibration(): Promise<Record<string, PatternStats>> {
   const now = Date.now();
@@ -933,7 +934,7 @@ async function calculateExpectedValue(signal: Signal, cal?: Record<string, Patte
     }
   }
 
-  if (!stats || stats.trades < 5) return null; // Need at least 5 trades for meaningful EV
+  if (!stats || stats.trades < (TOML?.ev_model.min_trades_for_ev ?? 5)) return null; // Need minimum trades for meaningful EV
 
   const ev = (stats.winRate / 100 * stats.avgWin) - ((100 - stats.winRate) / 100 * Math.abs(stats.avgLoss));
   console.log(`[EV] ${signal.symbol} ${patternKey}: EV=$${ev.toFixed(4)} (win ${stats.winRate}% of ${stats.trades})`);
@@ -1013,8 +1014,9 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     const baseAsset = signal.symbol.split('/')[0];
     const alert = await redis.get(`sentiment:alert:${baseAsset}`);
     if (alert && signal.action === 'BUY') {
-      const alertLower = alert.toLowerCase();
-      if (alertLower.includes('hack') || alertLower.includes('exploit') || alertLower.includes('rug') || alertLower.includes('sec') || alertLower.includes('crash') || alertLower.includes('delist') || alertLower.includes('lawsuit') || alertLower.includes('ban') || alertLower.includes('scam') || alertLower.includes('fraud') || alertLower.includes('investigation') || alertLower.includes('vulnerability')) {
+      const alertLower = (alert as string).toLowerCase();
+      const alertKeywords = TOML?.sentiment.alert_keywords ?? ['hack', 'exploit', 'rug', 'sec', 'crash', 'delist', 'lawsuit', 'ban', 'scam', 'fraud', 'investigation', 'vulnerability'];
+      if (alertKeywords.some((kw: string) => alertLower.includes(kw))) {
         return { pass: false, reason: `X alert: ${alert}` };
       }
     }
@@ -1036,8 +1038,9 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
 
   const risk = Math.abs(signal.entry_price - signal.stop_loss);
   const reward = Math.abs(signal.target_price - signal.entry_price);
-  if (risk > 0 && reward / risk < 1.3) {
-    return { pass: false, reason: `R/R ${(reward / risk).toFixed(2)} < 1.3` };
+  const minRR = TOML?.risk.min_risk_reward ?? 1.3;
+  if (risk > 0 && reward / risk < minRR) {
+    return { pass: false, reason: `R/R ${(reward / risk).toFixed(2)} < ${minRR}` };
   }
 
   // === EV-MODEL: Expected Value filter based on historical pattern performance ===
@@ -1177,13 +1180,13 @@ JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one s
     try { (searchConfig as any).search = { mode: 'auto' }; } catch {}
 
     const response = await ai.chat.completions.create({
-      model: 'grok-3-mini',
+      model: TOML?.ai.model ?? 'grok-3-mini',
       messages: [
         { role: 'system', content: 'You are RISK-BOT 9000, a trading risk analyst. Approve signals with clear technical setups (2+ confirming indicators or strong single signals like RSI < 30 or Bollinger squeeze). Reject if: no confirming indicators, risk/reward < 1.3, or signal clearly conflicts with higher timeframe trend. RSI 30-40 with volume confirmation is a valid setup. Your job is to balance capital protection with opportunity capture. Respond with a single minified JSON object only.' },
         { role: 'user', content: prompt },
       ],
-      temperature: 0.1,
-      max_tokens: 200,
+      temperature: TOML?.ai.temperature ?? 0.1,
+      max_tokens: TOML?.ai.max_tokens ?? 200,
       ...searchConfig,
     });
 
@@ -1228,13 +1231,14 @@ async function calculatePositionSize(signal: Signal): Promise<number> {
   // Use strategy-specific budget, not total capital
   const availableBudget = isGrid ? budget.gridRemaining : budget.signalRemaining;
 
-  // Deep value: 20% max, normal: 15%
-  const maxPct = isDeepValue ? 0.20 : CONFIG.MAX_POSITION_SIZE_PCT;
+  // Deep value: configurable max, normal: CONFIG max
+  const maxPct = isDeepValue ? (TOML?.capital.deep_value_max_pct ?? 0.20) : CONFIG.MAX_POSITION_SIZE_PCT;
   const maxPositionValue = Math.min(capital * maxPct, availableBudget);
 
-  // Deep value requires 80%+ confidence after AI blending
-  if (isDeepValue && signal.confidence < 0.80) {
-    console.log(`[SIZING] Deep value ${signal.symbol} rejected: confidence ${(signal.confidence * 100).toFixed(1)}% < 80%`);
+  // Deep value requires high confidence after AI blending
+  const deepValueMinConf = TOML?.capital.deep_value_min_confidence ?? 0.80;
+  if (isDeepValue && signal.confidence < deepValueMinConf) {
+    console.log(`[SIZING] Deep value ${signal.symbol} rejected: confidence ${(signal.confidence * 100).toFixed(1)}% < ${(deepValueMinConf * 100).toFixed(0)}%`);
     return 0;
   }
 
@@ -1243,7 +1247,7 @@ async function calculatePositionSize(signal: Signal): Promise<number> {
   const b = risk > 0 ? reward / risk : 1.5;
   const p = signal.confidence;
   const q = 1 - p;
-  const kellyFraction = Math.max(0, ((p * b - q) / b) * 0.5);
+  const kellyFraction = Math.max(0, ((p * b - q) / b) * (TOML?.capital.kelly_fraction_multiplier ?? 0.5));
   let positionValue = Math.min(capital * kellyFraction, maxPositionValue);
 
   // Ensure position clears NOTIONAL minimum.
@@ -1311,14 +1315,15 @@ async function executeBuy(signal: Signal): Promise<{
 
     // Order book spread check — skip illiquid pairs
     try {
-      const orderBook = await ex.fetchOrderBook(signal.symbol, 5);
+      const orderBook = await ex.fetchOrderBook(signal.symbol, TOML?.exits.orderbook_depth ?? 5);
       if (orderBook.bids?.length && orderBook.asks?.length) {
         const bestBid = orderBook.bids[0]?.[0];
         const bestAsk = orderBook.asks[0]?.[0];
         if (bestBid && bestAsk && bestBid > 0) {
           const spreadPct = ((bestAsk - bestBid) / bestBid) * 100;
-          if (spreadPct > 0.3) {
-            return { success: false, error: `Spread too wide: ${spreadPct.toFixed(3)}% (max 0.3%)` };
+          const maxSpread = TOML?.exits.max_spread_pct ?? 0.3;
+          if (spreadPct > maxSpread) {
+            return { success: false, error: `Spread too wide: ${spreadPct.toFixed(3)}% (max ${maxSpread}%)` };
           }
           console.log(`[AUTO-TRADE] ${signal.symbol} spread: ${spreadPct.toFixed(3)}%`);
         }
@@ -1345,7 +1350,7 @@ async function executeBuy(signal: Signal): Promise<{
     try {
       const slPrice = ex.priceToPrecision(signal.symbol, signal.stop_loss);
       // Stop-limit: trigger at SL price, limit slightly below to ensure fill
-      const slLimitPrice = ex.priceToPrecision(signal.symbol, signal.stop_loss * 0.995);
+      const slLimitPrice = ex.priceToPrecision(signal.symbol, signal.stop_loss * (TOML?.exits.native_sl_limit_offset ?? 0.995));
       const slOrder = await ex.createOrder(
         signal.symbol,
         'STOP_LOSS_LIMIT',
@@ -1597,7 +1602,7 @@ async function checkGridTriggers(): Promise<GridResult[]> {
         const distancePct = Math.abs(currentPrice - levelPrice) / levelPrice;
         const isBelow = currentPrice <= levelPrice;
 
-        if (isBelow || distancePct <= 0.0015) {
+        if (isBelow || distancePct <= (TOML?.grid.level_trigger_tolerance ?? 0.0015)) {
           console.log(`[GRID] ${symbol} hit level #${i}: $${currentPrice.toFixed(2)} -> $${levelPrice.toFixed(2)}`);
 
           // Check if we still have capacity — use capital allocator
@@ -1724,7 +1729,7 @@ export async function POST() {
     resetDailyStateIfNeeded();
 
     // Push shared risk config to Redis for Python engine
-    await redis.set('config:risk', JSON.stringify(CONFIG), 'EX', 3600);
+    await redis.set('config:risk', JSON.stringify(CONFIG), 'EX', TOML?.timing.regime_ttl_seconds ?? 3600);
 
     // STEP 1: Monitor existing positions (check SL/TP/trailing)
     const monitorResults = await monitorPositions();
@@ -1754,7 +1759,7 @@ export async function POST() {
       if (scannerRaw) {
         const scannerData = JSON.parse(scannerRaw);
         const gainers = (scannerData.gainers || [])
-          .filter((g: any) => (g.change_1h ?? g.change_pct ?? 0) >= 3.0);
+          .filter((g: any) => (g.change_1h ?? g.change_pct ?? 0) >= (TOML?.boosting.gainer_min_change_pct ?? 3.0));
         for (const g of gainers) {
           topMoverDirections[g.symbol] = g.change_1h ?? g.change_pct ?? 0;
         }
@@ -1770,7 +1775,7 @@ export async function POST() {
         const isBuy = p.signal.action === 'BUY';
         // Only boost if gainer direction matches signal: BUY on positive change, SELL on negative
         if ((isBuy && change > 0) || (!isBuy && change < 0)) {
-          p.signal.confidence = Math.min(0.95, (p.signal.confidence || 0) + 0.10);
+          p.signal.confidence = Math.min(0.95, (p.signal.confidence || 0) + (TOML?.boosting.gainer_confidence_boost ?? 0.10));
           p.signal.reason = (p.signal.reason || '') + ` | 🔥 GainerScanner top mover (${change > 0 ? '+' : ''}${change.toFixed(1)}%)`;
         }
       }
@@ -1783,7 +1788,7 @@ export async function POST() {
       if (telegramRaw) {
         const telegramData = JSON.parse(telegramRaw as string);
         if (telegramData.boost_enabled) {
-          const cutoff = Date.now() - 30 * 60 * 1000;
+          const cutoff = Date.now() - (TOML?.boosting.telegram_window_minutes ?? 30) * 60 * 1000;
           for (const sig of (telegramData.signals || [])) {
             const sigTime = new Date(sig.latest_at || telegramData.timestamp).getTime();
             if (sigTime > cutoff) {
@@ -1888,8 +1893,10 @@ export async function POST() {
       if (aiResult.adjustedSL) signal.stop_loss = aiResult.adjustedSL;
       if (aiResult.adjustedTP) signal.target_price = aiResult.adjustedTP;
 
-      // Blend TA + AI confidence (50% TA, 50% AI), rounded to avoid floating-point artifacts
-      signal.confidence = Math.round((signal.confidence * 0.5 + aiResult.aiConfidence * 0.5) * 10000) / 10000;
+      // Blend TA + AI confidence, rounded to avoid floating-point artifacts
+      const taWeight = TOML?.ai.ta_weight ?? 0.5;
+      const aiWeight = TOML?.ai.ai_weight ?? 0.5;
+      signal.confidence = Math.round((signal.confidence * taWeight + aiResult.aiConfidence * aiWeight) * 10000) / 10000;
 
       // Execute based on signal action
       const execution = signal.action === 'SELL'
