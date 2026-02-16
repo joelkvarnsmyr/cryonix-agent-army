@@ -18,6 +18,9 @@ export default {
 			}
 		},
 		extend: {
+			screens: {
+				'3xl': '2200px',
+			},
 			fontFamily: {
 				sans: ['var(--font-outfit)', 'system-ui', 'sans-serif'],
 				mono: ['var(--font-mono)', 'JetBrains Mono', 'monospace'],

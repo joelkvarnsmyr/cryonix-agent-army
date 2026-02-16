@@ -19,37 +19,37 @@ import { StaggerContainer, FadeUpItem } from '@/components/dashboard/motion-wrap
 export default function HomePage() {
   return (
     <DashboardLayout>
-      <StaggerContainer className="space-y-2.5">
-        {/* Row 1: System Vitals — key metrics at a glance */}
+      <StaggerContainer className="space-y-2 3xl:space-y-1.5">
+        {/* Row 1: System Vitals — always visible */}
         <FadeUpItem>
           <SystemVitals />
         </FadeUpItem>
 
-        {/* Row 2: System Architecture Flow */}
-        <FadeUpItem>
+        {/* Row 2: System Architecture — hidden on ultrawide to reclaim vertical space */}
+        <FadeUpItem className="3xl:hidden">
           <AgentFlow />
         </FadeUpItem>
 
-        {/* Row 3: Main Grid — Command Center */}
+        {/* Row 3: Main Grid — 3-col standard, wider center on ultrawide */}
         <FadeUpItem>
-          <div className="grid grid-cols-12 gap-2.5">
+          <div className="grid grid-cols-12 gap-2.5 3xl:gap-1.5">
             {/* Left Column: Portfolio + Evolution */}
-            <div className="col-span-12 lg:col-span-3 space-y-2.5">
+            <div className="col-span-12 lg:col-span-3 3xl:col-span-2 space-y-2.5 3xl:space-y-1.5">
               <PortfolioCard />
               <EvolutionPanel />
             </div>
 
-            {/* Center Column: Price Chart (hero) + Analytics beneath */}
-            <div className="col-span-12 lg:col-span-6 space-y-2.5">
+            {/* Center Column: Price Chart + sub-analytics */}
+            <div className="col-span-12 lg:col-span-6 3xl:col-span-7 space-y-2.5 3xl:space-y-1.5">
               <PriceChart />
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-2.5 3xl:gap-1.5">
                 <EquityCurve />
                 <PatternPerformance />
               </div>
             </div>
 
             {/* Right Column: Signal Pipeline + Positions + Config */}
-            <div className="col-span-12 lg:col-span-3 space-y-2.5">
+            <div className="col-span-12 lg:col-span-3 space-y-2.5 3xl:space-y-1.5">
               <SignalPipeline />
               <PositionsCard />
               <ConfigCard />
@@ -57,9 +57,9 @@ export default function HomePage() {
           </div>
         </FadeUpItem>
 
-        {/* Row 4: Analytics Deep Dive */}
+        {/* Row 4: Analytics — PnL + AI Impact side by side */}
         <FadeUpItem>
-          <div className="grid grid-cols-12 gap-2.5">
+          <div className="grid grid-cols-12 gap-2.5 3xl:gap-1.5">
             <div className="col-span-12 lg:col-span-6">
               <PnlChart />
             </div>
@@ -71,11 +71,11 @@ export default function HomePage() {
 
         {/* Row 5: Process Log + Activity + Health */}
         <FadeUpItem>
-          <div className="grid grid-cols-12 gap-2.5">
+          <div className="grid grid-cols-12 gap-2.5 3xl:gap-1.5">
             <div className="col-span-12 lg:col-span-8">
               <ProcessViewer />
             </div>
-            <div className="col-span-12 lg:col-span-4 space-y-2.5">
+            <div className="col-span-12 lg:col-span-4 space-y-2.5 3xl:space-y-1.5">
               <TradeActivity />
               <HealthGrid />
             </div>
