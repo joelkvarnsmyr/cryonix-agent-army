@@ -52,7 +52,7 @@ const CONFIG = {
   TRADING_MODE: 'spot' as 'spot' | 'margin' | 'future',
   MARGIN_TYPE: (process.env.MARGIN_TYPE || 'cross') as 'cross' | 'isolated',
   DEFAULT_LEVERAGE: parseInt(process.env.DEFAULT_LEVERAGE || '3'),
-  MIN_ORDER_VALUE: 1.0,            // Global floor — actual minimum fetched per-pair from Binance
+  MIN_ORDER_VALUE: 7.50,           // Absolute floor for any order (Binance NOTIONAL ~$5 + buffer)
   TRAILING_STOP_PCT: 3.0,          // 3% trailing stop — let positions breathe
   MAX_PENDING_QUEUE: 30,           // Auto-trim queue beyond this
   AI_VALIDATION: true,             // Use GROK AI for signal validation
@@ -423,7 +423,65 @@ interface MonitorResult {
   orderId?: string;
 }
 
+// ============================================================================
+// BALANCE RECONCILIATION — detect phantom positions & orphaned coins
+// ============================================================================
+
+let lastReconcileTime = 0;
+const RECONCILE_INTERVAL_MS = 10 * 60 * 1000; // Every 10 minutes
+
+async function reconcilePositions(): Promise<void> {
+  const now = Date.now();
+  if (now - lastReconcileTime < RECONCILE_INTERVAL_MS) return;
+  lastReconcileTime = now;
+
+  try {
+    const positions = await getOpenPositions();
+    if (positions.length === 0) return;
+
+    const ex = getExchange();
+    const bal = await ex.fetchBalance({ recvWindow: 10000 });
+    const balTotal = (bal as any).total as Record<string, number>;
+
+    for (const pos of positions) {
+      const baseAsset = pos.symbol.split('/')[0];
+      const actualQty = balTotal[baseAsset] || 0;
+
+      if (actualQty < pos.quantity * 0.1) {
+        // Binance has <10% of what Redis claims — phantom position
+        console.warn(`[RECONCILE] PHANTOM detected: ${pos.symbol} Redis=${pos.quantity}, Binance=${actualQty}. Removing.`);
+        const removed = await removePosition(pos.symbol);
+        if (removed) {
+          const estimatedPnl = (pos.stopLoss - pos.entryPrice) * pos.quantity;
+          await addDailyPnl(estimatedPnl);
+          await logTrade({
+            symbol: pos.symbol,
+            side: 'SELL',
+            quantity: String(pos.quantity),
+            entryPrice: String(pos.entryPrice),
+            exitPrice: String(pos.stopLoss),
+            pnl: String(estimatedPnl),
+            confidence: String(pos.confidence),
+            pattern: pos.pattern,
+            reasoning: `Phantom position reconciled: Binance balance ${actualQty} vs Redis ${pos.quantity}`,
+            status: 'CLOSED',
+            agentId: 'auto-trader',
+          });
+        }
+      } else if (actualQty < pos.quantity * 0.9) {
+        // Partial mismatch — log warning but don't auto-fix
+        console.warn(`[RECONCILE] Quantity mismatch: ${pos.symbol} Redis=${pos.quantity}, Binance=${actualQty}`);
+      }
+    }
+  } catch (err) {
+    console.warn('[RECONCILE] Balance check failed (non-fatal):', err instanceof Error ? err.message : '');
+  }
+}
+
 async function monitorPositions(): Promise<MonitorResult[]> {
+  // Run periodic reconciliation
+  await reconcilePositions();
+
   const positions = await getOpenPositions();
   if (positions.length === 0) return [];
 
@@ -432,6 +490,81 @@ async function monitorPositions(): Promise<MonitorResult[]> {
 
   for (const pos of positions) {
     try {
+      // ── Native SL reconciliation ──────────────────────────────────
+      // Check if Binance already filled the safety-net stop-loss order.
+      // If so, the coins are already sold — clean up Redis + log trade.
+      if (pos.nativeSlOrderId) {
+        try {
+          const slOrder = await ex.fetchOrder(pos.nativeSlOrderId, pos.symbol);
+          if (slOrder.status === 'closed' && slOrder.filled && slOrder.filled > 0) {
+            const fillPrice = slOrder.average || slOrder.price || pos.stopLoss;
+            const realizedPnl = pos.side === 'SELL'
+              ? (pos.entryPrice - fillPrice) * slOrder.filled
+              : (fillPrice - pos.entryPrice) * slOrder.filled;
+            const pnlPct = pos.side === 'SELL'
+              ? ((pos.entryPrice - fillPrice) / pos.entryPrice) * 100
+              : ((fillPrice - pos.entryPrice) / pos.entryPrice) * 100;
+
+            console.log(`[RECONCILE] Native SL filled for ${pos.symbol}: ${slOrder.filled} @ $${fillPrice} | PnL $${realizedPnl.toFixed(4)} (${pnlPct.toFixed(2)}%)`);
+
+            await removePosition(pos.symbol);
+            await addDailyPnl(realizedPnl);
+
+            await logTrade({
+              symbol: pos.symbol,
+              side: pos.side === 'SELL' ? 'BUY' : 'SELL',
+              quantity: String(slOrder.filled),
+              entryPrice: String(pos.entryPrice),
+              exitPrice: String(fillPrice),
+              pnl: String(realizedPnl),
+              confidence: String(pos.confidence),
+              pattern: pos.pattern,
+              reasoning: `Native SL triggered on Binance (order ${pos.nativeSlOrderId} filled @ $${fillPrice})`,
+              status: 'CLOSED',
+              agentId: 'auto-trader',
+            });
+
+            try {
+              await archivePosition({
+                symbol: pos.symbol,
+                side: pos.side,
+                quantity: String(slOrder.filled),
+                entryPrice: String(pos.entryPrice),
+                exitPrice: String(fillPrice),
+                stopLoss: String(pos.stopLoss),
+                takeProfit: String(pos.takeProfit),
+                pnl: String(realizedPnl),
+                pnlPercent: String(pnlPct),
+                fees: '0',
+                holdingPeriod: Math.round((Date.now() - new Date(pos.openedAt || Date.now()).getTime()) / 1000),
+                openedAt: new Date(pos.openedAt || Date.now()),
+                closedAt: new Date(),
+                closeReason: 'SOLD_SL',
+                pattern: pos.pattern,
+                metadata: { nativeSlFill: true, nativeSlOrderId: pos.nativeSlOrderId, fillPrice },
+                agentId: 'auto-trader',
+              });
+            } catch (archiveErr) {
+              console.warn(`[RECONCILE] position_history archive failed:`, archiveErr);
+            }
+
+            results.push({
+              symbol: pos.symbol,
+              action: 'SOLD_SL',
+              currentPrice: fillPrice,
+              pnl: realizedPnl,
+              pnlPct,
+              reason: `Native SL filled on Binance @ $${fillPrice}`,
+            });
+            continue; // Skip normal monitoring for this position
+          }
+        } catch (slCheckErr) {
+          // Non-fatal: order may not exist yet or API glitch
+          console.warn(`[RECONCILE] SL order check failed for ${pos.symbol}:`, slCheckErr instanceof Error ? slCheckErr.message : '');
+        }
+      }
+      // ── End native SL reconciliation ──────────────────────────────
+
       const ticker = await ex.fetchTicker(pos.symbol);
       const currentPrice = ticker.last || 0;
       if (currentPrice === 0) continue;
@@ -460,9 +593,17 @@ async function monitorPositions(): Promise<MonitorResult[]> {
         }
       }
 
+      // Proactive dust prevention: sell while we still can
+      const currentValue = currentPrice * pos.quantity;
+
       // Check exit conditions
       let shouldSell = false;
       let exitReason = '';
+
+      if (currentValue < CONFIG.MIN_ORDER_VALUE && currentValue >= 5.0) {
+        shouldSell = true;
+        exitReason = `Dust prevention: value $${currentValue.toFixed(2)} approaching NOTIONAL minimum`;
+      }
 
       if (pos.side === 'SELL') {
         // SHORT position: exit by buying back
@@ -1087,11 +1228,10 @@ async function calculatePositionSize(signal: Signal): Promise<number> {
   const kellyFraction = Math.max(0, ((p * b - q) / b) * 0.5);
   let positionValue = Math.min(capital * kellyFraction, maxPositionValue);
 
-  // Ensure position clears NOTIONAL minimum (with 1.5x buffer).
+  // Ensure position clears NOTIONAL minimum.
   // With small capital, Kelly often produces values below NOTIONAL.
-  const SAFE_MIN = 7.50;  // Binance NOTIONAL ~$5 × 1.5 buffer
-  if (positionValue < SAFE_MIN && availableBudget >= SAFE_MIN) {
-    positionValue = SAFE_MIN;
+  if (positionValue < CONFIG.MIN_ORDER_VALUE && availableBudget >= CONFIG.MIN_ORDER_VALUE) {
+    positionValue = CONFIG.MIN_ORDER_VALUE;
   }
 
   if (isDeepValue) {
@@ -1133,11 +1273,18 @@ async function executeBuy(signal: Signal): Promise<{
     const quantity = ex.amountToPrecision(signal.symbol, rawQuantity);
     const qty = parseFloat(quantity);
 
+    // Post-rounding check: amountToPrecision() can round down enough to drop below minimum
+    const postRoundValue = qty * signal.entry_price;
+    if (postRoundValue < CONFIG.MIN_ORDER_VALUE) {
+      return { success: false, error: `Post-rounding value $${postRoundValue.toFixed(2)} < $${CONFIG.MIN_ORDER_VALUE} min` };
+    }
+
     const positionValue = qty * signal.entry_price;
     // Use pair's actual Binance NOTIONAL minimum with 50% buffer.
     // Without buffer, a $5.00 buy that drops 5% becomes $4.75 → unsellable dust.
-    const pairMinNotional = market.limits?.cost?.min || CONFIG.MIN_ORDER_VALUE;
-    const safeMinNotional = pairMinNotional * 1.5;
+    // Default to $5 (not CONFIG.MIN_ORDER_VALUE) when market data is missing.
+    const pairMinNotional = market.limits?.cost?.min || 5.0;
+    const safeMinNotional = Math.max(pairMinNotional * 1.5, CONFIG.MIN_ORDER_VALUE);
     if (positionValue < safeMinNotional) {
       return { success: false, error: `Value $${positionValue.toFixed(2)} < $${safeMinNotional.toFixed(2)} safe min (${signal.symbol}, notional=${pairMinNotional})` };
     }
