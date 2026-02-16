@@ -653,3 +653,5 @@ export interface Candle extends OHLCV {
   symbol: string;
   timeframe: string;
 }
+
+export { RISK_CONFIG, type RiskConfig } from './risk-config';

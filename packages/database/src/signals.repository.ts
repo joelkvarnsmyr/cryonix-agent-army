@@ -146,6 +146,26 @@ export async function getSignalStats(options?: {
 }
 
 /**
+ * Mark the most recent unexecuted signal for a symbol/action as executed
+ */
+export async function markLatestSignalExecuted(symbol: string, action: string): Promise<void> {
+    const [latest] = await db
+        .select({ id: signals.id })
+        .from(signals)
+        .where(and(
+            eq(signals.symbol, symbol),
+            eq(signals.executed, false),
+            eq(signals.action, action)
+        ))
+        .orderBy(desc(signals.id))
+        .limit(1);
+
+    if (latest) {
+        await markSignalExecuted(latest.id);
+    }
+}
+
+/**
  * Delete old executed signals (cleanup)
  */
 export async function cleanupOldSignals(daysToKeep: number = 30): Promise<number> {

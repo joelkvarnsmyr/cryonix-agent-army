@@ -68,21 +68,27 @@ async function checkEngine(): Promise<CheckResult> {
 
 async function getTradingData() {
   try {
-    const [dailyRaw, positionsRaw, regimeRaw] = await Promise.all([
+    const [dailyRaw, positionsRaw, regimeRaw, riskStateRaw] = await Promise.all([
       redis.get('daily:state'),
       redis.get('positions:open'),
       redis.get('market:regime'),
+      redis.get('risk:portfolio_state'),
     ]);
 
     const daily = dailyRaw ? JSON.parse(dailyRaw as string) : null;
     const positions = positionsRaw ? JSON.parse(positionsRaw as string) : [];
     const today = new Date().toDateString();
 
+    let capital = 0;
+    try {
+      if (riskStateRaw) capital = JSON.parse(riskStateRaw as string).total_capital || 0;
+    } catch {}
+
     return {
       open_positions: Array.isArray(positions) ? positions.length : 0,
       daily_trades: daily?.date === today ? (daily.tradesExecuted ?? 0) : 0,
       daily_pnl: daily?.date === today ? (daily.dailyPnl ?? 0) : 0,
-      capital: 0, // populated below if possible
+      capital,
       regime: (regimeRaw as string) || 'unknown',
     };
   } catch {

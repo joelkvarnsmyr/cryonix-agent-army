@@ -3,7 +3,7 @@ import { RiskManagerAgent, type RiskCheckRequest } from '@cryonix/agents';
 import { db, riskChecks } from '@cryonix/database';
 import { publishToWebSocket } from '@/lib/ws-publisher';
 import type { WSPayloadRisk } from '@cryonix/types';
-import { RiskCheckRequestSchema } from '@cryonix/types';
+import { RiskCheckRequestSchema, RISK_CONFIG } from '@cryonix/types';
 
 // Singleton Risk Manager instance
 let riskManager: RiskManagerAgent | null = null;
@@ -122,11 +122,11 @@ export async function GET(request: NextRequest) {
             data: {
                 status: manager.getStatus(),
                 config: {
-                    maxPortfolioRisk: '10%',
+                    maxPortfolioRisk: `${RISK_CONFIG.MAX_DAILY_LOSS_PCT * 100}%`,
                     maxPositionRisk: '2%',
-                    maxPositionSize: '30%',
-                    maxOpenPositions: 5,
-                    dailyLossLimit: '10%',
+                    maxPositionSize: `${RISK_CONFIG.MAX_POSITION_SIZE_PCT * 100}%`,
+                    maxOpenPositions: RISK_CONFIG.MAX_OPEN_POSITIONS,
+                    dailyLossLimit: `${RISK_CONFIG.MAX_DAILY_LOSS_PCT * 100}%`,
                     useHalfKelly: true,
                 },
             },

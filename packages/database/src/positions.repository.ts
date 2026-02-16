@@ -262,6 +262,36 @@ export async function closePosition(
 }
 
 /**
+ * Close an open position by symbol (for auto-trade sync where we don't have the Postgres ID)
+ */
+export async function closePositionBySymbol(
+    symbol: string,
+    exitPrice: string,
+    pnl: string,
+    pnlPercent: string,
+    closeReason?: string,
+): Promise<void> {
+    const [openPos] = await db
+        .select()
+        .from(positions)
+        .where(and(eq(positions.symbol, symbol), eq(positions.status, 'OPEN')))
+        .limit(1);
+
+    if (!openPos) return;
+
+    await db
+        .update(positions)
+        .set({
+            status: 'CLOSED',
+            currentPrice: exitPrice,
+            pnl,
+            pnlPercent,
+            closedAt: new Date(),
+        })
+        .where(eq(positions.id, openPos.id));
+}
+
+/**
  * Get position statistics
  */
 export async function getPositionStats(options?: {
