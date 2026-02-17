@@ -108,45 +108,29 @@ async function cmdStatus() {
 
 async function cmdPositions() {
   try {
-    const r = await query(`
-      SELECT symbol, quantity, entry_price, current_price, pnl, status,
-             stop_loss, take_profit, opened_at
-      FROM positions WHERE status = 'OPEN' ORDER BY opened_at DESC LIMIT 10
-    `);
+    const rd = await connectRedis();
+    const data = await rd.get('positions:open');
+    const positions = data ? JSON.parse(data) : [];
+    const maxPos = getToml('limits', 'max_open_positions', 3);
 
-    if (r.rows.length === 0) return '📭 No open positions';
+    if (!Array.isArray(positions) || positions.length === 0) return '📭 No open positions';
 
-    const lines = r.rows.map(p => {
-      const pnl = parseFloat(p.pnl || 0);
-      const icon = pnl >= 0 ? '🟢' : '🔴';
+    const lines = positions.map(p => {
+      const entry = parseFloat(p.entryPrice || 0);
+      const current = parseFloat(p.currentPrice || p.entryPrice || 0);
+      const pnlPct = p.pnlPct || 0;
+      const priceFmt = entry < 1 ? 6 : entry < 100 ? 4 : 2;
+      const icon = pnlPct > 0.5 ? '🟢' : pnlPct < -0.5 ? '🔴' : '⚪';
+      const sl = p.stopLoss ? `$${parseFloat(p.stopLoss).toFixed(priceFmt)}` : '-';
+      const tp = p.takeProfit ? `$${parseFloat(p.takeProfit).toFixed(priceFmt)}` : '-';
       return `${icon} <b>${p.symbol}</b>\n` +
-        `   Entry: $${parseFloat(p.entry_price).toFixed(4)} | Now: $${parseFloat(p.current_price || p.entry_price).toFixed(4)}\n` +
-        `   P&L: $${pnl.toFixed(2)} | Qty: ${parseFloat(p.quantity).toFixed(6)}\n` +
-        `   SL: $${parseFloat(p.stop_loss || 0).toFixed(4)} | TP: $${parseFloat(p.take_profit || 0).toFixed(4)}`;
+        `   Entry: $${entry.toFixed(priceFmt)} → Now: $${current.toFixed(priceFmt)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)\n` +
+        `   Qty: ${parseFloat(p.quantity).toFixed(4)} · SL: ${sl} · TP: ${tp}`;
     });
 
-    const maxPos = getToml('limits', 'max_open_positions', 3);
-    return `📊 <b>Open Positions (${r.rows.length}/${maxPos})</b>\n\n${lines.join('\n\n')}`;
+    return `📊 <b>Open Positions (${positions.length}/${maxPos})</b>\n\n${lines.join('\n\n')}`;
   } catch (e) {
-    // Try Redis fallback
-    try {
-      const rd = await connectRedis();
-      const data = await rd.get('positions:open');
-      if (!data) return '📭 No open positions';
-      const positions = JSON.parse(data);
-      const count = Object.keys(positions).length;
-      if (count === 0) return '📭 No open positions';
-      const maxPos = getToml('limits', 'max_open_positions', 3);
-
-      const lines = Object.entries(positions).map(([sym, p]) => {
-        const pnl = p.pnl || 0;
-        const icon = pnl >= 0 ? '🟢' : '🔴';
-        return `${icon} <b>${sym}</b>: $${p.entryPrice?.toFixed(4) || '?'} → P&L: $${pnl.toFixed(2)}`;
-      });
-      return `📊 <b>Open Positions (${count}/${maxPos})</b>\n\n${lines.join('\n')}`;
-    } catch {
-      return `❌ Could not fetch positions: ${e.message}`;
-    }
+    return `❌ Could not fetch positions: ${e.message}`;
   }
 }
 
@@ -252,26 +236,35 @@ async function cmdSignals() {
 
 async function cmdRisk() {
   try {
-    const positions = await query(`
-      SELECT COUNT(*) as count, 
-             SUM(ABS(pnl)) as exposure,
-             SUM(pnl) as unrealized_pnl
-      FROM positions WHERE status = 'OPEN'
-    `);
+    const rd = await connectRedis();
 
+    // Positions from Redis (source of truth)
+    const posRaw = await rd.get('positions:open');
+    const positions = posRaw ? JSON.parse(posRaw) : [];
+    const openCount = Array.isArray(positions) ? positions.length : 0;
+    const unrealized = positions.reduce((sum, p) => {
+      const entry = parseFloat(p.entryPrice || 0);
+      const current = parseFloat(p.currentPrice || entry);
+      const qty = parseFloat(p.quantity || 0);
+      return sum + (current - entry) * qty;
+    }, 0);
+
+    // Daily realized from Postgres
     const dailyLoss = await query(`
       SELECT SUM(pnl) as daily_pnl
-      FROM trades 
+      FROM trades
       WHERE status = 'CLOSED' AND timestamp > NOW() - INTERVAL '24 hours'
     `);
-
-    const p = positions.rows[0];
     const dailyPnl = parseFloat(dailyLoss.rows[0]?.daily_pnl || 0);
-    const openCount = parseInt(p.count || 0);
-    const unrealized = parseFloat(p.unrealized_pnl || 0);
+
+    // Capital
+    const riskRaw = await rd.get('risk:portfolio_state');
+    const riskState = riskRaw ? JSON.parse(riskRaw) : null;
+    const capital = parseFloat(riskState?.total_capital || 0);
 
     const maxDailyLossPct = getToml('risk', 'max_daily_loss_pct', 0.05);
     const maxOpenPos = getToml('limits', 'max_open_positions', 3);
+    const dailyLimit = capital > 0 ? (capital * maxDailyLossPct).toFixed(2) : '?';
     const riskLevel = dailyPnl < -10 ? '🔴 HIGH' : dailyPnl < -5 ? '🟡 MODERATE' : '🟢 LOW';
 
     return `⚠️ <b>Risk Dashboard</b>\n\n` +
@@ -279,7 +272,8 @@ async function cmdRisk() {
       `Open Positions: ${openCount}/${maxOpenPos}\n` +
       `Unrealized P&L: $${unrealized.toFixed(2)}\n` +
       `Daily Realized: $${dailyPnl.toFixed(2)}\n\n` +
-      `Max Daily Loss: ${(maxDailyLossPct * 100).toFixed(0)}% of capital`;
+      `💰 Capital: $${capital.toFixed(2)}\n` +
+      `Max Daily Loss: ${(maxDailyLossPct * 100).toFixed(0)}% (-$${dailyLimit})`;
   } catch (e) {
     return `❌ Could not fetch risk data: ${e.message}`;
   }
@@ -363,13 +357,14 @@ async function cmdAudit() {
     const ex = execStats.rows[0];
     const totalTrades = parseInt(ex.total_trades || 0);
 
-    // 4. Open positions
-    const openPos = await query(`SELECT COUNT(*) as cnt FROM positions WHERE status = 'OPEN'`);
-
-    // 5. Redis queue state
+    // 4. Open positions (from Redis — source of truth for active positions)
+    let openPosCount = 0;
     let pendingQueue = 0, approvedQueue = 0;
     try {
       const rd = await connectRedis();
+      const posRaw = await rd.get('positions:open');
+      const positions = posRaw ? JSON.parse(posRaw) : [];
+      openPosCount = Array.isArray(positions) ? positions.length : 0;
       pendingQueue = await rd.llen('trades:pending');
       approvedQueue = await rd.llen('trades:approved');
     } catch {}
@@ -398,9 +393,10 @@ async function cmdAudit() {
     const issues = [];
     if (buySignals === 0) issues.push('⚠️ No BUY signals in 24h');
     else if (buyPct < 5) issues.push(`⚠️ Only ${buyPct}% BUY signals (market overbought?)`);
-    if (totalTrades === 0) issues.push('⚠️ No trades executed in 24h');
-    if (pendingQueue === 0 && buySignals > 0) issues.push('⚠️ BUY signals not reaching Redis queue');
-    if (parseInt(openPos.rows[0].cnt) === 0 && totalTrades === 0) issues.push('⚠️ No open positions and no trades');
+    if (totalTrades === 0 && buySignals > 50) issues.push('⚠️ No trades executed despite signals');
+    if (pendingQueue === 0 && approvedQueue === 0 && buySignals > 50 && totalTrades === 0)
+      issues.push('⚠️ Pipeline stalled: signals not reaching queue');
+    if (openPosCount === 0 && totalTrades === 0) issues.push('⚠️ No open positions and no trades');
 
     const patternLines = patterns.rows.map(p =>
       `  ${p.pattern}: ${p.cnt}`
@@ -421,7 +417,7 @@ async function cmdAudit() {
       `🧩 <b>Top Patterns</b>\n${patternLines}\n\n` +
       `📊 <b>Execution</b>\n` +
       `  Trades: ${totalTrades}/${maxTradesPerDay} · P&L: $${parseFloat(ex.total_pnl || 0).toFixed(2)}\n` +
-      `  Positions: ${openPos.rows[0].cnt}/${maxPos}\n` +
+      `  Positions: ${openPosCount}/${maxPos}\n` +
       `  Queue: ${pendingQueue} pending · ${approvedQueue} approved\n\n` +
       `🔔 <b>Last BUY:</b> ${lastBuyStr}` +
       issueBlock;
@@ -453,7 +449,8 @@ async function cmdGainers() {
     const fmtRow = (r) => {
       const sym = r.symbol.split('/')[0];
       const arrow = r.change_1h > 0 ? '🟢' : r.change_1h < -2 ? '🔴' : '⚪';
-      return `${arrow} <code>${sym.padEnd(6)}</code> ${r.change_1h > 0 ? '+' : ''}${r.change_1h}% (4h: ${r.change_4h > 0 ? '+' : ''}${r.change_4h}%)`;
+      const d24 = r.change_24h != null ? ` · 24h: ${r.change_24h > 0 ? '+' : ''}${r.change_24h}%` : '';
+      return `${arrow} <code>${sym.padEnd(6)}</code> ${r.change_1h > 0 ? '+' : ''}${r.change_1h}% (4h: ${r.change_4h > 0 ? '+' : ''}${r.change_4h}%${d24})`;
     };
 
     const gainers = (data.gainers || []).slice(0, 5).map(fmtRow).join('\n');
@@ -610,8 +607,12 @@ const COMMANDS = {
 
 async function handleCommand(text, chatId) {
   const cmd = text.split(/\s+/)[0].toLowerCase().replace(/@\w+$/, '');
+  if (!cmd.startsWith('/')) return;
   const handler = COMMANDS[cmd];
-  if (!handler) return;
+  if (!handler) {
+    await sendMessage(`Unknown command: <code>${cmd}</code>\nType /help for available commands.`, chatId);
+    return;
+  }
 
   try {
     const response = typeof handler === 'function' ? await handler() : handler;
