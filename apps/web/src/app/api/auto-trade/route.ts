@@ -425,7 +425,7 @@ async function removePosition(symbol: string): Promise<OpenPosition | null> {
 
 interface MonitorResult {
   symbol: string;
-  action: 'HOLD' | 'SOLD_TP' | 'SOLD_SL' | 'SOLD_TRAILING' | 'ERROR';
+  action: 'HOLD' | 'SOLD_TP' | 'SOLD_SL' | 'SOLD_TRAILING' | 'SOLD_STAGNATION' | 'SOLD_DUST' | 'ERROR';
   currentPrice?: number;
   pnl?: number;
   pnlPct?: number;
