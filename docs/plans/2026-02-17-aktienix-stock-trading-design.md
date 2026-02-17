@@ -246,29 +246,56 @@ macro-engine:
 | `MacroCorrelationTank` | **New**. Lightweight Python process, Yahoo Finance / Alpaca → Redis. |
 | Dashboard | **Existing** + asset_class tab/filter in UI components. |
 
-## Alpaca Markets: Key Constraints
+## Alpaca Markets: Broker Analysis
 
-### Swedish Access
+### Swedish Access (Validated)
+- **No minimum capital requirement** — accounts can be opened and funded with any amount.
+- **Funding for Swedish users**: CurrencyCloud integration provides local bank transfer
+  (Swedish bankgiro/IBAN). 1.5% transaction fee, capped at $40.
 - **Paper trading**: Works globally, email signup only, no restrictions.
-- **Live trading**: Requires $30,000 minimum for non-US residents via wire transfer.
-- **EU expansion**: Alpaca acquired WealthKernel (UK/EU broker) in 2025. May lower barriers in 2026.
-- **Alternative**: Interactive Brokers has API, no minimum for EU, can go live with 100k SEK directly.
+- **Live trading**: Available from Sweden. No $30k barrier (earlier reports were incorrect).
+- **Commission-free**: $0 commission on US stocks and ETFs.
 
-### Free Tier Limitations
-- **30 WebSocket symbols max** (sufficient for 15 stocks)
-- **IEX data only** (single exchange, ~2-5% market volume) for real-time
-- **15-min delayed SIP data** for historical bars
-- **200 requests/min** rate limit
-- For a 60s scan of 15 symbols, this is adequate.
+### Free Tier Data (IEX Feed)
+- **IEX real-time data** — free, no capital requirement (unlike IBKR's $500 minimum).
+- **IEX covers ~2-3% of US volume** — not full NBBO, but sufficient for swing trading.
+- **30 WebSocket symbols max** (sufficient for 15 stocks).
+- **200 requests/min** rate limit. For a 60s scan of 15 symbols, this is adequate.
+- **SIP feed** (full market) available for $99/month — not needed initially.
 
 ### Order Types
-- Market, Limit, Stop, Stop-Limit, Trailing Stop all supported
-- **Bracket orders** (entry + SL + TP as one atomic order) — excellent fit
-- Trailing stops cannot be nested in bracket orders — manage separately
+- Market, Limit, Stop, Stop-Limit, Trailing Stop all supported.
+- **Bracket orders** (entry + SL + TP as one atomic order) — excellent fit.
+- Trailing stops cannot be nested in bracket orders — manage separately.
 
 ### Fractional Shares
-- Minimum order: $1.00 notional
-- Can buy $7 of NVDA — good for small positions
+- Minimum order: $1.00 notional.
+- Can buy $7 of NVDA — ideal for small positions and portfolio diversification.
+
+### Regulatory Constraints
+
+**PDT (Pattern Day Trader) Rules:**
+- Accounts under $25,000 are limited to 3 day-trades per 5 business days.
+- Our bot must be swing-oriented (hold positions overnight) or strictly limit day trades.
+- Config enforces this: `stocks.limits.max_day_trades_per_week = 3`.
+
+**K4 Tax Reporting (Swedish):**
+- Alpaca does not report to Skatteverket. Manual K4 filing required.
+- Each trade must be declared: acquisition cost (genomsnittsmetoden), USD→SEK conversion
+  at transaction-day exchange rate.
+- The bot must log all data needed for K4 export: entry date, exit date, SEK cost basis,
+  exchange rate, profit/loss in SEK.
+- At small scale (~500 SEK) the administrative burden outweighs the tax amount.
+- **Future migration to IBKR ISK** recommended when capital exceeds ~20-30k SEK to
+  eliminate K4 burden and gain schablonbeskattning benefits.
+
+### IBKR Migration Path
+When capital exceeds ~$2,000-3,000 USD:
+- Migrate to Interactive Brokers ISK for tax optimization (~1% annual vs 30% on gains).
+- The `IExchangeAdapter` abstraction in the design enables broker migration without
+  rewriting business logic.
+- IBKR requires $500 minimum for API market data — easily met at that capital level.
+- IBKR ISK is NOT subject to US PDT rules (Swedish/EU jurisdiction).
 
 ## Implementation Phases
 
@@ -282,7 +309,8 @@ macro-engine:
 | **5** | `packages/macro-engine/` — MacroCorrelationTank + SPY/VIX filter | Medium |
 | **6** | Dashboard asset-class tab/filter | Small |
 | **7** | Paper trade 30 days, validate signal quality | — |
-| **8** | Live trading (when broker access resolves) | — |
+| **8** | Live trading with real capital (Alpaca, from Sweden, no barriers) | — |
+| **9** | When capital > 20k SEK: evaluate IBKR ISK migration for tax benefits | — |
 
 ## Risk Considerations
 
@@ -290,5 +318,7 @@ macro-engine:
 - **Process isolation via Docker**: A crash in stocks-engine cannot affect crypto.
 - **Macro filter is fail-safe**: If macro-engine dies, trading continues without macro data (configurable: fail-open or fail-closed).
 - **Paper first**: All stock trading starts in paper mode. No live money until validated over 30+ days.
-- **PDT rules**: US Pattern Day Trader rules apply if paper account < $25k. Limit to 3 day-trades per 5 business days.
+- **PDT rules**: Accounts under $25k limited to 3 day-trades per 5 business days. Bot designed as swing trader.
 - **Overnight gap risk**: Stocks can gap through stop-loss at market open. Unlike 24/7 crypto where stops execute immediately.
+- **K4 tax burden**: Bot must log full trade history with SEK conversion for annual K4 filing. Consider IBKR ISK migration when capital grows.
+- **IEX data quality**: Free IEX feed is not NBBO. Use limit orders (not market) to mitigate price risk.
