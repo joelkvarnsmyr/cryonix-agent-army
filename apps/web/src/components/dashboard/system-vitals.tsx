@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@cryonix/ui';
 import {
   Wallet, TrendingUp, TrendingDown, Crosshair, Radio,
-  Activity, Zap, Clock, ChevronUp, ChevronDown
+  Activity, Clock, ChevronUp, ChevronDown, Gauge
 } from 'lucide-react';
 import { usePortfolio, useMultipleTickers } from '@/hooks/useMarketData';
 import { useAutoTrade } from '@/hooks/useAutoTrade';
@@ -116,6 +116,12 @@ export function SystemVitals() {
   const isTestnet = autoTrade?.isTestnet ?? true;
   const mode = autoTrade?.config?.TRADING_MODE || 'spot';
   const leverage = autoTrade?.config?.DEFAULT_LEVERAGE || 1;
+  const fearGreed = (autoTrade as any)?.cmc?.fearGreed;
+  const fgValue = fearGreed?.value ?? null;
+  const fgLabel = fearGreed?.label || '';
+  const fgColor = fgValue !== null
+    ? fgValue <= 25 ? '#ef4444' : fgValue <= 45 ? '#f59e0b' : fgValue <= 55 ? '#a78bfa' : fgValue <= 75 ? '#10b981' : '#22c55e'
+    : '#6b7280';
 
   // Filter key tickers
   const watchlist = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'DOT/USDT', 'AVAX/USDT'];
@@ -165,6 +171,15 @@ export function SystemVitals() {
               icon={Activity}
               color={healthyCount === totalServices ? '#10b981' : '#f59e0b'}
             />
+            {fgValue !== null && (
+              <VitalMetric
+                label="Fear & Greed"
+                value={`${fgValue}`}
+                subValue={fgLabel}
+                icon={Gauge}
+                color={fgColor}
+              />
+            )}
           </div>
 
           {/* Right: Live prices + clock + env badge */}

@@ -2169,5 +2169,15 @@ export async function GET() {
     instanceId: INSTANCE_ID,
     lockHolder: await redis.get(INSTANCE_LOCK_KEY),
     toml: fullConfig(),
+    cmc: await (async () => {
+      try {
+        const fgRaw = await redis.get('cmc:fear_greed');
+        const globalRaw = await redis.get('cmc:global');
+        return {
+          fearGreed: fgRaw ? JSON.parse(fgRaw as string) : null,
+          global: globalRaw ? JSON.parse(globalRaw as string) : null,
+        };
+      } catch { return null; }
+    })(),
   });
 }

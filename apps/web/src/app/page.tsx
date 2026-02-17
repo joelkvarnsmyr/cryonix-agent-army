@@ -67,8 +67,8 @@ export default function HomePage() {
             <div className="col-span-12 lg:col-span-6 3xl:col-span-7 space-y-2.5 3xl:space-y-1.5 min-w-0">
               <PriceChart />
               <div className="grid grid-cols-2 gap-2.5 3xl:gap-1.5 min-w-0">
-                <EquityCurve />
-                <PatternPerformance />
+                <div className="min-w-0 isolate overflow-hidden"><EquityCurve /></div>
+                <div className="min-w-0 isolate overflow-hidden"><PatternPerformance /></div>
               </div>
             </div>
 

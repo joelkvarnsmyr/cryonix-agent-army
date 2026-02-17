@@ -75,7 +75,7 @@ export function PatternPerformance() {
               <BarChart data={patterns} layout="vertical" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
                 <XAxis
                   type="number"
-                  tick={{ fontSize: 9, fill: 'hsl(215, 16%, 35%)' }}
+                  tick={{ fontSize: 9, fill: 'hsl(215, 16%, 55%)' }}
                   axisLine={{ stroke: 'rgba(30, 42, 68, 0.3)' }}
                   tickLine={false}
                   tickFormatter={format}
@@ -83,7 +83,7 @@ export function PatternPerformance() {
                 <YAxis
                   type="category"
                   dataKey="name"
-                  tick={{ fontSize: 8, fill: 'hsl(215, 16%, 47%)' }}
+                  tick={{ fontSize: 8, fill: 'hsl(215, 16%, 65%)' }}
                   axisLine={false}
                   tickLine={false}
                   width={90}
@@ -95,7 +95,10 @@ export function PatternPerformance() {
                     borderRadius: '8px',
                     fontSize: '10px',
                     fontFamily: 'var(--font-mono)',
+                    color: 'hsl(214, 20%, 85%)',
                   }}
+                  labelStyle={{ color: 'hsl(214, 20%, 70%)' }}
+                  itemStyle={{ color: 'hsl(214, 20%, 85%)' }}
                   formatter={(value: number, _name: string, props: any) => {
                     const p = props.payload as PatternData;
                     return [

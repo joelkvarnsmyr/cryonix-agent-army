@@ -26,13 +26,15 @@ export function ConfigCard() {
 
   const toml = data?.toml;
 
+  const shortModel = (m: string) => m.replace('grok-4-1-fast-reasoning', 'Grok 4.1 Fast').replace('grok-3-mini', 'Grok 3 Mini').replace('grok-3', 'Grok 3');
   const rows = toml ? [
     { label: 'Mode', value: `${toml.trading.mode.toUpperCase()} ${toml.trading.default_leverage}x` },
-    { label: 'Capital', value: `$${data?.config.TOTAL_CAPITAL}` }, // Keep total capital from legacy/dynamic config
+    { label: 'Capital', value: `$${data?.config.TOTAL_CAPITAL}` },
+    { label: 'Positions', value: `${toml.limits.max_open_positions} max / ${toml.limits.max_trades_per_day}/day` },
     { label: 'Risk', value: `Max -${(toml.risk.max_daily_loss_pct * 100).toFixed(1)}%/day` },
-    { label: 'Sizing', value: `${(toml.capital.max_position_size_pct * 100).toFixed(0)}%` },
-    { label: 'AI', value: `${toml.ai.enabled ? 'ON' : 'OFF'} (${toml.ai.model})` },
-    { label: 'Exits', value: `Trail ${toml.exits.trailing_stop_pct}%` },
+    { label: 'Sizing', value: `${(toml.capital.max_position_size_pct * 100).toFixed(0)}% (min $${toml.capital.min_order_value})` },
+    { label: 'AI', value: shortModel(toml.ai.model) },
+    { label: 'Exits', value: `Trail ${toml.exits.trailing_stop_pct}% / Stag ${toml.exits.stagnation_timeout_hours}h` },
   ] : [
     { label: 'Capital', value: `$${config.TOTAL_CAPITAL}` },
     { label: 'Mode', value: `${config.TRADING_MODE} ${config.DEFAULT_LEVERAGE}x` },
