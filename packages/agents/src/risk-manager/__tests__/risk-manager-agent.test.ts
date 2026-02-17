@@ -99,7 +99,7 @@ describe('RiskManagerAgent', () => {
             const result = await agent.checkSignalRisk(request);
 
             expect(result.approved).toBe(false);
-            expect(result.reasoning).toContain('DAILY LIMIT');
+            expect(result.reasoning).toContain('DAILY HARD LIMIT');
         });
 
         it('should track daily loss remaining in response', async () => {
@@ -146,7 +146,7 @@ describe('RiskManagerAgent', () => {
             const result = await weeklyAgent.checkSignalRisk(request);
 
             expect(result.approved).toBe(false);
-            expect(result.reasoning).toContain('WEEKLY LIMIT');
+            expect(result.reasoning).toContain('WEEKLY HARD LIMIT');
 
             weeklyAgent.stop();
         });
@@ -342,7 +342,7 @@ describe('RiskManagerAgent', () => {
             const wbtcRes = await agent.checkSignalRisk(wbtcReq);
 
             expect(wbtcRes.approved).toBe(false);
-            expect(wbtcRes.reasoning).toContain('Correlation limit');
+            expect(wbtcRes.reasoning).toContain('exposure in');
         });
 
         it('should allow positions in uncorrelated assets', async () => {

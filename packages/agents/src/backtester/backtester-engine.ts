@@ -398,7 +398,7 @@ export class BacktesterEngine {
    */
   private calculatePositionSize(state: BacktestState, signal: TradingSignal): number {
     if (this.config.positionSizing === 'fixed') {
-      const positionValue = state.equity * (this.config.fixedPositionPercent ?? 0.02);
+      const positionValue = state.equity * ((this.config.fixedPositionPercent ?? 2) / 100);
       return positionValue / signal.entry_price;
     }
 

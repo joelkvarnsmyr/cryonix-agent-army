@@ -546,7 +546,7 @@ export class RiskManagerAgent extends BaseAgent {
             name: 'circuit_breaker',
             passed: !isActive,
             message: isActive
-                ? `Circuit breaker active until ${this.circuitBreakerUntil?.toISOString()}`
+                ? `CIRCUIT BREAKER active until ${this.circuitBreakerUntil?.toISOString()}`
                 : 'Circuit breaker inactive',
             severity: isActive ? 'blocker' : 'info',
         };
@@ -728,10 +728,8 @@ export class RiskManagerAgent extends BaseAgent {
             if (existingGroup === 'uncorrelated') continue;
 
             if (existingGroup === newGroup) {
-                // Same group = perfect correlation
-                maxCorrelation = 1.0;
-                maxCorrelationPair = position.symbol;
-                break;
+                // Same group exposure is handled by checkCorrelationExposure
+                continue;
             }
 
             const groupCorrelations = GROUP_CORRELATIONS[newGroup];
@@ -949,6 +947,9 @@ export class RiskManagerAgent extends BaseAgent {
 
             this.dailyLoss += Math.abs(pnl);
             this.weeklyLoss += Math.abs(pnl);
+
+            // Check and activate circuit breaker immediately if threshold breached
+            this.isCircuitBreakerActive();
 
             // Activate cooldown after a loss
             this.activateCooldown();

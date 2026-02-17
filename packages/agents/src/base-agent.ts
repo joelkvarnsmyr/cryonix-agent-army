@@ -40,7 +40,7 @@ export abstract class BaseAgent {
 
   protected emit(event: string, data: any): void {
     // Event emitter implementation
-    console.log(`[${this.config.id}] ${event}:`, data);
+    console.log(`[${this.config.id}]`, `${event}:`, data);
   }
 
   protected log(level: 'info' | 'warn' | 'error', message: string, data?: any): void {
