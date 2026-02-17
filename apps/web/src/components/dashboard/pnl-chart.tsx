@@ -78,6 +78,7 @@ export function PnlChart() {
               <BarChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                 <XAxis
                   dataKey="index"
+                  minTickGap={20}
                   tick={{ fontSize: 8, fill: 'hsl(215, 16%, 35%)' }}
                   axisLine={{ stroke: 'rgba(30, 42, 68, 0.3)' }}
                   tickLine={false}

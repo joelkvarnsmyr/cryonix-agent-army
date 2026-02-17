@@ -81,6 +81,7 @@ export function EquityCurve() {
                 </defs>
                 <XAxis
                   dataKey="time"
+                  minTickGap={30}
                   tick={{ fontSize: 9, fill: 'hsl(215, 16%, 35%)' }}
                   axisLine={{ stroke: 'rgba(30, 42, 68, 0.3)' }}
                   tickLine={false}

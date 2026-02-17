@@ -102,18 +102,33 @@ export function AiImpactChart() {
                   tickLine={false}
                   label={{ value: 'Adjusted %', angle: -90, position: 'insideLeft', offset: 15, fontSize: 8, fill: 'hsl(215, 16%, 30%)' }}
                 />
-                <ZAxis dataKey="z" range={[30, 80]} />
+                <ZAxis dataKey="z" range={[20, 60]} />
                 <Tooltip
-                  contentStyle={{
-                    background: 'hsl(220, 55%, 7%)',
-                    border: '1px solid hsl(218, 35%, 16%)',
-                    borderRadius: '8px',
-                    fontSize: '10px',
-                    fontFamily: 'var(--font-mono)',
-                  }}
-                  formatter={(_value: number, _name: string, props: any) => {
-                    const d = props.payload;
-                    return [`${d.symbol}: ${d.original}% → ${d.adjusted}% (${d.consensus})`, d.approved ? 'Approved' : 'Rejected'];
+                  cursor={{ strokeDasharray: '3 3', stroke: 'rgba(255,255,255,0.1)' }}
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const d = payload[0].payload;
+                      return (
+                        <div className="bg-popover/90 backdrop-blur-md border border-border/50 p-2 rounded-lg shadow-xl text-[10px]">
+                          <div className="flex items-center gap-1.5 mb-1.5 border-b border-border/50 pb-1">
+                            <span className={`w-1.5 h-1.5 rounded-full ${d.approved ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                            <span className="font-bold text-foreground">{d.symbol}</span>
+                            <span className="text-muted-foreground ml-auto">{d.approved ? 'APR' : 'REJ'}</span>
+                          </div>
+                          <div className="space-y-0.5 font-mono text-muted-foreground">
+                            <div className="flex justify-between gap-3">
+                              <span>Conf:</span>
+                              <span className="text-foreground">{d.original}% <span className="text-muted-foreground mx-0.5">→</span> {d.adjusted}%</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span>Rating:</span>
+                              <span className="text-foreground">{d.consensus}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
                   }}
                 />
                 {/* Diagonal reference line (no change) */}
@@ -124,6 +139,7 @@ export function AiImpactChart() {
                 />
                 {/* Approved scatter */}
                 <Scatter
+                  name="Approved"
                   data={chartData.filter(d => d.approved)}
                   fill="#10b981"
                   fillOpacity={0.6}
@@ -131,6 +147,7 @@ export function AiImpactChart() {
                 />
                 {/* Rejected scatter */}
                 <Scatter
+                  name="Rejected"
                   data={chartData.filter(d => !d.approved)}
                   fill="#ef4444"
                   fillOpacity={0.6}
