@@ -1,3 +1,6 @@
+"use client";
+
+import dynamic from 'next/dynamic';
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout';
 import { PortfolioCard } from '@/components/dashboard/portfolio-card';
 import { PositionsCard } from '@/components/dashboard/positions-card';
@@ -7,14 +10,34 @@ import { HealthGrid } from '@/components/dashboard/health-grid';
 import { ConfigCard } from '@/components/dashboard/config-card';
 import { TradeActivity } from '@/components/dashboard/trade-activity';
 import { ProcessViewer } from '@/components/dashboard/process-viewer';
-import { PriceChart } from '@/components/dashboard/price-chart';
-import { EquityCurve } from '@/components/dashboard/equity-curve';
-import { PnlChart } from '@/components/dashboard/pnl-chart';
-import { PatternPerformance } from '@/components/dashboard/pattern-performance';
-import { AiImpactChart } from '@/components/dashboard/ai-impact-chart';
 import { SystemVitals } from '@/components/dashboard/system-vitals';
-import { EvolutionPanel } from '@/components/dashboard/evolution-panel';
 import { StaggerContainer, FadeUpItem } from '@/components/dashboard/motion-wrappers';
+
+// Lazy load heavy chart components
+const PriceChart = dynamic(() => import('@/components/dashboard/price-chart').then(mod => mod.PriceChart), {
+  loading: () => <div className="h-[300px] w-full bg-muted/5 animate-pulse rounded-xl" />,
+  ssr: false
+});
+const EquityCurve = dynamic(() => import('@/components/dashboard/equity-curve').then(mod => mod.EquityCurve), {
+  loading: () => <div className="h-[160px] w-full bg-muted/5 animate-pulse rounded-xl" />,
+  ssr: false
+});
+const PnlChart = dynamic(() => import('@/components/dashboard/pnl-chart').then(mod => mod.PnlChart), {
+  loading: () => <div className="h-[160px] w-full bg-muted/5 animate-pulse rounded-xl" />,
+  ssr: false
+});
+const PatternPerformance = dynamic(() => import('@/components/dashboard/pattern-performance').then(mod => mod.PatternPerformance), {
+  loading: () => <div className="h-[160px] w-full bg-muted/5 animate-pulse rounded-xl" />,
+  ssr: false
+});
+const AiImpactChart = dynamic(() => import('@/components/dashboard/ai-impact-chart').then(mod => mod.AiImpactChart), {
+  loading: () => <div className="h-[160px] w-full bg-muted/5 animate-pulse rounded-xl" />,
+  ssr: false
+});
+const EvolutionPanel = dynamic(() => import('@/components/dashboard/evolution-panel').then(mod => mod.EvolutionPanel), {
+  loading: () => <div className="h-[200px] w-full bg-muted/5 animate-pulse rounded-xl" />,
+  ssr: false
+});
 
 export default function HomePage() {
   return (

@@ -159,7 +159,7 @@ export function useMultipleTickers(symbols: string[] = ['BTC/USDT', 'ETH/USDT', 
 
   useEffect(() => {
     fetchTickers();
-    const interval = setInterval(fetchTickers, 10000);
+    const interval = setInterval(fetchTickers, 60000);
     return () => clearInterval(interval);
   }, [fetchTickers]);
 
