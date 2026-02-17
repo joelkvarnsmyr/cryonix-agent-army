@@ -70,7 +70,7 @@ default_leverage = 3
 # 0.25 = 25%. On a $40 account, max position = $10.
 # Increase for concentrated bets, decrease for diversification.
 # WARNING: above 0.30 a single bad trade can wipe significant capital.
-max_position_size_pct = 0.25
+max_position_size_pct = 0.35
 
 # Absolute minimum order value in USD. Orders below this are rejected.
 # Binance NOTIONAL minimum is ~$5. We use $7.50 to prevent "dust" —
@@ -84,9 +84,9 @@ min_order_value = 7.50
 #   reserve     — always kept as free cash (safety buffer)
 # When to change: increase grid_pool in ranging markets, increase reserve
 # if you want more safety margin.
-signal_pool_pct = 0.65
-grid_pool_pct = 0.25
-reserve_pct = 0.10
+signal_pool_pct = 0.85
+grid_pool_pct = 0.00
+reserve_pct = 0.15
 
 # Kelly Criterion position sizing multiplier.
 # Full Kelly (1.0) is mathematically optimal but extremely volatile.
@@ -182,7 +182,7 @@ liquidation_buffer_pct = 0.15
 # 0.65 = 65%. Lower means more trades (more opportunity + more noise).
 # When to change: raise to 0.70-0.75 if too many losing trades,
 # lower to 0.60 if not enough trades are executing.
-min_confidence = 0.65
+min_confidence = 0.60
 
 # Minimum reward-to-risk ratio. Rejects signals where the potential
 # profit (entry to TP) divided by potential loss (entry to SL) is
@@ -214,7 +214,7 @@ trailing_stop_pct = 3.0
 # 1.5 = 1.5%. Prevents trailing stop from triggering on small noise.
 # When to change: raise to 2-3% if positions are getting stopped out
 # too early on minor pullbacks.
-trailing_activation_pct = 1.5
+trailing_activation_pct = 2.5
 
 # Maximum allowed slippage between signal entry price and current market
 # price when the order is about to execute. Rejects if exceeded.
@@ -239,7 +239,7 @@ orderbook_depth = 5
 #   - Wider TP (6.0-8.0): bigger wins but lower win rate
 #   - The tp/sl ratio should stay above min_risk_reward (1.3)
 sl_atr_multiplier = 3.5
-tp_atr_multiplier = 5.0
+tp_atr_multiplier = 6.5
 
 # Deep value crash trades use different (tighter) ATR multipliers
 # because crash bounces tend to be sharp but shorter-lived.
@@ -378,7 +378,7 @@ deep_value_rug_pull_velocity = 20.0
 # 0.5 = halve the confidence. This effectively blocks most single-pattern
 # signals from reaching the 65% minimum confidence threshold.
 # When to change: raise to 0.7 if you trust single-pattern signals more.
-single_pattern_penalty = 0.5
+single_pattern_penalty = 0.65
 
 # Confidence boosts for multiple confirming patterns.
 # 2 patterns: +10%, 3+ patterns: +15%.
@@ -421,9 +421,9 @@ volatile_grid_pct = 0.00
 volatile_reserve_pct = 0.30
 #
 # TRENDING: signal pool boosted (trend strategies excel), grid reduced.
-trending_signal_pct = 0.72
-trending_grid_pct = 0.18
-trending_reserve_pct = 0.10
+trending_signal_pct = 0.85
+trending_grid_pct = 0.00
+trending_reserve_pct = 0.15
 #
 # RANGING: uses default capital.* values (grid works well in ranges).
 
@@ -499,7 +499,8 @@ expiration_seconds = 3600
 # When to change: add industry-specific terms as new threats emerge.
 alert_keywords = [
     "hack", "exploit", "rug", "sec", "crash", "delist",
-    "lawsuit", "ban", "scam", "fraud", "investigation", "vulnerability"
+    "lawsuit", "ban", "scam", "fraud", "investigation", "vulnerability",
+    "freeze", "insolvency", "bankrupt"
 ]
 
 
@@ -516,28 +517,30 @@ alert_keywords = [
 # and trade based on TA confidence alone. NOT recommended.
 enabled = true
 
-# Which GROK model to use. "grok-3-mini" is fast and cheap.
-# "grok-3" is smarter but slower and more expensive.
-# When to change: upgrade to "grok-3" if budget allows and you want
-# better analysis quality.
-model = "grok-3-mini"
+# Which GROK model to use.
+#   "grok-4-1-fast-reasoning" — Best: 2M context, reasoning mode, $0.20/$0.50/1M tokens
+#   "grok-4-1-fast-non-reasoning" — Same model without thinking (faster, no reasoning tokens)
+#   "grok-3-mini" — Cheapest fallback
+# Reasoning mode enables multi-step thinking before answering.
+# reasoning_effort controls depth: "low" (fast), "high" (thorough).
+model = "grok-4-1-fast-reasoning"
+reasoning_effort = "high"
 
 # Temperature controls randomness. 0.0 = deterministic, 1.0 = creative.
 # 0.1 = nearly deterministic. Good for consistent risk analysis.
-# When to change: rarely. Higher values give inconsistent results.
 temperature = 0.1
 
-# Maximum response tokens. 200 is enough for the JSON response format.
-# When to change: increase to 300+ if using a model that produces
-# longer reasoning.
-max_tokens = 200
+# Maximum completion tokens (includes reasoning + response).
+# Reasoning models need more tokens for their thinking process.
+# 800 allows ~500 thinking tokens + 300 response tokens.
+max_tokens = 800
 
 # Confidence blending weights. Final confidence = (TA * ta_weight) + (AI * ai_weight).
-# Must sum to 1.0. Equal weighting (0.5/0.5) treats both as equally reliable.
-# When to change: shift toward TA (0.7/0.3) if AI is too conservative,
-# shift toward AI (0.3/0.7) if TA generates too many false signals.
-ta_weight = 0.5
-ai_weight = 0.5
+# Must sum to 1.0. grok-4.1-fast-reasoning is strong enough to justify 40% weight.
+# When to change: shift toward AI (0.5/0.5) if reasoning model proves accurate,
+# shift toward TA (0.7/0.3) if AI gives inconsistent results.
+ta_weight = 0.60
+ai_weight = 0.40
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗

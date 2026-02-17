@@ -1072,11 +1072,13 @@ interface AIValidation {
   approved: boolean;
   aiConfidence: number;
   reasoning: string;
+  thinkingSummary?: string;
   adjustedSL?: number;
   adjustedTP?: number;
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
+    reasoning_tokens: number;
     total_tokens: number;
     model: string;
   };
@@ -1108,9 +1110,9 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
     // Calculate EV for this signal's patterns
     const evResult = await calculateExpectedValue(signal, evData);
     const evCtx = evResult
-      ? `- **Expected Value:** $${evResult.ev.toFixed(4)} (${evResult.winRate}% win rate over ${evResult.sampleSize} trades)`
-      : '- **Expected Value:** insufficient data';
-    const alertCtx = sentimentAlert ? `\n- **⚠️ X Alert:** ${sentimentAlert}` : '';
+      ? `EV: $${evResult.ev.toFixed(4)} (${evResult.winRate}% win rate, ${evResult.sampleSize} trades)`
+      : 'EV: insufficient data';
+    const alertCtx = sentimentAlert ? ` | ⚠️ X Alert: ${sentimentAlert}` : '';
 
     // === DYNAMIC PORTFOLIO CONTEXT ===
     const [totalCapital, openPositions] = await Promise.all([
@@ -1123,101 +1125,117 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
       `${p.symbol} $${(p.entryPrice * p.quantity).toFixed(2)}`
     ).join(', ') || 'none';
 
-    const portfolioCtx = `**Portfolio (live from Binance):**
-- **Total capital:** $${totalCapital.toFixed(2)} | **Available cash:** ~$${availableCash.toFixed(2)}
-- **Open positions:** ${openPositions.length}/${CONFIG.MAX_OPEN_POSITIONS} [${positionList}]
-- **Today:** ${dailyState.tradesExecuted}/${CONFIG.MAX_TRADES_PER_DAY} trades | P&L: $${dailyState.dailyPnl.toFixed(2)}`;
+    const rr = signal.stop_loss > 0
+      ? ((signal.target_price - signal.entry_price) / (signal.entry_price - signal.stop_loss)).toFixed(2)
+      : 'N/A';
 
     // Use specialized prompt for deep value crash signals
     const isDeepValue = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
 
+    const systemPrompt = isDeepValue
+      ? `You are a crash-buying specialist for crypto markets. Evaluate whether a large drawdown is PANIC SELLING (buy opportunity) or a FALLING KNIFE (avoid). Use your reasoning to analyze drop velocity, volume patterns, multi-timeframe RSI alignment, and whether the selloff is isolated or broad-based. Search X/Twitter for breaking news about this asset. Respond with ONLY a JSON object.`
+      : `You are a crypto trading risk analyst with access to real-time X/Twitter data and web search. Your role:
+
+1. THINK through the technical setup step by step (use your reasoning capability)
+2. SEARCH X for any breaking news, hacks, delistings, or sentiment shifts about this coin
+3. Evaluate risk-reward, indicator confluence, and market regime alignment
+4. Give a clear approve/reject with calibrated confidence
+
+Key principles:
+- On a $${totalCapital.toFixed(0)} account, missed good trades cost more than small losses
+- Approve signals with 2+ confirming indicators or 1 strong signal (RSI<30, Bollinger squeeze with volume)
+- REJECT if: signal contradicts higher-timeframe trend, negative EV pattern, or X reveals bad news
+- BOOST confidence if X sentiment is bullish AND technical setup aligns
+- Adjust SL/TP if you see better levels based on your analysis
+
+Respond with ONLY a JSON object.`;
+
     const prompt = isDeepValue
-      ? `You are "CRASH ORACLE", analyzing a POTENTIAL MARKET CRASH BUY OPPORTUNITY. This is about catching "fat pitches" - rare deep value moments.
+      ? `CRASH BUY ANALYSIS: ${signal.symbol}
 
-**CRASH DATA:**
-- **Symbol:** ${signal.symbol}
-- **Drawdown:** ${signal.indicators.drawdown_pct}% from recent high ($${signal.indicators.recent_high})
-- **Drop Velocity:** ${signal.indicators.drop_velocity}%/hour
-- **Volume Spike:** ${signal.indicators.volume_ratio}x average
-- **Multi-TF RSI:** 15m=${signal.indicators.rsi}, 1h=${signal.indicators.rsi_1h ?? 'N/A'}, 4h=${signal.indicators.rsi_4h ?? 'N/A'}
-- **Support Level:** $${signal.indicators.support_level ?? 'N/A'}
+Drawdown: ${signal.indicators.drawdown_pct}% from $${signal.indicators.recent_high}
+Drop velocity: ${signal.indicators.drop_velocity}%/hr | Volume: ${signal.indicators.volume_ratio}x avg
+RSI: 15m=${signal.indicators.rsi} | 1h=${signal.indicators.rsi_1h ?? '?'} | 4h=${signal.indicators.rsi_4h ?? '?'}
+Support: $${signal.indicators.support_level ?? '?'} | Price: $${ticker.last?.toFixed(4)} | 24h: ${ticker.percentage?.toFixed(2)}%
+Sentiment: ${sentimentLabel}${alertCtx} | ${evCtx}
+Portfolio: $${totalCapital.toFixed(2)} total, $${availableCash.toFixed(2)} free, ${openPositions.length}/${CONFIG.MAX_OPEN_POSITIONS} positions [${positionList}]
 
-**LIVE MARKET:**
-- **Current Price:** $${ticker.last?.toFixed(2)}
-- **24h Change:** ${ticker.percentage?.toFixed(2)}%
-- **Sentiment:** ${sentimentLabel} (${sentimentScore})${alertCtx}
+JSON: {"approve":bool,"confidence":0-100,"reasoning":"2-3 sentences","sl":number|null,"tp":number|null}`
+      : `SIGNAL: ${signal.action} ${signal.symbol}
+
+Setup: ${signal.patterns.join(' + ')} | TA confidence: ${(signal.confidence * 100).toFixed(0)}%
+Reason: ${signal.reason}
+Entry: $${signal.entry_price.toFixed(4)} | SL: $${signal.stop_loss.toFixed(4)} | TP: $${signal.target_price.toFixed(4)} | R:R=${rr}
+
+Indicators:
+RSI=${signal.indicators?.rsi ?? '?'} | MACD hist=${signal.indicators?.macd_hist ?? '?'} | ADX=${signal.indicators?.adx ?? '?'}
+BB: low=$${signal.indicators?.bb_lower ?? '?'} mid=$${signal.indicators?.bb_mid ?? '?'} up=$${signal.indicators?.bb_upper ?? '?'}
+ATR=${signal.indicators?.atr_pct ?? '?'}% | EMA9/21=${signal.indicators?.ema9 ?? '?'}/${signal.indicators?.ema21 ?? '?'}
+Volume: ${signal.indicators?.volume_ratio ?? '?'}x avg | Trend aligned: ${signal.indicators?.trend_aligned ?? '?'}
+Regime: ${signal.indicators?.market_regime ?? '?'} | HTF trend: ${signal.indicators?.htf_trend ?? '?'}
+
+Market: $${ticker.last?.toFixed(4)} now | 24h: ${ticker.percentage?.toFixed(2)}% | Sentiment: ${sentimentLabel} (${sentimentScore})${alertCtx}
 ${evCtx}
+Portfolio: $${totalCapital.toFixed(2)} capital, $${availableCash.toFixed(2)} free, ${openPositions.length}/${CONFIG.MAX_OPEN_POSITIONS} positions [${positionList}]
+Today: ${dailyState.tradesExecuted}/${CONFIG.MAX_TRADES_PER_DAY} trades | P&L: $${dailyState.dailyPnl.toFixed(2)}
 
-${portfolioCtx}
-Is this PANIC SELLING (opportunity) or a FALLING KNIFE (avoid)?
-Consider: drop velocity, volume pattern, multi-TF RSI alignment, isolated vs broad selloff.
+JSON: {"approve":bool,"confidence":0-100,"reasoning":"2-3 sentences with specific indicator references","sl":number|null,"tp":number|null}`;
 
-JSON: {"approve": boolean, "confidence": number(0-100), "reasoning": "one sentence", "sl": number|null, "tp": number|null}`
-      : `You are "RISK-BOT 9000", a pragmatic crypto trading risk analyst. Your job is to quickly validate trading signals. Approve signals with clear technical backing; reject only obvious traps.
+    // Build request with reasoning and search capabilities
+    const modelId = TOML?.ai.model ?? 'grok-4-1-fast-reasoning';
+    const isReasoningModel = modelId.includes('reasoning');
 
-**EVALUATE THIS ${signal.action} SIGNAL:**
-
-**Technical Analysis:**
-- **Symbol:** ${signal.symbol} | **Action:** ${signal.action}
-- **TA Confidence:** ${(signal.confidence * 100).toFixed(0)}%
-- **Patterns:** ${signal.patterns.join(', ')}
-- **Reason:** ${signal.reason}
-- **Entry:** $${signal.entry_price.toFixed(4)}, SL: $${signal.stop_loss.toFixed(4)}, TP: $${signal.target_price.toFixed(4)}
-
-**Indicators:**
-- **RSI:** ${signal.indicators?.rsi ?? 'N/A'} | **MACD hist:** ${signal.indicators?.macd_hist ?? 'N/A'}
-- **BB:** lower=$${signal.indicators?.bb_lower ?? 'N/A'} mid=$${signal.indicators?.bb_mid ?? 'N/A'} upper=$${signal.indicators?.bb_upper ?? 'N/A'}
-- **ATR:** ${signal.indicators?.atr_pct ?? 'N/A'}% | **EMA9/21:** ${signal.indicators?.ema9 ?? 'N/A'}/${signal.indicators?.ema21 ?? 'N/A'}
-- **Volume:** ${signal.indicators?.volume_ratio ?? 'N/A'}x avg | **Trend aligned:** ${signal.indicators?.trend_aligned ?? 'N/A'}
-- **ADX:** ${signal.indicators?.adx ?? 'N/A'} | **Market Regime:** ${signal.indicators?.market_regime ?? 'N/A'} | **HTF Trend:** ${signal.indicators?.htf_trend ?? 'N/A'}
-
-**Live Market:**
-- **Price:** $${ticker.last?.toFixed(4)} | **24h:** ${ticker.percentage?.toFixed(2)}%
-- **Sentiment:** ${sentimentLabel} (${sentimentScore})${alertCtx}
-${evCtx}
-
-${portfolioCtx}
-
-**Decision rules:**
-- Approve if 2+ indicators confirm AND market regime supports the pattern type (trending patterns need ADX>25, mean-reversion needs ranging market).
-- REJECT if signal goes AGAINST higher timeframe trend (HTF).
-- REJECT or lower confidence if EV is negative (pattern historically loses money).
-- BOOST confidence if X sentiment is bullish (score ≥2) AND technical signal aligns.
-- Consider position concentration — reject if we already hold this asset.
-
-JSON ONLY: {"approve": boolean, "confidence": number(0-100), "reasoning": "one sentence", "sl": number|null, "tp": number|null}`;
-
-    // xAI search parameter for real-time X/news context
-    const searchConfig: Record<string, unknown> = {};
-    try { (searchConfig as any).search = { mode: 'auto' }; } catch {}
-
-    const response = await ai.chat.completions.create({
-      model: TOML?.ai.model ?? 'grok-3-mini',
+    const requestBody: Record<string, unknown> = {
+      model: modelId,
       messages: [
-        { role: 'system', content: 'You are RISK-BOT 9000, a trading risk analyst. Approve signals with clear technical setups (2+ confirming indicators or strong single signals like RSI < 30 or Bollinger squeeze). Reject if: no confirming indicators, risk/reward < 1.3, or signal clearly conflicts with higher timeframe trend. RSI 30-40 with volume confirmation is a valid setup. Your job is to balance capital protection with opportunity capture. Respond with a single minified JSON object only.' },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },
       ],
       temperature: TOML?.ai.temperature ?? 0.1,
-      max_tokens: TOML?.ai.max_tokens ?? 200,
-      ...searchConfig,
-    });
+    };
+
+    // Reasoning models use max_completion_tokens, non-reasoning use max_tokens
+    if (isReasoningModel) {
+      requestBody.max_completion_tokens = TOML?.ai.max_tokens ?? 800;
+      requestBody.reasoning = { effort: TOML?.ai.reasoning_effort ?? 'high' };
+    } else {
+      requestBody.max_tokens = TOML?.ai.max_tokens ?? 800;
+    }
+
+    // Enable xAI live search for real-time X/news context
+    requestBody.search = { mode: 'auto' };
+
+    const response = await ai.chat.completions.create(requestBody as any);
 
     const content = response.choices[0]?.message?.content || '';
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return { approved: false, aiConfidence: 0, reasoning: 'AI parse failed - rejecting (fail-closed)' };
 
     const result = JSON.parse(jsonMatch[0]);
-    console.log(`[AI] ${signal.symbol}: ${result.approve ? 'APPROVED' : 'REJECTED'} (${result.confidence}%) - ${result.reasoning}`);
+
+    // Extract reasoning tokens from usage details
+    const usageDetails = (response.usage as any)?.completion_tokens_details;
+    const reasoningTokens = usageDetails?.reasoning_tokens || 0;
+
+    // Extract reasoning_content if model returns it
+    const reasoningContent = (response.choices[0]?.message as any)?.reasoning_content;
+    const thinkingSummary = reasoningContent
+      ? (typeof reasoningContent === 'string' ? reasoningContent.slice(0, 500) : JSON.stringify(reasoningContent).slice(0, 500))
+      : undefined;
+
+    console.log(`[AI] ${signal.symbol}: ${result.approve ? 'APPROVED' : 'REJECTED'} (${result.confidence}%) [${modelId}, ${reasoningTokens} thinking tokens] - ${result.reasoning}`);
 
     return {
       approved: result.approve,
       aiConfidence: (result.confidence || 50) / 100,
       reasoning: result.reasoning || 'No reasoning',
+      thinkingSummary,
       adjustedSL: result.sl || undefined,
       adjustedTP: result.tp || undefined,
       usage: {
         prompt_tokens: response.usage?.prompt_tokens || 0,
         completion_tokens: response.usage?.completion_tokens || 0,
+        reasoning_tokens: reasoningTokens,
         total_tokens: response.usage?.total_tokens || 0,
         model: response.model,
       },
@@ -1883,7 +1901,10 @@ export async function POST() {
           approved: aiResult.approved,
           reasoning: aiResult.reasoning,
           agentId: 'grok-validator',
-          usage: aiResult.usage,
+          usage: {
+            ...aiResult.usage,
+            thinkingSummary: aiResult.thinkingSummary,
+          },
         });
       } catch (err) {
         console.error('[AUTO-TRADE] Failed to save validation:', err);
@@ -1924,6 +1945,8 @@ export async function POST() {
           executedPrice: execution.executedPrice,
           executedQuantity: execution.quantity,
           aiValidation: aiResult.reasoning,
+          aiThinking: aiResult.thinkingSummary,
+          aiModel: aiResult.usage?.model,
           blendedConfidence: signal.confidence,
         }));
         // Keep only last 50 approved trades (prevent unbounded growth)

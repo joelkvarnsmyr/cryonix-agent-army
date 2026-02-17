@@ -69,7 +69,7 @@ export interface CryonixConfig {
   };
   ev_model: { min_trades_for_ev: number; calibration_lookback_days: number; calibration_min_trades: number };
   sentiment: { expiration_seconds: number; alert_keywords: string[] };
-  ai: { enabled: boolean; model: string; temperature: number; max_tokens: number; ta_weight: number; ai_weight: number };
+  ai: { enabled: boolean; model: string; reasoning_effort: string; temperature: number; max_tokens: number; ta_weight: number; ai_weight: number };
   timing: {
     auto_trader_poll_ms: number; health_check_interval_ms: number;
     telegram_poll_ms: number; trade_alert_poll_ms: number;
