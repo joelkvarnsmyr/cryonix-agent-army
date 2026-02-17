@@ -666,3 +666,70 @@ mismatch_warning_high = 0.90
 # rejects the order (NOTIONAL filter) and it becomes unsellable dust.
 # Should match or be slightly below min_order_value.
 dust_sell_floor = 5.0
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  COINMARKETCAP INTEGRATION                                             ║
+# ║  Macro-level market intelligence from CoinMarketCap API (Free tier).   ║
+# ║  Provides Fear & Greed, global metrics, and market cap data that       ║
+# ║  the Python engine writes to Redis for the auto-trader to consume.     ║
+# ║  Change when: tuning how macro data influences trading decisions.      ║
+# ║  Affects: signal confidence adjustments, regime detection, filtering.  ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[coinmarketcap]
+
+# Master switch. When false, CMCScout does not run and auto-trader
+# skips all CMC-based checks. Enable after adding CMC_API_KEY to .env.
+enabled = false
+
+# How often CMCScout polls CoinMarketCap (seconds).
+# 600 = 10 min. With batched quote calls this uses ~5,500 credits/month
+# (well within the 10,000 free tier limit).
+# When to change: lower to 300 (5min) if on Hobbyist plan ($29/mo).
+poll_interval_seconds = 600
+
+# ── Fear & Greed Adjustments ──────────────────────────────────────────
+# When Fear & Greed Index is in "Extreme Fear" (< fear_threshold):
+#   - DEEP_VALUE_CRASH signals get +fear_deep_value_boost confidence
+#   - All other BUY signals require confidence >= fear_min_confidence
+# When F&G is in "Extreme Greed" (> greed_threshold):
+#   - All BUY signals get -greed_confidence_penalty
+#
+# When to change: widen thresholds (15/85) for less sensitivity,
+# narrow (25/75) for more aggressive macro filtering.
+fear_threshold = 20
+greed_threshold = 80
+fear_deep_value_boost = 0.08
+fear_min_confidence = 0.85
+greed_confidence_penalty = 0.10
+
+# ── Market Cap Filter ─────────────────────────────────────────────────
+# Reject BUY signals for coins ranked below this in market cap.
+# 500 = top 500 coins only. Prevents trading illiquid micro-caps.
+# Set to 0 to disable market cap filtering.
+# When to change: raise to 200 for ultra-conservative, lower to 1000
+# if you want to trade smaller coins.
+max_rank = 500
+
+# Reject if Fully Diluted Valuation / Market Cap ratio exceeds this.
+# High FDV/MC means massive token unlocks ahead (dilution risk).
+# 4.0 = FDV is 4x current market cap. Most blue chips are < 2.0.
+# Set to 0 to disable FDV filter.
+# When to change: lower to 3.0 for stricter filtering.
+max_fdv_mc_ratio = 4.0
+
+# ── Global Market Regime ──────────────────────────────────────────────
+# These enhance the existing regime detection (ADX-based) with
+# macro data from CoinMarketCap global metrics.
+#
+# If total crypto market cap drops more than this % in 24h,
+# override regime to "volatile" (pauses grid, increases reserve).
+# 3.0 = 3% total market cap decline in one day.
+global_mc_drop_volatile_pct = 3.0
+
+# If BTC dominance rises more than this % in 24h,
+# reduce confidence for altcoin signals (capital rotating to BTC).
+# 2.0 = 2% dominance increase (e.g., 52% -> 54%).
+btc_dominance_rise_alt_penalty = 2.0
+alt_dominance_penalty = 0.05

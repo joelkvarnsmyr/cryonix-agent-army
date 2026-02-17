@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
 import { logTrade, saveValidation, archivePosition, createPosition, closePositionBySymbol, markLatestSignalExecuted } from '@cryonix/database';
-import { RISK_CONFIG } from '@cryonix/types';
-import { loadConfig, fullConfig } from '@/lib/config';
+import { fullConfig, loadConfig } from '@/lib/config';
 import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
 
@@ -191,7 +190,7 @@ async function getCapitalBudget(): Promise<CapitalBudget> {
   try {
     const regimeRaw = await redis.get('market:regime');
     if (regimeRaw) regime = regimeRaw;
-  } catch {}
+  } catch { }
 
   // Base allocation
   let signalPct = CONFIG.SIGNAL_POOL_PCT;
@@ -267,7 +266,7 @@ async function getDailyState(): Promise<DailyState> {
       const state = JSON.parse(raw as string) as DailyState;
       if (state.date === today) return state;
     }
-  } catch {}
+  } catch { }
   // New day or no state — return fresh
   return { date: today, tradesExecuted: 0, dailyPnl: 0 };
 }
@@ -301,7 +300,7 @@ function resetDailyStateIfNeeded() {
   const today = new Date().toDateString();
   if (dailyState.date !== today) {
     dailyState = { date: today, tradesExecuted: 0, dailyPnl: 0 };
-    saveDailyState(dailyState).catch(() => {});
+    saveDailyState(dailyState).catch(() => { });
   }
 }
 
@@ -559,7 +558,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             }
 
             // Sync close to Postgres positions table
-            try { await closePositionBySymbol(pos.symbol, String(fillPrice), String(realizedPnl), String(pnlPct)); } catch {}
+            try { await closePositionBySymbol(pos.symbol, String(fillPrice), String(realizedPnl), String(pnlPct)); } catch { }
 
             results.push({
               symbol: pos.symbol,
@@ -759,7 +758,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
           }
 
           // Sync close to Postgres positions table
-          try { await closePositionBySymbol(pos.symbol, String(closePrice), String(realizedPnl - fees), String(pnlPct)); } catch {}
+          try { await closePositionBySymbol(pos.symbol, String(closePrice), String(realizedPnl - fees), String(pnlPct)); } catch { }
 
           console.log(`[MONITOR] ${pos.symbol} ${exitType}: PnL $${(realizedPnl - fees).toFixed(4)} (${pnlPct.toFixed(2)}%)`);
 
@@ -786,7 +785,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
 
             // Cancel native SL if present (position is gone, SL would be orphaned)
             if (pos.nativeSlOrderId) {
-              try { await ex.cancelOrder(pos.nativeSlOrderId, pos.symbol); } catch {}
+              try { await ex.cancelOrder(pos.nativeSlOrderId, pos.symbol); } catch { }
             }
 
             await logTrade({
@@ -833,7 +832,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             }
 
             // Sync close to Postgres positions table
-            try { await closePositionBySymbol(pos.symbol, String(currentPrice), String(pnl), String(pnlPct)); } catch {}
+            try { await closePositionBySymbol(pos.symbol, String(currentPrice), String(pnl), String(pnlPct)); } catch { }
 
             results.push({
               symbol: pos.symbol,
@@ -921,7 +920,7 @@ async function getPatternCalibration(): Promise<Record<string, PatternStats>> {
       calibrationLastFetched = now;
       return calibrationCache;
     }
-  } catch {}
+  } catch { }
 
   // If no cache, return empty (calibration cron will populate it)
   return calibrationCache;
@@ -1032,7 +1031,42 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
         return { pass: false, reason: `X alert: ${alert}` };
       }
     }
-  } catch {}
+  } catch { }
+
+  // ── CoinMarketCap macro filters ──────────────────────────────────────
+  const cmcEnabled = TOML?.coinmarketcap?.enabled ?? false;
+  if (cmcEnabled && signal.action === 'BUY') {
+    const baseAsset = signal.symbol.split('/')[0];
+
+    // Market cap rank filter — reject illiquid micro-caps
+    try {
+      const mcapRaw = await redis.get(`cmc:mcap:${baseAsset}`);
+      if (mcapRaw) {
+        const mcap = JSON.parse(mcapRaw as string);
+        const maxRank = TOML?.coinmarketcap?.max_rank ?? 500;
+        if (maxRank > 0 && mcap.rank > maxRank) {
+          return { pass: false, reason: `CMC rank #${mcap.rank} > max ${maxRank}` };
+        }
+        const maxFdvMc = TOML?.coinmarketcap?.max_fdv_mc_ratio ?? 4.0;
+        if (maxFdvMc > 0 && mcap.fdv_mc_ratio > maxFdvMc) {
+          return { pass: false, reason: `FDV/MC ${mcap.fdv_mc_ratio.toFixed(1)}x > max ${maxFdvMc}x (dilution risk)` };
+        }
+      }
+    } catch { /* CMC data unavailable — skip filter */ }
+
+    // Global market cap crash → force volatile regime
+    try {
+      const globalRaw = await redis.get('cmc:global');
+      if (globalRaw) {
+        const global = JSON.parse(globalRaw as string);
+        const mcDropThreshold = TOML?.coinmarketcap?.global_mc_drop_volatile_pct ?? 3.0;
+        if (global.total_market_cap_yesterday_pct < -mcDropThreshold) {
+          await redis.set('market:regime', 'volatile', 'EX', TOML?.timing?.regime_ttl_seconds ?? 3600);
+          console.log(`[CMC] Global MC down ${global.total_market_cap_yesterday_pct.toFixed(1)}% — forcing volatile regime`);
+        }
+      }
+    } catch { /* CMC data unavailable — skip */ }
+  }
 
   // Check available cash before burning AI tokens
   try {
@@ -1843,6 +1877,55 @@ export async function POST() {
       }
     }
 
+    // STEP 3c: CoinMarketCap macro adjustments (Fear & Greed + BTC dominance)
+    const cmcBoostEnabled = TOML?.coinmarketcap?.enabled ?? false;
+    if (cmcBoostEnabled) {
+      try {
+        const fgRaw = await redis.get('cmc:fear_greed');
+        const globalRaw = await redis.get('cmc:global');
+        const fg = fgRaw ? JSON.parse(fgRaw as string) : null;
+        const global = globalRaw ? JSON.parse(globalRaw as string) : null;
+
+        for (const p of parsed) {
+          if (p.signal.action !== 'BUY') continue;
+          const isDeepValue = p.signal.is_deep_value || p.signal.patterns?.includes('DEEP_VALUE_CRASH');
+
+          // Fear & Greed adjustments
+          if (fg) {
+            const fearThreshold = TOML?.coinmarketcap?.fear_threshold ?? 20;
+            const greedThreshold = TOML?.coinmarketcap?.greed_threshold ?? 80;
+
+            if (fg.value <= fearThreshold) {
+              // Extreme Fear: boost deep-value, require higher confidence for others
+              if (isDeepValue) {
+                const boost = TOML?.coinmarketcap?.fear_deep_value_boost ?? 0.08;
+                p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
+                p.signal.reason += ` | 😱 F&G=${fg.value} deep-value boost +${(boost * 100).toFixed(0)}%`;
+              }
+              // Non-deep-value signals get a note (filtering happens in passesRiskChecks via higher threshold)
+            } else if (fg.value >= greedThreshold) {
+              // Extreme Greed: penalize all BUY signals (FOMO filter)
+              const penalty = TOML?.coinmarketcap?.greed_confidence_penalty ?? 0.10;
+              p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+              p.signal.reason += ` | 🤑 F&G=${fg.value} greed penalty -${(penalty * 100).toFixed(0)}%`;
+            }
+          }
+
+          // BTC dominance rise → penalize altcoin signals
+          if (global) {
+            const domRise = TOML?.coinmarketcap?.btc_dominance_rise_alt_penalty ?? 2.0;
+            const domChange = global.btc_dominance_24h_pct || 0;
+            const baseAsset = p.signal.symbol.split('/')[0];
+            if (domChange > domRise && baseAsset !== 'BTC') {
+              const penalty = TOML?.coinmarketcap?.alt_dominance_penalty ?? 0.05;
+              p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+              p.signal.reason += ` | 📊 BTC dom +${domChange.toFixed(1)}% alt penalty`;
+            }
+          }
+        }
+      } catch { /* CMC data unavailable — skip adjustments */ }
+    }
+
     parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
     const topSignals = parsed.slice(0, 15);
     // Remove low-quality signals we won't process
@@ -1877,8 +1960,8 @@ export async function POST() {
       const consensusScore = confDelta < 0.1 ? 0.8 : confDelta < 0.2 ? 0.6 : confDelta < 0.3 ? 0.4 : 0.2;
       const consensusLevel = consensusScore >= 0.8 ? 'STRONG'
         : consensusScore >= 0.6 ? 'MODERATE'
-        : consensusScore >= 0.4 ? 'WEAK'
-        : 'CONFLICTING';
+          : consensusScore >= 0.4 ? 'WEAK'
+            : 'CONFLICTING';
       const riskLevel = signal.confidence >= 0.8 ? 'LOW' : signal.confidence >= 0.65 ? 'MEDIUM' : 'HIGH';
 
       // Log validation attempt (regardless of outcome)
@@ -2085,5 +2168,6 @@ export async function GET() {
     isTestnet: process.env.BINANCE_TESTNET === 'true',
     instanceId: INSTANCE_ID,
     lockHolder: await redis.get(INSTANCE_LOCK_KEY),
+    toml: fullConfig(),
   });
 }
