@@ -38,6 +38,7 @@ export interface CryonixConfig {
     sl_atr_multiplier: number; tp_atr_multiplier: number;
     deep_value_sl_atr: number; deep_value_tp_atr: number;
     native_sl_limit_offset: number;
+    stagnation_timeout_hours: number;
   };
   indicators: {
     rsi_period: number; rsi_oversold: number; rsi_overbought: number;

@@ -115,18 +115,18 @@ deep_value_min_confidence = 0.80
 [limits]
 
 # Total concurrent open positions across all strategies.
-# On a $40 account with min $7.50 orders, 3 is the practical maximum.
-# Increase as account grows: 5 for $100+, 8 for $500+.
-max_open_positions = 3
+# $41 capital / $8.50 per position ≈ 4.9 → 5 slots.
+# Increase as account grows: 8 for $100+, 12 for $500+.
+max_open_positions = 5
 
 # Sub-limits per strategy type. Must sum to <= max_open_positions.
-max_signal_positions = 2
+max_signal_positions = 4
 max_grid_positions = 1
 
 # Maximum trades executed per calendar day (UTC).
 # Prevents overtrading in choppy markets. Resets at midnight UTC.
 # When to change: lower in bear markets, raise in strong trends.
-max_trades_per_day = 6
+max_trades_per_day = 10
 
 # Signal queue trim threshold. When more than this many signals are
 # queued, the oldest/weakest are dropped to prevent memory bloat.
@@ -245,6 +245,13 @@ tp_atr_multiplier = 5.0
 # because crash bounces tend to be sharp but shorter-lived.
 deep_value_sl_atr = 3.0
 deep_value_tp_atr = 4.0
+
+# Stagnation exit timeout. If a position hasn't moved more than 1%
+# (in either direction) after this many hours, sell it to free the slot
+# for higher-conviction signals. 8h is conservative — most breakouts
+# happen within 4h of pattern detection.
+# When to change: lower to 6h for faster turnover, raise to 12h for patience.
+stagnation_timeout_hours = 8
 
 # Native Binance stop-loss limit order offset.
 # When placing a STOP_LOSS_LIMIT on Binance, the limit price is set
@@ -579,7 +586,8 @@ reconcile_interval_ms = 600_000
 
 # Instance lock prevents multiple environments from trading the same
 # Binance account simultaneously. TTL must be > auto_trader_poll_ms.
-instance_lock_ttl_seconds = 90
+# Reduced from 90s to 60s for faster recovery after deploys.
+instance_lock_ttl_seconds = 60
 
 # Per-position atomic lock timeout for Redis read-modify-write operations.
 # 5 seconds is generous. Only increase if seeing lock timeouts in logs.

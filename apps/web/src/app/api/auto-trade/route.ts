@@ -30,9 +30,9 @@ const TOML = fullConfig();
 // INSTANCE LOCK — prevent multiple environments from trading the same account
 // ============================================================================
 
-const INSTANCE_ID = `${require('os').hostname()}-${process.pid}`;
+const INSTANCE_ID = require('os').hostname();
 const INSTANCE_LOCK_KEY = 'instance:trading_lock';
-const INSTANCE_LOCK_TTL = TOML?.timing.instance_lock_ttl_seconds ?? 90;
+const INSTANCE_LOCK_TTL = TOML?.timing.instance_lock_ttl_seconds ?? 60;
 
 async function acquireInstanceLock(): Promise<{ acquired: boolean; holder?: string }> {
   const result = await redis.set(INSTANCE_LOCK_KEY, INSTANCE_ID, 'EX', INSTANCE_LOCK_TTL, 'NX');
@@ -618,6 +618,16 @@ async function monitorPositions(): Promise<MonitorResult[]> {
         exitReason = `Dust prevention: value $${currentValue.toFixed(2)} approaching NOTIONAL minimum`;
       }
 
+      // Stagnation exit: sell positions that haven't moved >1% in N hours
+      if (!shouldSell && pos.openedAt) {
+        const ageHours = (Date.now() - new Date(pos.openedAt).getTime()) / (1000 * 60 * 60);
+        const stagnationTimeout = TOML?.exits.stagnation_timeout_hours ?? 8;
+        if (ageHours > stagnationTimeout && Math.abs(pnlPct) < 1.0) {
+          shouldSell = true;
+          exitReason = `Stagnation exit: ${ageHours.toFixed(1)}h old, only ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% movement (< 1%)`;
+        }
+      }
+
       if (pos.side === 'SELL') {
         // SHORT position: exit by buying back
         // TP hit when price drops below target
@@ -712,7 +722,9 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             agentId: 'auto-trader',
           });
 
-          const exitType = currentPrice >= pos.takeProfit ? 'SOLD_TP' :
+          const exitType = exitReason.startsWith('Stagnation') ? 'SOLD_STAGNATION' :
+            exitReason.startsWith('Dust') ? 'SOLD_DUST' :
+            currentPrice >= pos.takeProfit ? 'SOLD_TP' :
             currentPrice <= pos.stopLoss ? 'SOLD_SL' : 'SOLD_TRAILING';
 
           // Archive to position_history with full context for evolution analysis
