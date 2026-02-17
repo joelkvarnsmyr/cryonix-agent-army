@@ -11,6 +11,7 @@ import { ConfigCard } from '@/components/dashboard/config-card';
 import { TradeActivity } from '@/components/dashboard/trade-activity';
 import { ProcessViewer } from '@/components/dashboard/process-viewer';
 import { SystemVitals } from '@/components/dashboard/system-vitals';
+import { CostsCard } from '@/components/dashboard/costs-card';
 import { StaggerContainer, FadeUpItem } from '@/components/dashboard/motion-wrappers';
 
 // Lazy load heavy chart components
@@ -80,14 +81,17 @@ export default function HomePage() {
           </div>
         </FadeUpItem>
 
-        {/* Row 4: Analytics — PnL + AI Impact side by side */}
+        {/* Row 4: Analytics — PnL + AI Impact + AI Costs */}
         <FadeUpItem>
           <div className="grid grid-cols-12 gap-2.5 3xl:gap-1.5">
-            <div className="col-span-12 lg:col-span-6 min-w-0">
+            <div className="col-span-12 lg:col-span-5 min-w-0">
               <PnlChart />
             </div>
-            <div className="col-span-12 lg:col-span-6 min-w-0">
+            <div className="col-span-12 lg:col-span-4 min-w-0">
               <AiImpactChart />
+            </div>
+            <div className="col-span-12 lg:col-span-3 min-w-0">
+              <CostsCard />
             </div>
           </div>
         </FadeUpItem>
