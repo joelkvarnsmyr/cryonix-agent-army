@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Copilot Evolution Engine
- * Autonomous self-improvement system using GitHub Copilot CLI
+ * Claude Code Evolution Engine
+ * Autonomous self-improvement system using Claude Code CLI
  * Runs nightly at 03:00 UTC on Azure VM
  */
 
@@ -10,8 +10,9 @@ import { readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import pg from 'pg';
 import Redis from 'ioredis';
-import OpenAI from 'openai';
 import { TelegramBot } from './telegram-bot.mjs';
+import { tmpdir } from 'os';
+import { unlink } from 'fs/promises';
 import 'dotenv/config'; // Load .env file
 
 const { Client } = pg;
@@ -29,7 +30,8 @@ const CONFIG = {
   MIN_TRADES_FOR_ANALYSIS: 3,
   PERFORMANCE_THRESHOLD: -2.0, // Trigger evolution if daily PnL < -2%
   MAX_EVOLUTION_ATTEMPTS: 3,
-  COPILOT_TIMEOUT: 600000, // 10 minutes
+  CLAUDE_TIMEOUT: 600000, // 10 minutes
+  CLAUDE_MODEL: process.env.EVOLUTION_MODEL || 'claude-opus-4-6',
   PROJECT_ROOT: '/home/azureuser/cryonix',
 
   // Test suite to run after mutation
@@ -249,7 +251,7 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
       weakestPattern: weakestPattern.pattern,
       weakestPnl,
       needsEvolution,
-      // New diagnostic data for GROK
+      // Diagnostic data for Claude analysis
       exitAnalysis: {
         slCount: slTrades.length,
         tpCount: tpTrades.length,
@@ -323,79 +325,82 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
   }
 
   /**
-   * Phase 1: GROK analyzes performance data + source code and generates
-   *          a precise instruction for Copilot CLI.
-   * Phase 2: Copilot CLI executes the instruction (edits files).
+   * Claude Code CLI analyzes performance data + source code and directly
+   * mutates code — single autonomous session, no intermediary.
    */
-  async runCopilotEvolution(performanceData) {
-    console.log('\n🤖 Running GROK → Copilot CLI evolution...');
+  async runClaudeEvolution(performanceData) {
+    console.log('\n🤖 Running Claude Code CLI evolution...');
+
+    const model = CONFIG.CLAUDE_MODEL;
+    const promptPath = join(tmpdir(), `evo-prompt-${this.runId}.md`);
 
     try {
-      // Phase 1: GROK generates the evolution plan
-      console.log('\n🧠 Phase 1: GROK analyzing performance + source code...');
-      const copilotInstruction = await this.askGrokForPlan(performanceData);
+      // Build comprehensive prompt with all data
+      const prompt = await this.buildEvolutionPrompt(performanceData);
 
-      if (!copilotInstruction) {
-        console.error('❌ GROK failed to generate an evolution plan');
-        return false;
-      }
+      // Write prompt to temp file (avoids shell escaping issues with massive prompts)
+      await writeFile(promptPath, prompt);
+      console.log(`📝 Prompt written to ${promptPath} (${prompt.length} chars)`);
 
-      // Save the instruction for audit
+      // Save for audit
       const promptDir = join(CONFIG.PROJECT_ROOT, '.evolution-prompts');
       await this.execCommand(`mkdir -p ${promptDir}`);
-      await writeFile(join(promptDir, `${this.runId}-grok-plan.md`), copilotInstruction);
-      console.log('📝 GROK plan saved for audit');
+      await writeFile(join(promptDir, `${this.runId}-claude-prompt.md`), prompt);
 
-      // Phase 2: Copilot CLI executes the code changes
-      console.log('\n🔧 Phase 2: Copilot CLI executing code changes...');
-      const model = process.env.EVOLUTION_MODEL_MUTATION || 'claude-sonnet-4.5';
-      await this.telegram.sendCopilotPhase(true, model);
+      // Notify Telegram
+      await this.telegram.sendClaudeAnalysis(model, 25);
 
+      // Run Claude Code CLI
+      console.log(`\n🧠 Claude Code CLI analyzing + mutating (model: ${model})...`);
       const result = await this.execCommand(
-        `gh copilot -- -p ${this.shellEscape(copilotInstruction)} --allow-all --model ${model} -s`,
-        { timeout: CONFIG.COPILOT_TIMEOUT, cwd: CONFIG.PROJECT_ROOT }
+        `claude -p "$(cat ${promptPath})" ` +
+        `--model ${model} ` +
+        `--allowedTools 'Edit,Read,Glob,Grep,Bash(python3 scripts/verify_deep_value.py),Bash(python3 scripts/verify_grid.py),Bash(git diff --stat)' ` +
+        `--max-turns 25`,
+        { timeout: CONFIG.CLAUDE_TIMEOUT, cwd: CONFIG.PROJECT_ROOT }
       );
 
-      // Save Copilot's output
-      await writeFile(join(promptDir, `${this.runId}-copilot-output.txt`), result);
-      console.log('📤 Copilot output saved');
+      // Save Claude's output
+      await writeFile(join(promptDir, `${this.runId}-claude-output.txt`), result);
+      console.log('📤 Claude output saved');
 
-      // Validate: did Copilot actually change any files?
+      // Validate: did Claude actually change any files?
       const diffCheck = await this.execCommand('git diff --stat');
       if (!diffCheck.trim()) {
-        console.warn('⚠️  Copilot CLI made no file changes — treating as failed mutation');
+        console.warn('⚠️  Claude Code CLI made no file changes — treating as failed mutation');
+        await this.telegram.sendClaudeMutation(false, model);
         return false;
       }
       const changedFiles = diffCheck.trim().split('\n').length - 1; // last line is summary
-      console.log(`   Copilot changed ${changedFiles} file(s)`);
+      console.log(`   Claude changed ${changedFiles} file(s)`);
 
       // Validate: reject if output looks like a refusal or error
       const lowerResult = result.toLowerCase();
       if (lowerResult.includes('i cannot') || lowerResult.includes('i\'m unable') || lowerResult.includes('error:')) {
-        console.warn('⚠️  Copilot output appears to be a refusal or error');
+        console.warn('⚠️  Claude output appears to be a refusal or error');
+        await this.telegram.sendClaudeMutation(false, model);
         return false;
       }
 
-      console.log('\n✅ Copilot evolution completed');
+      console.log('\n✅ Claude Code evolution completed');
+      await this.telegram.sendClaudeMutation(true, model);
       return true;
 
     } catch (error) {
       console.error('❌ Evolution failed:', error.message);
-      await this.telegram.sendCopilotPhase(false, process.env.EVOLUTION_MODEL_MUTATION || 'claude-sonnet-4.5');
+      await this.telegram.sendClaudeMutation(false, model);
       return false;
+    } finally {
+      // Clean up temp file
+      try { await unlink(promptPath); } catch {}
     }
   }
 
   /**
-   * Uses GROK (xAI) to analyze performance data and source code,
-   * then generates a precise, actionable instruction for Copilot CLI.
+   * Builds the full evolution prompt combining analysis priorities, rules,
+   * performance data, diagnostics, and source code.
    */
-  async askGrokForPlan(performanceData) {
-    const grok = new OpenAI({
-      apiKey: process.env.XAI_API_KEY,
-      baseURL: 'https://api.x.ai/v1',
-    });
-
+  async buildEvolutionPrompt(performanceData) {
     // Read actual source code from critical files
     const sourceCode = {};
     for (const file of CONFIG.CRITICAL_FILES) {
@@ -416,7 +421,7 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
 
     const { weakestPattern, weakestPnl, totalPnl, totalTrades, patterns,
             exitAnalysis, tradeFrequency, openPositions, scannerDiagnostic,
-            structuralIssues, diagnostics } = performanceData;
+            structuralIssues } = performanceData;
 
     const patternBreakdown = patterns.map(p =>
       `- ${p.pattern}: ${p.trade_count} trades, $${parseFloat(p.total_pnl).toFixed(2)} P&L, ` +
@@ -491,41 +496,36 @@ DIAGNOSIS: Coins with score ≥2 and high volume are momentum candidates. Coins 
 ${structuralIssues.map(i => `- ${i}`).join('\n')}
 These are more important than pattern-level fixes. Address structural issues FIRST.` : '';
 
-    const systemPrompt = `You are a Senior Quantitative Developer orchestrating an autonomous trading system evolution.
+    return `# Cryonix Evolution — Autonomous Trading System Improvement
 
-Your job: analyze the performance data, exit analysis, market diagnostics, calibration EV data, X sentiment, and source code below,
-then produce a SINGLE, precise instruction that GitHub Copilot CLI will execute to improve the code.
+You are improving an autonomous crypto trading system based on the last ${CONFIG.LOOKBACK_HOURS}h performance data.
 
-SYSTEM CAPABILITIES YOU CAN LEVERAGE:
+## Your Task
+Analyze the performance data below, identify the most impactful issue, and make 1-3 surgical code changes to fix it. Then run verification tests.
+
+## Rules
+1. Make 1-3 small parameter tweaks or condition changes. No rewrites.
+2. NEVER remove risk checks (stop-loss, max position size, daily loss limits).
+3. After editing, run: python3 scripts/verify_deep_value.py && python3 scripts/verify_grid.py
+4. Focus on EXIT strategy — historically our entries are better than our exits.
+5. If a pattern has negative EV, raise its confidence threshold.
+
+## Analysis Priority
+1. STRUCTURAL ISSUES (SL too tight, trailing stop killing profits, over-trading)
+2. EXIT STRATEGY (SL/TP/trailing parameters)
+3. CALIBRATION EV (negative EV patterns → deprioritize)
+4. SIGNAL QUALITY (pattern confidence, missed GainerScanner opportunities)
+
+## System Capabilities
 - ADX market regime detection (trending/ranging/volatile) in quant.py
 - Multi-timeframe trend filter (1h+4h EMA alignment)
-- Pattern calibration with Expected Value (EV) model — patterns with negative EV should be filtered
-- X/Twitter sentiment scores per coin — bullish sentiment + technical signal = high confidence
-- GROK xAI search mode for real-time news context during AI validation
+- Pattern calibration with Expected Value (EV) model
+- X/Twitter sentiment scores per coin
 - Order book spread check (rejects >0.3% spread)
 - GainerScanner identifying momentum coins with >5% moves
-- Dynamic portfolio context (real Binance capital, not hardcoded)
+- Dynamic portfolio context (real Binance capital)
 
-ANALYSIS PRIORITY ORDER:
-1. STRUCTURAL ISSUES (stop-loss too tight, trailing stop killing profits, over-trading) — fix these first
-2. EXIT STRATEGY (SL/TP/trailing parameters) — more impactful than entry strategy
-3. CALIBRATION EV — if patterns have negative expected value, adjust thresholds or deprioritize
-4. SENTIMENT ALIGNMENT — leverage X sentiment for signal confirmation
-5. SIGNAL QUALITY (pattern confidence, missed opportunities from GainerScanner)
-6. PATTERN-LEVEL (weakest pattern confidence/thresholds)
-
-RULES FOR YOUR OUTPUT:
-1. Output ONLY the instruction text that Copilot CLI will receive — no preamble, no markdown wrapping.
-2. The instruction must tell Copilot exactly which files to edit and what changes to make.
-3. Be surgical: 1-3 small parameter tweaks or condition changes. No rewrites.
-4. NEVER remove risk checks (stop-loss, max position size, daily loss limits).
-5. Changes must pass: python scripts/verify_deep_value.py && python scripts/verify_grid.py
-6. After editing, tell Copilot to run the verification tests.
-7. Focus on the EXIT side — historically our entries are better than our exits.
-8. If calibration data shows a pattern has negative EV, consider raising its confidence threshold.
-9. Use X sentiment to inform whether momentum-based signals should be boosted.`;
-
-    const userPrompt = `## Performance Data (last ${CONFIG.LOOKBACK_HOURS}h)
+## Performance Data (last ${CONFIG.LOOKBACK_HOURS}h)
 Total P&L: $${totalPnl.toFixed(2)} | Total Trades: ${totalTrades}
 Weakest Pattern: ${weakestPattern} (P&L: $${weakestPnl.toFixed(2)})
 
@@ -562,34 +562,7 @@ ${sourceCode['packages/engine/src/core/risk_manager.py']}
 ${sourceCode['apps/web/src/app/api/auto-trade/route.ts']}
 \`\`\`
 
-${promptTemplate ? `## Additional Guidelines\n${promptTemplate}` : ''}
-
-Based on ALL the data above (not just patterns), generate the Copilot CLI instruction to fix the most impactful issue.`;
-
-    console.log(`   Sending ${userPrompt.length} chars to GROK...`);
-
-    const response = await grok.chat.completions.create({
-      model: 'grok-4-1-fast-reasoning',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.3,
-      max_tokens: 4000,
-    });
-
-    const instruction = response.choices[0]?.message?.content?.trim();
-    const usage = response.usage;
-    console.log(`   GROK tokens: ${usage?.prompt_tokens || '?'} in / ${usage?.completion_tokens || '?'} out`);
-    await this.telegram.sendGrokPhase(instruction?.length || 0, usage?.prompt_tokens || 0, usage?.completion_tokens || 0);
-
-    if (!instruction || instruction.length < 50) {
-      console.error('❌ GROK returned insufficient instruction');
-      return null;
-    }
-
-    console.log(`   ✅ GROK generated instruction (${instruction.length} chars)`);
-    return instruction;
+${promptTemplate ? `## Additional Guidelines\n${promptTemplate}` : ''}`;
   }
 
   /** Escape a string for safe use as a single shell argument */
@@ -646,7 +619,7 @@ Based on ALL the data above (not just patterns), generate the Copilot CLI instru
 
     await this.execCommand(`git commit -m "${message}
 
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"`);
+Co-authored-by: Claude <noreply@anthropic.com>"`);
 
     let pushed = false;
     try {
@@ -754,7 +727,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"`);
       // Step 2: Create backup
       backupDir = await this.createBackup();
 
-      // Step 3: Run Copilot evolution
+      // Step 3: Run Claude Code evolution
       let attempt = 0;
       let mutationApplied = false;
 
@@ -762,7 +735,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"`);
         attempt++;
         console.log(`\n🔄 Evolution attempt ${attempt}/${CONFIG.MAX_EVOLUTION_ATTEMPTS}`);
 
-        mutationApplied = await this.runCopilotEvolution(performanceData);
+        mutationApplied = await this.runClaudeEvolution(performanceData);
 
         if (!mutationApplied) {
           console.log('⚠️  Mutation failed, retrying...');

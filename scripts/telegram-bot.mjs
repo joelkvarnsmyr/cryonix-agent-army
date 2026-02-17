@@ -82,20 +82,20 @@ export class TelegramBot {
     );
   }
 
-  /** Report GROK analysis phase */
-  async sendGrokPhase(instructionLength, tokensIn, tokensOut) {
+  /** Report Claude analysis start */
+  async sendClaudeAnalysis(model, turns) {
     return this.send(
-      `🧠 <b>GROK Analysis Complete</b>\n` +
-      `Instruction: ${instructionLength} chars\n` +
-      `Tokens: ${tokensIn} in / ${tokensOut} out`
+      `🧠 <b>Claude Analysis</b>\n` +
+      `Model: ${model}\n` +
+      `Turns: ${turns}`
     );
   }
 
-  /** Report Copilot execution phase */
-  async sendCopilotPhase(success, model) {
+  /** Report Claude mutation result */
+  async sendClaudeMutation(success, model) {
     const emoji = success ? '✅' : '❌';
     return this.send(
-      `🔧 <b>Copilot Execution</b> ${emoji}\n` +
+      `🔧 <b>Claude Mutation</b> ${emoji}\n` +
       `Model: ${model}\n` +
       `Result: ${success ? 'Changes applied' : 'Failed'}`
     );

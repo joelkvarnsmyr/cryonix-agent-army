@@ -13,6 +13,8 @@ Usage:
 import os
 import sys
 import json
+import psycopg2
+import psycopg2.extras
 from typing import List, Dict, Any
 
 # Ensure correct path for imports
@@ -51,7 +53,7 @@ def fetch_postgres_positions(pg_conn) -> List[Dict[str, Any]]:
     """Fetch positions marked as 'FILLED' from the Postgres 'trades' table."""
     print("🔍 Fetching 'FILLED' positions from Postgres...")
     try:
-        with pg_conn.cursor(cursor_factory=pg.cursors.DictCursor) as cur:
+        with pg_conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute("""
                 SELECT id, symbol, side, quantity, entry_price, timestamp, pattern
                 FROM trades
@@ -98,8 +100,7 @@ def fetch_binance_holdings() -> Dict[str, float]:
 
 def reconcile_states(redis_pos, pg_pos, binance_holdings):
     """Compare states and identify orphans."""
-    print("
-[ANALYSIS] Comparing system state with Binance holdings...")
+    print("\n[ANALYSIS] Comparing system state with Binance holdings...")
     
     # Consolidate internal state from Redis and Postgres
     internal_symbols = {p['symbol'].split('/')[0] for p in redis_pos}
@@ -138,11 +139,9 @@ async def perform_cleanup(orphans: List[Dict[str, Any]], redis_client, pg_conn):
     if not orphans:
         return
 
-    print("
---- INTERACTIVE CLEANUP ---")
+    print("\n--- INTERACTIVE CLEANUP ---")
     print("For each orphan, you will be asked to confirm its removal from the system's internal state.")
-    print("This will NOT execute any trades on Binance.
-")
+    print("This will NOT execute any trades on Binance.\n")
 
     for orphan in orphans:
         symbol = orphan['symbol']
@@ -207,8 +206,7 @@ def main():
     print(" Cryonix Orphan Position Reconciliation Tool")
     print("="*50)
     print("This script will help you find and fix inconsistencies between the")
-    print("system's internal state and your live Binance account.
-")
+    print("system's internal state and your live Binance account.\n")
     
     pg_conn = None
     redis_client = None
@@ -217,8 +215,7 @@ def main():
         # --- 1. Connect to services ---
         pg_conn = get_pg()
         redis_client = get_redis()
-        print("
-✅ Connected to Postgres and Redis.")
+        print("\n✅ Connected to Postgres and Redis.")
 
         # --- 2. Fetch state from all sources ---
         redis_positions = fetch_redis_positions(redis_client)
@@ -234,12 +231,10 @@ def main():
             import asyncio
             asyncio.run(perform_cleanup(orphans_to_clean, redis_client, pg_conn))
         
-        print("
-✅ Reconciliation process complete.")
+        print("\n✅ Reconciliation process complete.")
 
     except Exception as e:
-        print(f"
-💥 An unexpected error occurred: {e}")
+        print(f"\n💥 An unexpected error occurred: {e}")
     finally:
         if pg_conn:
             pg_conn.close()
