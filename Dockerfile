@@ -46,8 +46,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 
-# Copy auto-trader script + shared lib (plain JS, no TS needed)
-COPY --from=builder /app/scripts/auto-trader.mjs ./scripts/auto-trader.mjs
+# Copy shared lib (plain JS, no TS needed)
 COPY --from=builder /app/scripts/lib/ ./scripts/lib/
 
 USER nextjs

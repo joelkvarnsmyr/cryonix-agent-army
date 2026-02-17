@@ -6,7 +6,7 @@
 
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
-import { getToml } from './lib/load-toml.mjs';
+import { getToml } from '../lib/load-toml.mjs';
 
 const PORT = parseInt(process.env.WS_PORT || '3004', 10);
 

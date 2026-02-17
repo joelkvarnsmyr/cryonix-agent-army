@@ -12,7 +12,7 @@
 import pg from 'pg';
 import Redis from 'ioredis';
 import 'dotenv/config';
-import { getToml } from './lib/load-toml.mjs';
+import { getToml } from '../lib/load-toml.mjs';
 
 const { Client } = pg;
 
