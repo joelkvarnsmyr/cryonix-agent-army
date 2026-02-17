@@ -7,5 +7,6 @@ WORKDIR /app
 RUN npm install --no-save ws@8 pg@8 ioredis@5 dotenv@16
 
 COPY scripts/auto-trader.mjs scripts/ws-server.mjs scripts/telegram-interactive.mjs ./scripts/
+COPY scripts/lib/ ./scripts/lib/
 
 USER node

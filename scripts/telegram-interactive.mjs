@@ -12,6 +12,7 @@
 import pg from 'pg';
 import Redis from 'ioredis';
 import 'dotenv/config';
+import { getToml } from './lib/load-toml.mjs';
 
 const { Client } = pg;
 
@@ -24,9 +25,9 @@ const DB_URL = process.env.POSTGRES_URL ||
 const REDIS_URL = process.env.KV_URL || `redis://${process.env.REDIS_HOST || 'localhost'}:6379`;
 const WEB_URL = process.env.NEXTJS_API_URL || 'http://localhost:3000';
 
-const POLL_INTERVAL = 1000;       // 1s polling for commands
-const HEALTH_INTERVAL = 300000;   // 5min health check
-const TRADE_POLL = 15000;         // 15s trade alert check
+const POLL_INTERVAL = getToml('timing', 'telegram_poll_ms', 1000);
+const HEALTH_INTERVAL = getToml('timing', 'health_check_interval_ms', 300000);
+const TRADE_POLL = getToml('timing', 'trade_alert_poll_ms', 15000);
 
 // ─── Telegram helpers ────────────────────────────────────
 async function sendMessage(text, chatId = CHAT_ID) {

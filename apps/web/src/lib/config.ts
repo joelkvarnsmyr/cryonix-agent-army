@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs';
+import { createHash } from 'crypto';
 import { parse } from '@iarna/toml';
 import { join } from 'path';
 import { RISK_CONFIG, type RiskConfig } from '@cryonix/types';
@@ -85,6 +86,7 @@ export interface CryonixConfig {
 
 let _tomlConfig: CryonixConfig | null = null;
 let _loaded = false;
+let _tomlHash: string = 'none';
 
 function loadToml(): CryonixConfig | null {
   if (_loaded) return _tomlConfig;
@@ -100,7 +102,8 @@ function loadToml(): CryonixConfig | null {
     try {
       const raw = readFileSync(p, 'utf-8');
       _tomlConfig = parse(raw) as unknown as CryonixConfig;
-      console.log(`[CONFIG] Loaded cryonix.toml from ${p}`);
+      _tomlHash = createHash('sha256').update(raw).digest('hex').slice(0, 12);
+      console.log(`[CONFIG] Loaded cryonix.toml from ${p} (hash: ${_tomlHash})`);
       return _tomlConfig;
     } catch {
       continue;
@@ -109,6 +112,15 @@ function loadToml(): CryonixConfig | null {
 
   console.warn('[CONFIG] cryonix.toml not found — using RISK_CONFIG defaults');
   return null;
+}
+
+/**
+ * Returns short SHA-256 hash of the loaded TOML file.
+ * Use to verify all containers are running the same config.
+ */
+export function configHash(): string {
+  loadToml();
+  return _tomlHash;
 }
 
 /**

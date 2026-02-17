@@ -4,9 +4,11 @@
  * Polls the auto-trade API every 30s to process pending signals + monitor positions.
  */
 
+import { getToml } from './lib/load-toml.mjs';
+
 const API_BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://web:3000';
-const POLL_INTERVAL = 30_000;
-const HEALTH_CHECK_INTERVAL = 300_000;
+const POLL_INTERVAL = getToml('timing', 'auto_trader_poll_ms', 30_000);
+const HEALTH_CHECK_INTERVAL = getToml('timing', 'health_check_interval_ms', 300_000);
 
 let isRunning = true;
 let cycleCount = 0;

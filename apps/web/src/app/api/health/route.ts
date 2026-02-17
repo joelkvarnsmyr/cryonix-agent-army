@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
 import { db } from '@cryonix/database';
 import { sql } from 'drizzle-orm';
+import { configHash } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -139,6 +140,7 @@ export async function GET() {
 
   const body = {
     status,
+    configHash: configHash(),
     timestamp: new Date().toISOString(),
     uptime: Math.floor((Date.now() - startedAt) / 1000),
     totalLatency,

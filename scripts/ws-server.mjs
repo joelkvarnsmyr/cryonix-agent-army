@@ -6,6 +6,7 @@
 
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
+import { getToml } from './lib/load-toml.mjs';
 
 const PORT = parseInt(process.env.WS_PORT || '3004', 10);
 
@@ -133,13 +134,16 @@ wss.on('connection', (ws, req) => {
 });
 
 // Heartbeat
+const WS_HEARTBEAT_MS = getToml('timing', 'ws_heartbeat_ms', 30000);
+const WS_TIMEOUT_MS = getToml('timing', 'ws_timeout_ms', 90000);
+
 setInterval(() => {
   const now = Date.now();
   for (const [ws, info] of clients) {
-    if (now - info.lastPing > 90000) { ws.terminate(); leaveAllRooms(ws); clients.delete(ws); continue; }
+    if (now - info.lastPing > WS_TIMEOUT_MS) { ws.terminate(); leaveAllRooms(ws); clients.delete(ws); continue; }
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'HEARTBEAT', timestamp: now }));
   }
-}, 30000);
+}, WS_HEARTBEAT_MS);
 
 server.listen(PORT, () => console.log(`WS Server running on ws://0.0.0.0:${PORT}`));
 process.on('SIGTERM', () => { for (const [ws] of clients) ws.close(1000); wss.close(() => process.exit(0)); });
