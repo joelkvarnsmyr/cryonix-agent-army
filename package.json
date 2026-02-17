@@ -19,6 +19,7 @@
     "test:ui": "vitest --ui"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@vitest/coverage-v8": "^4.0.17",
     "@vitest/ui": "^4.0.17",
     "turbo": "^2.3.3",
