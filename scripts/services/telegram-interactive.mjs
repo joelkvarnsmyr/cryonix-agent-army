@@ -316,6 +316,7 @@ function cmdHelp() {
     `/gainers — Top movers & volume surges\n` +
     `/audit — Full system audit\n` +
     `/evolve — Evolution history\n` +
+    `/cost — AI API costs\n` +
     `/help — This menu\n\n` +
     `<b>Auto Reports:</b>\n` +
     `📡 Every 15min — Pipeline health\n` +
@@ -590,6 +591,90 @@ async function pipelineHealthReport() {
   }
 }
 
+// ─── /cost — AI API cost tracker ─────────────────────────
+const MODEL_PRICING = {
+  // Per 1M tokens: [input, output]
+  'grok-4-1-fast-reasoning': [0.20, 0.50],
+  'grok-4-1-fast-non-reasoning': [0.20, 0.50],
+  'grok-4-fast-reasoning': [1.00, 4.00],
+  'grok-4-fast-non-reasoning': [1.00, 4.00],
+  'grok-4-0709': [3.00, 15.00],
+  'grok-3': [3.00, 15.00],
+  'grok-3-mini': [0.03, 0.10],
+};
+
+async function cmdCost() {
+  try {
+    // Per-model usage: today, 7d, all-time
+    const res = await query(`
+      SELECT
+        usage->>'model' as model,
+        COUNT(*) FILTER (WHERE timestamp > NOW() - INTERVAL '24 hours') as calls_24h,
+        SUM((usage->>'prompt_tokens')::int) FILTER (WHERE timestamp > NOW() - INTERVAL '24 hours') as prompt_24h,
+        SUM((usage->>'completion_tokens')::int) FILTER (WHERE timestamp > NOW() - INTERVAL '24 hours') as comp_24h,
+        COUNT(*) FILTER (WHERE timestamp > NOW() - INTERVAL '7 days') as calls_7d,
+        SUM((usage->>'prompt_tokens')::int) FILTER (WHERE timestamp > NOW() - INTERVAL '7 days') as prompt_7d,
+        SUM((usage->>'completion_tokens')::int) FILTER (WHERE timestamp > NOW() - INTERVAL '7 days') as comp_7d,
+        COUNT(*) as calls_all,
+        SUM((usage->>'prompt_tokens')::int) as prompt_all,
+        SUM((usage->>'completion_tokens')::int) as comp_all,
+        MIN(timestamp) as first_call
+      FROM validation_history
+      WHERE usage IS NOT NULL AND usage->>'model' IS NOT NULL
+      GROUP BY usage->>'model'
+      ORDER BY calls_all DESC
+    `);
+
+    if (!res.rows.length) return '💰 <b>AI Cost Tracker</b>\n\nNo API calls recorded yet.';
+
+    function calcCost(model, promptTok, compTok) {
+      const pricing = MODEL_PRICING[model] || MODEL_PRICING['grok-3-mini'];
+      const inCost = (parseInt(promptTok) || 0) / 1_000_000 * pricing[0];
+      const outCost = (parseInt(compTok) || 0) / 1_000_000 * pricing[1];
+      return inCost + outCost;
+    }
+
+    let totalCost24h = 0, totalCost7d = 0, totalCostAll = 0;
+    let totalCalls24h = 0, totalCalls7d = 0, totalCallsAll = 0;
+
+    const modelLines = res.rows.map(r => {
+      const cost24h = calcCost(r.model, r.prompt_24h, r.comp_24h);
+      const cost7d = calcCost(r.model, r.prompt_7d, r.comp_7d);
+      const costAll = calcCost(r.model, r.prompt_all, r.comp_all);
+      totalCost24h += cost24h;
+      totalCost7d += cost7d;
+      totalCostAll += costAll;
+      totalCalls24h += parseInt(r.calls_24h) || 0;
+      totalCalls7d += parseInt(r.calls_7d) || 0;
+      totalCallsAll += parseInt(r.calls_all) || 0;
+
+      const pricing = MODEL_PRICING[r.model];
+      const priceLabel = pricing ? `$${pricing[0]}/$${pricing[1]}` : '?';
+      return `<b>${r.model}</b> (${priceLabel}/1M)\n` +
+        `  24h: ${r.calls_24h || 0} calls · $${cost24h.toFixed(4)}\n` +
+        `  7d:  ${r.calls_7d || 0} calls · $${cost7d.toFixed(4)}\n` +
+        `  All: ${r.calls_all} calls · $${costAll.toFixed(4)}`;
+    });
+
+    // Estimate monthly cost based on 7d average
+    const daysTracked = Math.max(1, (Date.now() - new Date(res.rows[0].first_call).getTime()) / (1000 * 60 * 60 * 24));
+    const dailyAvg = totalCostAll / daysTracked;
+    const monthlyEst = dailyAvg * 30;
+
+    return `💰 <b>AI Cost Tracker</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      modelLines.join('\n\n') + '\n\n' +
+      `━━━━━━━━━━━━━━━━━━━━━\n` +
+      `<b>Totals:</b>\n` +
+      `  24h: ${totalCalls24h} calls · <b>$${totalCost24h.toFixed(4)}</b>\n` +
+      `  7d:  ${totalCalls7d} calls · <b>$${totalCost7d.toFixed(4)}</b>\n` +
+      `  All: ${totalCallsAll} calls · <b>$${totalCostAll.toFixed(4)}</b>\n\n` +
+      `📊 Daily avg: $${dailyAvg.toFixed(4)} · Est. monthly: <b>$${monthlyEst.toFixed(2)}</b>`;
+  } catch (e) {
+    return `❌ Cost query failed: ${e.message}`;
+  }
+}
+
 // ─── Command router ──────────────────────────────────────
 const COMMANDS = {
   '/status': cmdStatus,
@@ -601,6 +686,7 @@ const COMMANDS = {
   '/audit': cmdAudit,
   '/gainers': cmdGainers,
   '/evolve': cmdEvolve,
+  '/cost': cmdCost,
   '/help': cmdHelp,
   '/start': cmdHelp,
 };
