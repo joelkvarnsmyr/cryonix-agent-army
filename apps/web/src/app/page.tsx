@@ -40,9 +40,9 @@ export default function HomePage() {
             </div>
 
             {/* Center Column: Price Chart + sub-analytics */}
-            <div className="col-span-12 lg:col-span-6 3xl:col-span-7 space-y-2.5 3xl:space-y-1.5">
+            <div className="col-span-12 lg:col-span-6 3xl:col-span-7 space-y-2.5 3xl:space-y-1.5 min-w-0">
               <PriceChart />
-              <div className="grid grid-cols-2 gap-2.5 3xl:gap-1.5">
+              <div className="grid grid-cols-2 gap-2.5 3xl:gap-1.5 min-w-0">
                 <EquityCurve />
                 <PatternPerformance />
               </div>
@@ -60,10 +60,10 @@ export default function HomePage() {
         {/* Row 4: Analytics — PnL + AI Impact side by side */}
         <FadeUpItem>
           <div className="grid grid-cols-12 gap-2.5 3xl:gap-1.5">
-            <div className="col-span-12 lg:col-span-6">
+            <div className="col-span-12 lg:col-span-6 min-w-0">
               <PnlChart />
             </div>
-            <div className="col-span-12 lg:col-span-6">
+            <div className="col-span-12 lg:col-span-6 min-w-0">
               <AiImpactChart />
             </div>
           </div>

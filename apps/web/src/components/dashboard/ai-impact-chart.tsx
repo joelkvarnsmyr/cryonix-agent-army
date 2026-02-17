@@ -60,7 +60,7 @@ export function AiImpactChart() {
   }));
 
   return (
-    <Card className="glass-card">
+    <Card className="glass-card w-full overflow-hidden">
       <CardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">

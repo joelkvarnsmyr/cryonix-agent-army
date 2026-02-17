@@ -44,7 +44,7 @@ export function PatternPerformance() {
   const format = view === 'winRate' ? (v: number) => `${v.toFixed(0)}%` : (v: number) => `$${v.toFixed(3)}`;
 
   return (
-    <Card className="glass-card">
+    <Card className="glass-card w-full overflow-hidden">
       <CardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -54,17 +54,15 @@ export function PatternPerformance() {
           <div className="flex items-center gap-0.5">
             <button
               onClick={() => setView('winRate')}
-              className={`px-2 py-0.5 rounded text-[9px] font-mono transition-all ${
-                view === 'winRate' ? 'bg-violet-500/10 text-violet-400' : 'text-muted-foreground/50 hover:text-muted-foreground'
-              }`}
+              className={`px-2 py-0.5 rounded text-[9px] font-mono transition-all ${view === 'winRate' ? 'bg-violet-500/10 text-violet-400' : 'text-muted-foreground/50 hover:text-muted-foreground'
+                }`}
             >
               Win Rate
             </button>
             <button
               onClick={() => setView('pnl')}
-              className={`px-2 py-0.5 rounded text-[9px] font-mono transition-all ${
-                view === 'pnl' ? 'bg-violet-500/10 text-violet-400' : 'text-muted-foreground/50 hover:text-muted-foreground'
-              }`}
+              className={`px-2 py-0.5 rounded text-[9px] font-mono transition-all ${view === 'pnl' ? 'bg-violet-500/10 text-violet-400' : 'text-muted-foreground/50 hover:text-muted-foreground'
+                }`}
             >
               P&L
             </button>

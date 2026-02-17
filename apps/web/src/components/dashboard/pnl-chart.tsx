@@ -52,7 +52,7 @@ export function PnlChart() {
   const worst = trades.reduce((w, t) => t.pnl < w ? t.pnl : w, Infinity);
 
   return (
-    <Card className="glass-card">
+    <Card className="glass-card w-full overflow-hidden">
       <CardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
