@@ -83,6 +83,15 @@ export interface CryonixConfig {
     phantom_threshold: number; mismatch_warning_low: number;
     mismatch_warning_high: number; dust_sell_floor: number;
   };
+  coinmarketcap: {
+    enabled: boolean; poll_interval_seconds: number;
+    fear_threshold: number; greed_threshold: number;
+    fear_deep_value_boost: number; fear_min_confidence: number;
+    greed_confidence_penalty: number;
+    max_rank: number; max_fdv_mc_ratio: number;
+    global_mc_drop_volatile_pct: number;
+    btc_dominance_rise_alt_penalty: number; alt_dominance_penalty: number;
+  };
 }
 
 let _tomlConfig: CryonixConfig | null = null;

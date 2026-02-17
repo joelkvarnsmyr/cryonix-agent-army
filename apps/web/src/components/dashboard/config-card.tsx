@@ -24,7 +24,16 @@ export function ConfigCard() {
     );
   }
 
-  const rows = [
+  const toml = data?.toml;
+
+  const rows = toml ? [
+    { label: 'Mode', value: `${toml.trading.mode.toUpperCase()} ${toml.trading.default_leverage}x` },
+    { label: 'Capital', value: `$${data?.config.TOTAL_CAPITAL}` }, // Keep total capital from legacy/dynamic config
+    { label: 'Risk', value: `Max -${(toml.risk.max_daily_loss_pct * 100).toFixed(1)}%/day` },
+    { label: 'Sizing', value: `${(toml.capital.max_position_size_pct * 100).toFixed(0)}%` },
+    { label: 'AI', value: `${toml.ai.enabled ? 'ON' : 'OFF'} (${toml.ai.model})` },
+    { label: 'Exits', value: `Trail ${toml.exits.trailing_stop_pct}%` },
+  ] : [
     { label: 'Capital', value: `$${config.TOTAL_CAPITAL}` },
     { label: 'Mode', value: `${config.TRADING_MODE} ${config.DEFAULT_LEVERAGE}x` },
     { label: 'Max Pos', value: `${config.MAX_OPEN_POSITIONS}` },

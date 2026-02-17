@@ -46,10 +46,80 @@ interface GridConfig {
   levels: Array<{ price: number; triggered: boolean }>;
 }
 
+export interface CryonixConfig {
+  trading: { mode: string; spot_only: boolean; margin_type: string; default_leverage: number };
+  capital: {
+    max_position_size_pct: number; min_order_value: number;
+    signal_pool_pct: number; grid_pool_pct: number; reserve_pct: number;
+    kelly_fraction_multiplier: number; deep_value_max_pct: number; deep_value_min_confidence: number;
+  };
+  limits: {
+    max_open_positions: number; max_signal_positions: number;
+    max_grid_positions: number; max_trades_per_day: number; max_pending_queue: number;
+  };
+  risk: {
+    max_daily_loss_pct: number; max_weekly_loss_pct: number;
+    max_consecutive_losses: number; max_correlation: number;
+    volatility_pause_atr_pct: number; liquidation_buffer_pct: number;
+    min_confidence: number; min_risk_reward: number;
+  };
+  exits: {
+    trailing_stop_pct: number; trailing_activation_pct: number;
+    max_slippage_pct: number; max_spread_pct: number; orderbook_depth: number;
+    sl_atr_multiplier: number; tp_atr_multiplier: number;
+    deep_value_sl_atr: number; deep_value_tp_atr: number;
+    native_sl_limit_offset: number;
+  };
+  indicators: {
+    rsi_period: number; rsi_oversold: number; rsi_overbought: number;
+    bollinger_period: number; bollinger_std: number; bollinger_squeeze_pct: number;
+    macd_fast: number; macd_slow: number; macd_signal: number;
+    ema_fast: number; ema_slow: number;
+    atr_period: number; adx_period: number; adx_trending_threshold: number;
+    volume_sma_period: number; volume_spike_threshold: number; volume_confirmation: number;
+    min_candles: number;
+  };
+  patterns: {
+    dip_buy_drawdown: number; dip_buy_lookback: number; dip_buy_max_rsi: number;
+    deep_value_threshold: number; deep_value_support_lookback_days: number;
+    deep_value_rug_pull_velocity: number;
+  };
+  consensus: {
+    single_pattern_penalty: number; two_pattern_boost: number;
+    three_pattern_boost: number; ranging_trend_penalty: number;
+  };
+  regime: {
+    volatile_atr_expansion: number;
+    volatile_signal_pct: number; volatile_grid_pct: number; volatile_reserve_pct: number;
+    trending_signal_pct: number; trending_grid_pct: number; trending_reserve_pct: number;
+  };
+  boosting: {
+    gainer_min_change_pct: number; gainer_confidence_boost: number;
+    telegram_window_minutes: number; telegram_boost_enabled: boolean;
+  };
+  ev_model: { min_trades_for_ev: number; calibration_lookback_days: number; calibration_min_trades: number };
+  sentiment: { expiration_seconds: number; alert_keywords: string[] };
+  ai: { enabled: boolean; model: string; temperature: number; max_tokens: number; ta_weight: number; ai_weight: number };
+  timing: {
+    auto_trader_poll_ms: number; health_check_interval_ms: number;
+    telegram_poll_ms: number; trade_alert_poll_ms: number;
+    ws_heartbeat_ms: number; ws_timeout_ms: number;
+    capital_cache_ms: number; calibration_cache_ms: number; regime_ttl_seconds: number;
+    reconcile_interval_ms: number; instance_lock_ttl_seconds: number; position_lock_ttl_seconds: number;
+  };
+  engine: { timeframe: string; candle_limit: number; news_scan_interval_seconds: number };
+  grid: { level_trigger_tolerance: number };
+  reconciliation: {
+    phantom_threshold: number; mismatch_warning_low: number;
+    mismatch_warning_high: number; dust_sell_floor: number;
+  };
+}
+
 export interface AutoTradeStatus {
   success: boolean;
   status: string;
   config: AutoTradeConfig;
+  toml?: CryonixConfig;
   positions: PositionDetail[];
   dailyState: DailyState;
   queues: { pending: number; approved: number };
