@@ -125,7 +125,8 @@ async function cmdPositions() {
         `   SL: $${parseFloat(p.stop_loss || 0).toFixed(4)} | TP: $${parseFloat(p.take_profit || 0).toFixed(4)}`;
     });
 
-    return `📊 <b>Open Positions (${r.rows.length})</b>\n\n${lines.join('\n\n')}`;
+    const maxPos = getToml('limits', 'max_open_positions', 3);
+    return `📊 <b>Open Positions (${r.rows.length}/${maxPos})</b>\n\n${lines.join('\n\n')}`;
   } catch (e) {
     // Try Redis fallback
     try {
@@ -135,13 +136,14 @@ async function cmdPositions() {
       const positions = JSON.parse(data);
       const count = Object.keys(positions).length;
       if (count === 0) return '📭 No open positions';
+      const maxPos = getToml('limits', 'max_open_positions', 3);
 
       const lines = Object.entries(positions).map(([sym, p]) => {
         const pnl = p.pnl || 0;
         const icon = pnl >= 0 ? '🟢' : '🔴';
         return `${icon} <b>${sym}</b>: $${p.entryPrice?.toFixed(4) || '?'} → P&L: $${pnl.toFixed(2)}`;
       });
-      return `📊 <b>Open Positions (${count})</b>\n\n${lines.join('\n')}`;
+      return `📊 <b>Open Positions (${count}/${maxPos})</b>\n\n${lines.join('\n')}`;
     } catch {
       return `❌ Could not fetch positions: ${e.message}`;
     }
@@ -268,14 +270,16 @@ async function cmdRisk() {
     const openCount = parseInt(p.count || 0);
     const unrealized = parseFloat(p.unrealized_pnl || 0);
 
+    const maxDailyLossPct = getToml('risk', 'max_daily_loss_pct', 0.05);
+    const maxOpenPos = getToml('limits', 'max_open_positions', 3);
     const riskLevel = dailyPnl < -10 ? '🔴 HIGH' : dailyPnl < -5 ? '🟡 MODERATE' : '🟢 LOW';
 
     return `⚠️ <b>Risk Dashboard</b>\n\n` +
       `Risk Level: <b>${riskLevel}</b>\n` +
-      `Open Positions: ${openCount}\n` +
+      `Open Positions: ${openCount}/${maxOpenPos}\n` +
       `Unrealized P&L: $${unrealized.toFixed(2)}\n` +
       `Daily Realized: $${dailyPnl.toFixed(2)}\n\n` +
-      `Max Daily Loss Limit: $50`;
+      `Max Daily Loss: ${(maxDailyLossPct * 100).toFixed(0)}% of capital`;
   } catch (e) {
     return `❌ Could not fetch risk data: ${e.message}`;
   }
@@ -406,20 +410,23 @@ async function cmdAudit() {
       ? `\n<b>⚠️ Issues Detected:</b>\n${issues.join('\n')}`
       : '\n✅ No issues detected';
 
-    return `🔍 <b>System Audit</b>\n\n` +
-      `<b>Services:</b> ${healthStr}\n\n` +
-      `<b>Signals (24h):</b>\n` +
-      `  BUY: ${buySignals} (${buyPct}%) | SELL: ${sellSignals}\n` +
-      `  Total: ${totalSignals}\n\n` +
-      `<b>Top Patterns:</b>\n${patternLines}\n\n` +
-      `<b>Execution:</b>\n` +
-      `  Trades: ${totalTrades} | P&L: $${parseFloat(ex.total_pnl || 0).toFixed(2)}\n` +
-      `  Open positions: ${openPos.rows[0].cnt}\n` +
-      `  Queue: ${pendingQueue} pending, ${approvedQueue} approved\n\n` +
-      `<b>Last BUY:</b> ${lastBuyStr}` +
+    const maxPos = getToml('limits', 'max_open_positions', 3);
+    const maxTradesPerDay = getToml('limits', 'max_trades_per_day', 15);
+
+    return `━━━ 🔍 <b>SYSTEM AUDIT</b> ━━━━━━━━━\n` +
+      `${new Date().toISOString().split('T')[0]} 14:00 UTC\n\n` +
+      `🏥 ${healthStr}\n\n` +
+      `📡 <b>Signals 24h</b>\n` +
+      `  BUY: ${buySignals} (${buyPct}%) · SELL: ${sellSignals} · Total: ${totalSignals}\n\n` +
+      `🧩 <b>Top Patterns</b>\n${patternLines}\n\n` +
+      `📊 <b>Execution</b>\n` +
+      `  Trades: ${totalTrades}/${maxTradesPerDay} · P&L: $${parseFloat(ex.total_pnl || 0).toFixed(2)}\n` +
+      `  Positions: ${openPos.rows[0].cnt}/${maxPos}\n` +
+      `  Queue: ${pendingQueue} pending · ${approvedQueue} approved\n\n` +
+      `🔔 <b>Last BUY:</b> ${lastBuyStr}` +
       issueBlock;
   } catch (e) {
-    return `🔍 <b>System Audit</b>\nError: ${e.message}`;
+    return `━━━ 🔍 <b>SYSTEM AUDIT</b> ━━━━━━━━━\n\nError: ${e.message}`;
   }
 }
 
@@ -528,19 +535,22 @@ async function pipelineHealthReport() {
       if (top) topMover = `\n🔥 Top: ${top.symbol.split('/')[0]} ${top.change_1h > 0 ? '+' : ''}${top.change_1h}%`;
     }
 
+    // Dynamic config
+    const maxOpenPos = getToml('limits', 'max_open_positions', 3);
+    const maxDailyLossPct = getToml('risk', 'max_daily_loss_pct', 0.05);
+
     // Portfolio summary
     let portfolioBlock = '';
     if (riskState) {
       const capital = parseFloat(riskState.total_capital || 0);
       const dailyPnl = parseFloat(riskState.daily_pnl || 0);
-      const dailyLimit = capital * 0.05;
       const drawdownPct = capital > 0 ? ((dailyPnl / capital) * 100).toFixed(2) : '0';
       const posValue = positions.reduce((sum, p) => sum + (p.entryPrice || 0) * (p.quantity || 0), 0);
       const cashPct = capital > 0 ? (((capital - posValue) / capital) * 100).toFixed(0) : '?';
-      portfolioBlock = `\n💰 Capital: $${capital.toFixed(2)} | Cash: ${cashPct}% | Day P&L: ${dailyPnl >= 0 ? '+' : ''}$${dailyPnl.toFixed(2)} (${drawdownPct}%)`;
+      portfolioBlock = `\n💰 $${capital.toFixed(2)} · Cash: ${cashPct}% · P&L: ${dailyPnl >= 0 ? '+' : ''}$${dailyPnl.toFixed(2)} (${drawdownPct}%)`;
     }
 
-    // Position P&L summary (now uses live pnlPct from monitoring cycle)
+    // Position P&L summary
     let posBlock = '';
     if (positions.length > 0) {
       const posLines = positions.map(p => {
@@ -549,11 +559,15 @@ async function pipelineHealthReport() {
         const icon = pnlPct > 0.5 ? '🟢' : pnlPct < -0.5 ? '🔴' : '⚪';
         return `${icon}${sym} ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
       });
-      posBlock = `\n📌 ${posLines.join(' | ')}`;
+      posBlock = `\n📌 ${posLines.join(' · ')} (${positions.length}/${maxOpenPos})`;
     }
 
+    // Market regime
+    const regime = await rd.get('market:regime') || 'unknown';
+    const regimeIcon = { trending: '📈', volatile: '⚡', ranging: '📊' }[regime] || '❓';
+
     // Signal funnel line
-    const funnelBlock = `\n📊 Funnel 24h: ${signals24h} signals → ${trades24h} trades (${conversionPct}%)`;
+    const funnelBlock = `\n📊 Funnel 24h: ${signals24h} → ${trades24h} trades (${conversionPct}%)`;
 
     // Scanner alerts
     let alertBlock = '';
@@ -567,8 +581,10 @@ async function pipelineHealthReport() {
       }
     }
 
-    return `📡 <b>Pipeline</b> (${new Date().toUTCString().slice(17, 22)} UTC)\n` +
-      `Signals 15m: ${buys15m} BUY | Queue: ${pending} pending` +
+    const time = new Date().toUTCString().slice(17, 22);
+    return `━━━ <b>CRYONIX</b> ━━━━━━━━━━━━━━\n` +
+      `${time} UTC · ${regimeIcon} ${regime.charAt(0).toUpperCase() + regime.slice(1)}\n\n` +
+      `📡 Signals 15m: ${buys15m} BUY · Queue: ${pending}` +
       portfolioBlock + posBlock + funnelBlock +
       `\nTrades 1h: ${trades1h} ($${pnl1h.toFixed(2)})` +
       topMover + alertBlock;
@@ -612,7 +628,8 @@ let lastHealthStatus = 'healthy';
 async function checkTradeAlerts() {
   try {
     const r = await query(`
-      SELECT id, symbol, side, entry_price, pnl, pattern, status, timestamp
+      SELECT id, symbol, side, entry_price, exit_price, pnl, pattern,
+             confidence, stop_loss, take_profit, status, timestamp
       FROM trades ORDER BY id DESC LIMIT 1
     `);
     if (r.rows.length === 0) return;
@@ -623,11 +640,26 @@ async function checkTradeAlerts() {
 
     lastTradeId = latest.id;
     const icon = latest.side === 'BUY' ? '🟩' : '🟥';
-    const pnlStr = latest.pnl ? ` | P&L: $${parseFloat(latest.pnl).toFixed(2)}` : '';
+    const price = parseFloat(latest.entry_price);
+    const priceFmt = price < 1 ? 6 : price < 100 ? 4 : 2;
+    const conf = latest.confidence ? `${(parseFloat(latest.confidence) * 100).toFixed(0)}%` : '?';
+    const time = new Date(latest.timestamp).toUTCString().slice(17, 22);
+
+    let slTpStr = '';
+    if (latest.stop_loss || latest.take_profit) {
+      const sl = latest.stop_loss ? `SL: $${parseFloat(latest.stop_loss).toFixed(priceFmt)}` : '';
+      const tp = latest.take_profit ? `TP: $${parseFloat(latest.take_profit).toFixed(priceFmt)}` : '';
+      slTpStr = `\n📐 ${[sl, tp].filter(Boolean).join(' · ')}`;
+    }
+
+    const pnlStr = latest.pnl ? `\n💵 P&L: $${parseFloat(latest.pnl).toFixed(2)}` : '';
+
     await sendMessage(
-      `${icon} <b>Trade Executed</b>\n\n` +
-      `${latest.side} <b>${latest.symbol}</b> @ $${parseFloat(latest.entry_price).toFixed(4)}${pnlStr}\n` +
-      `Pattern: ${latest.pattern || '?'} | Status: ${latest.status}`
+      `━━━ ${icon} <b>TRADE</b> ━━━━━━━━━━━━━━\n` +
+      `${latest.side} <b>${latest.symbol}</b> @ $${price.toFixed(priceFmt)}\n` +
+      `📊 ${latest.pattern || '?'} · ${conf} confidence` +
+      slTpStr + pnlStr +
+      `\n⏱ ${time} UTC · ${latest.status}`
     );
   } catch { /* silent */ }
 }
@@ -640,39 +672,169 @@ async function checkHealthAlerts() {
 
     if (status !== 'healthy' && lastHealthStatus === 'healthy') {
       const down = h.services?.filter(s => s.status !== 'healthy')
-        .map(s => `🔴 ${s.name}: ${s.status}`).join('\n') || '';
-      await sendMessage(`🚨 <b>System Alert</b>\n\nStatus: <b>${status}</b>\n\n${down}`);
+        .map(s => `🔴 ${s.name}: ${s.status} (${s.latency || '?'}ms)`).join('\n') || '';
+      await sendMessage(
+        `━━━ 🚨 <b>ALERT</b> ━━━━━━━━━━━━━━\n` +
+        `Status: <b>${status.toUpperCase()}</b>\n\n${down}`
+      );
+    } else if (status === 'healthy' && lastHealthStatus !== 'healthy' && lastHealthStatus !== null) {
+      await sendMessage(
+        `━━━ ✅ <b>RECOVERED</b> ━━━━━━━━━━━━\n` +
+        `All systems healthy · Latency: ${h.totalLatency || '?'}ms`
+      );
     }
     lastHealthStatus = status;
   } catch { /* silent */ }
 }
 
 async function sendMorningBrief() {
-  const status = await cmdStatus();
-  const pnl = await cmdPnl();
-  const positions = await cmdPositions();
+  try {
+    const rd = await connectRedis();
+    const maxPos = getToml('limits', 'max_open_positions', 3);
+    const maxDailyLossPct = getToml('risk', 'max_daily_loss_pct', 0.05);
 
-  await sendMessage(
-    `☀️ <b>Morning Brief</b> (${new Date().toISOString().split('T')[0]})\n\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━`
-  );
-  await sendMessage(status);
-  await sendMessage(pnl);
-  await sendMessage(positions);
+    // Health
+    let healthLine = '';
+    try {
+      const hRes = await fetch(`${WEB_URL}/api/health`);
+      const h = await hRes.json();
+      const icons = h.services?.map(s => s.status === 'healthy' ? '🟢' : '🔴').join('') || '';
+      healthLine = `${icons} ${h.status || '?'} · ${h.totalLatency || '?'}ms`;
+    } catch { healthLine = '❓ Could not reach API'; }
+
+    // Portfolio
+    const riskRaw = await rd.get('risk:portfolio_state');
+    const riskState = riskRaw ? JSON.parse(riskRaw) : null;
+    const capital = parseFloat(riskState?.total_capital || 0);
+    const dailyLimit = (capital * maxDailyLossPct).toFixed(2);
+
+    // Yesterday's P&L
+    const yesterday = await query(`
+      SELECT COUNT(*) as trades,
+        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(pnl) as total_pnl
+      FROM trades WHERE status = 'CLOSED' AND timestamp > NOW() - INTERVAL '24 hours'
+    `);
+    const d = yesterday.rows[0];
+    const yTrades = parseInt(d.trades || 0);
+    const yPnl = parseFloat(d.total_pnl || 0);
+    const yWinRate = yTrades > 0 ? ((parseInt(d.wins || 0) / yTrades) * 100).toFixed(0) : '-';
+    const yIcon = yPnl >= 0 ? '📈' : '📉';
+
+    // Open positions
+    const posRaw = await rd.get('positions:open');
+    const positions = posRaw ? JSON.parse(posRaw) : [];
+    let posBlock = `📌 <b>Positions ${positions.length}/${maxPos}</b>`;
+    if (positions.length > 0) {
+      const lines = positions.map(p => {
+        const sym = p.symbol.split('/')[0];
+        const pnlPct = p.pnlPct || 0;
+        const icon = pnlPct > 0.5 ? '🟢' : pnlPct < -0.5 ? '🔴' : '⚪';
+        return `  ${icon} ${sym} ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
+      });
+      posBlock += '\n' + lines.join('\n');
+    } else {
+      posBlock += ' — no open positions';
+    }
+
+    // Regime
+    const regime = await rd.get('market:regime') || 'unknown';
+    const regimeIcon = { trending: '📈', volatile: '⚡', ranging: '📊' }[regime] || '❓';
+
+    const date = new Date().toISOString().split('T')[0];
+    await sendMessage(
+      `━━━ ☀️ <b>MORNING BRIEF</b> ━━━━━━━━\n` +
+      `${date} · ${regimeIcon} ${regime.charAt(0).toUpperCase() + regime.slice(1)}\n\n` +
+      `🏥 ${healthLine}\n` +
+      `💰 Capital: <b>$${capital.toFixed(2)}</b> · Loss limit: -$${dailyLimit}\n\n` +
+      `${yIcon} <b>Last 24h</b>\n` +
+      `  P&L: $${yPnl.toFixed(2)} · ${yTrades} trades · ${yWinRate}% WR\n\n` +
+      posBlock
+    );
+  } catch (e) {
+    await sendMessage(`━━━ ☀️ <b>MORNING BRIEF</b> ━━━━━━━━\n\nError: ${e.message}`);
+  }
 }
 
 async function sendDailySummary() {
-  const pnl = await cmdPnl();
-  const risk = await cmdRisk();
-  const trades = await cmdTrades();
+  try {
+    const rd = await connectRedis();
+    const maxPos = getToml('limits', 'max_open_positions', 3);
+    const maxDailyLossPct = getToml('risk', 'max_daily_loss_pct', 0.05);
+    const maxTradesPerDay = getToml('limits', 'max_trades_per_day', 15);
 
-  await sendMessage(
-    `🌙 <b>Daily Summary</b> (${new Date().toISOString().split('T')[0]})\n\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━`
-  );
-  await sendMessage(pnl);
-  await sendMessage(risk);
-  await sendMessage(trades);
+    // P&L (24h + 7d)
+    const daily = await query(`
+      SELECT COUNT(*) as trades,
+        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(pnl) as total_pnl, AVG(pnl) as avg_pnl,
+        MAX(pnl) as best, MIN(pnl) as worst
+      FROM trades WHERE status = 'CLOSED' AND timestamp > NOW() - INTERVAL '24 hours'
+    `);
+    const weekly = await query(`
+      SELECT COUNT(*) as trades, SUM(pnl) as total_pnl
+      FROM trades WHERE status = 'CLOSED' AND timestamp > NOW() - INTERVAL '7 days'
+    `);
+    const d = daily.rows[0];
+    const w = weekly.rows[0];
+    const dTrades = parseInt(d.trades || 0);
+    const dPnl = parseFloat(d.total_pnl || 0);
+    const dWR = dTrades > 0 ? ((parseInt(d.wins || 0) / dTrades) * 100).toFixed(0) : '-';
+    const wPnl = parseFloat(w.total_pnl || 0);
+    const wTrades = parseInt(w.trades || 0);
+    const pnlIcon = dPnl >= 0 ? '📈' : '📉';
+
+    // Capital
+    const riskRaw = await rd.get('risk:portfolio_state');
+    const riskState = riskRaw ? JSON.parse(riskRaw) : null;
+    const capital = parseFloat(riskState?.total_capital || 0);
+    const dailyLimit = (capital * maxDailyLossPct).toFixed(2);
+
+    // Open positions
+    const posRaw = await rd.get('positions:open');
+    const positions = posRaw ? JSON.parse(posRaw) : [];
+
+    // Risk level
+    const riskLevel = dPnl < -10 ? '🔴 HIGH' : dPnl < -5 ? '🟡 MODERATE' : '🟢 LOW';
+
+    // Recent trades (last 5 today)
+    const recent = await query(`
+      SELECT symbol, side, pnl, pattern, status
+      FROM trades WHERE timestamp > NOW() - INTERVAL '24 hours'
+      ORDER BY timestamp DESC LIMIT 5
+    `);
+    let tradesBlock = '';
+    if (recent.rows.length > 0) {
+      const lines = recent.rows.map(t => {
+        const pnl = parseFloat(t.pnl || 0);
+        const sym = t.symbol.split('/')[0];
+        const pnlStr = t.status === 'CLOSED' ? `$${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}` : t.status;
+        const icon = t.side === 'BUY' ? '🟩' : '🟥';
+        return `  ${icon} ${sym} · ${t.pattern || '?'} · ${pnlStr}`;
+      });
+      tradesBlock = `\n\n📋 <b>Trades today</b>\n${lines.join('\n')}`;
+    }
+
+    // Regime
+    const regime = await rd.get('market:regime') || 'unknown';
+    const regimeIcon = { trending: '📈', volatile: '⚡', ranging: '📊' }[regime] || '❓';
+
+    const date = new Date().toISOString().split('T')[0];
+    await sendMessage(
+      `━━━ 🌙 <b>DAILY SUMMARY</b> ━━━━━━━━\n` +
+      `${date} · ${regimeIcon} ${regime.charAt(0).toUpperCase() + regime.slice(1)}\n\n` +
+      `${pnlIcon} <b>Performance</b>\n` +
+      `  24h: <b>$${dPnl >= 0 ? '+' : ''}${dPnl.toFixed(2)}</b> · ${dTrades}/${maxTradesPerDay} trades · ${dWR}% WR\n` +
+      `  Best: $${parseFloat(d.best || 0).toFixed(2)} · Worst: $${parseFloat(d.worst || 0).toFixed(2)}\n` +
+      `  7d: $${wPnl >= 0 ? '+' : ''}${wPnl.toFixed(2)} · ${wTrades} trades\n\n` +
+      `💰 <b>Capital</b>: $${capital.toFixed(2)}\n` +
+      `  Positions: ${positions.length}/${maxPos} · Risk: ${riskLevel}\n` +
+      `  Daily loss limit: -$${dailyLimit}` +
+      tradesBlock
+    );
+  } catch (e) {
+    await sendMessage(`━━━ 🌙 <b>DAILY SUMMARY</b> ━━━━━━━━\n\nError: ${e.message}`);
+  }
 }
 
 // ─── Scheduled report timers ─────────────────────────────
@@ -713,13 +875,14 @@ function startScheduledReports() {
   // Health alerts every 5min
   setInterval(() => checkHealthAlerts().catch(() => {}), HEALTH_INTERVAL);
 
-  // Pipeline health report every 15min
+  // Pipeline health report
+  const PIPELINE_INTERVAL = getToml('timing', 'pipeline_report_interval_ms', 900000);
   setInterval(async () => {
     try {
       const report = await pipelineHealthReport();
       if (report) await sendMessage(report);
     } catch {}
-  }, 900000);
+  }, PIPELINE_INTERVAL);
 
   console.log('📅 Scheduled reports: 08:00 (morning), 22:00 (daily), 15min pipeline, trade alerts, health checks');
 }
