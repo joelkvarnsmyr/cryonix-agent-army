@@ -69,6 +69,7 @@ export interface CryonixConfig {
     sl_atr_multiplier: number; tp_atr_multiplier: number;
     deep_value_sl_atr: number; deep_value_tp_atr: number;
     native_sl_limit_offset: number;
+    stagnation_timeout_hours: number;
   };
   indicators: {
     rsi_period: number; rsi_oversold: number; rsi_overbought: number;
@@ -99,7 +100,7 @@ export interface CryonixConfig {
   };
   ev_model: { min_trades_for_ev: number; calibration_lookback_days: number; calibration_min_trades: number };
   sentiment: { expiration_seconds: number; alert_keywords: string[] };
-  ai: { enabled: boolean; model: string; temperature: number; max_tokens: number; ta_weight: number; ai_weight: number };
+  ai: { enabled: boolean; model: string; reasoning_effort: string; temperature: number; max_tokens: number; ta_weight: number; ai_weight: number };
   timing: {
     auto_trader_poll_ms: number; health_check_interval_ms: number;
     telegram_poll_ms: number; trade_alert_poll_ms: number;
@@ -112,6 +113,15 @@ export interface CryonixConfig {
   reconciliation: {
     phantom_threshold: number; mismatch_warning_low: number;
     mismatch_warning_high: number; dust_sell_floor: number;
+  };
+  coinmarketcap: {
+    enabled: boolean; poll_interval_seconds: number;
+    fear_threshold: number; greed_threshold: number;
+    fear_deep_value_boost: number; fear_min_confidence: number;
+    greed_confidence_penalty: number;
+    max_rank: number; max_fdv_mc_ratio: number;
+    global_mc_drop_volatile_pct: number;
+    btc_dominance_rise_alt_penalty: number; alt_dominance_penalty: number;
   };
 }
 

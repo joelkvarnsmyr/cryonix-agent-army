@@ -57,7 +57,7 @@ class CMCScout:
 
     def _headers(self) -> Dict[str, str]:
         return {
-            "Accepts": "application/json",
+            "Accept": "application/json",
             "X-CMC_PRO_API_KEY": self.api_key,
         }
 
