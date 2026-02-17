@@ -138,7 +138,7 @@ docker compose -f docker-compose.prod.yml ps
 |-----------------|------------------------|---------------|---------------------------------------|
 | `cryonix-postgres-1`  | postgres:15-alpine | (internal)    | Database (persistent volume)          |
 | `cryonix-redis-1`     | redis:7-alpine     | (internal)    | Signal queue, state, sentiment cache  |
-| `cryonix-engine-1`    | custom (Python)    | 8000 internal | MarketScout + NewsScout scanning      |
+| `cryonix-engine-1`    | custom (Python)    | 8000 internal | MarketScout + NewsScout + CMCScout    |
 | `cryonix-web-1`       | custom (Next.js)   | 3000 internal | Dashboard + API routes                |
 | `cryonix-auto-trader-1`| custom (Node)     | none          | Polls /api/auto-trade every 30s       |
 | `cryonix-ws-server-1` | custom (Node)      | 3004          | WebSocket for real-time dashboard     |
@@ -221,6 +221,7 @@ curl http://openclaw-vm/api/auto-trade
 1. Python Engine (cryonix-engine-1)
    - MarketScout scans 45 USDC pairs every 10s via CCXT (Binance)
    - 9 pattern detectors: RSI, Bollinger, Volume, MACD, EMA, Dip, Deep Value, Momentum Gainer
+   - CMCScout polls CoinMarketCap every 10min (global metrics, F&G, per-symbol MC/FDV)
    - ADX regime detection → written to Redis (market:regime)
    - SELL signals skipped early (spot-only mode)
    - RiskGate approves signals with confidence >= 65%
@@ -234,6 +235,10 @@ curl http://openclaw-vm/api/auto-trade
    - Capital Allocator checks budget (signal pool vs grid pool vs reserve)
    - Regime check: volatile → grid paused
    - EV model filter (reject negative-EV patterns, min 5 trades)
+   - CMC Fear & Greed adjustment (extreme fear: DV boost, extreme greed: penalty)
+   - CMC BTC dominance penalty (alts penalized when BTC dom rising)
+   - CMC Market Cap filter (reject rank > 500, reject FDV/MC > 4x)
+   - CMC Global regime override (MC crash → volatile regime)
    - X sentiment alert check (12 keywords: hack, exploit, delist, scam...)
    - GROK AI validates (pragmatic prompt, fail-closed on parse error)
    - Order book spread check (max 0.3%)
@@ -508,6 +513,7 @@ cryonix-agent-army/
     src/tanks/market_scout.py # 45-pair scanner with QuantGuild patterns
     src/tanks/gainer_scanner.py # Momentum gainer detection
     src/tanks/news_scout.py   # RSS sentiment analysis
+    src/tanks/cmc_scout.py    # CoinMarketCap macro intelligence (F&G, MC, FDV)
     src/tanks/base.py         # BaseTank with LangGraph pipeline
     src/core/market_data.py   # CCXT wrapper (singleton, multi-TF cache)
     src/core/risk_gate.py     # Risk gate (confidence, position limits)
