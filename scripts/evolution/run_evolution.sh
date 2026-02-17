@@ -2,7 +2,7 @@
 
 # Navigate to project directory
 # Navigate to project directory (one level up from scripts/)
-cd "$(dirname "$0")/.." || exit 1
+cd "$(dirname "$0")/../.." || exit 1
 
 # Logging
 LOG_FILE="evolution.log"
@@ -18,7 +18,7 @@ fi
 # Assumes 'node' is in the PATH
 export PATH=$PATH:/usr/local/bin:/root/.npm-global/bin
 
-node scripts/copilot-evolution.mjs >> "$LOG_FILE" 2>&1
+node scripts/evolution/copilot-evolution.mjs >> "$LOG_FILE" 2>&1
 
 echo "[INFO] Completed at $(date)" >> "$LOG_FILE"
 echo "--------------------------------------------" >> "$LOG_FILE"

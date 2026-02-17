@@ -18,21 +18,33 @@ packages/
   ui/                        # shadcn/ui component library
   intelligence/              # Python ML module (Docker, stub)
 scripts/
-  auto-trader.mjs            # ESM auto-trader for Docker
-  ws-server.mjs              # ESM WebSocket server for Docker
-  telegram-interactive.mjs   # Interactive Telegram bot (@cryptonixis_bot)
-  telegram-bot.mjs           # Evolution report bot (@cryonixEvolution_bot)
-  copilot-evolution.mjs      # Claude Code CLI evolution engine (autonomous analysis + mutation)
-  backup-postgres.sh         # Daily Postgres backup (7-day rotation)
-  telegram-scraper/          # Telegram signal scraper (Python/Telethon, Docker)
-    scraper.py               #   Main Telethon event listener + Redis/Postgres writer
-    parser.py                #   Multi-format signal parser (Cornix, simple, emoji)
-    setup_session.py         #   One-time auth to generate TELEGRAM_SESSION string
-  strategy-lab/              # Calibration & analysis tools
-    calibrate.py             #   Pattern EV calibration (--days 30)
-    morning_report.py        #   Daily morning report
-    x_sentiment.py           #   X/Twitter sentiment scanner
-    engine_diagnostik.py     #   Engine diagnostics
+  deploy/
+    auto-deploy.sh             # Pull-based auto-deploy with work lock + rollback
+    deploy.sh                  # Manual deploy from local via SSH
+    deploy-vm.sh               # Runs on VM after manual deploy
+    backup-postgres.sh         # Daily Postgres backup (7-day rotation)
+    health-monitor.sh          # Health check + Telegram alerts (cron every 5 min)
+  services/
+    auto-trader.mjs            # ESM auto-trader for Docker
+    ws-server.mjs              # ESM WebSocket server for Docker
+    telegram-interactive.mjs   # Interactive Telegram bot (@cryptonixis_bot)
+    telegram-bot.mjs           # Evolution report bot (@cryonixEvolution_bot)
+  evolution/
+    copilot-evolution.mjs      # Claude Code CLI evolution engine (autonomous analysis + mutation)
+    run_evolution.sh           # Cron wrapper (every 2h)
+    verify_deep_value.py       # Post-mutation verification
+    verify_grid.py             # Post-mutation verification
+    prompts/evolution_prompt.txt
+  strategy-lab/                # Calibration & analysis tools
+    calibrate.py               #   Pattern EV calibration (--days 30)
+    morning_report.py          #   Daily morning report
+    x_sentiment.py             #   X/Twitter sentiment scanner
+    engine_diagnostik.py       #   Engine diagnostics
+  telegram-scraper/            # Telegram signal scraper (Python/Telethon, Docker)
+    scraper.py                 #   Main Telethon event listener + Redis/Postgres writer
+    parser.py                  #   Multi-format signal parser (Cornix, simple, emoji)
+  lib/
+    load-toml.mjs              # TOML config loader utility
 ```
 
 ## Commands
@@ -97,11 +109,11 @@ Legacy agent system. Key classes:
 
 ### Background Workers
 
-- `scripts/auto-trader.mjs` - Polls `/api/auto-trade` every 30s
-- `scripts/ws-server.mjs` - WebSocket server for real-time dashboard updates
-- `scripts/telegram-interactive.mjs` - Interactive Telegram bot (@cryptonixis_bot)
-- `scripts/telegram-bot.mjs` - Evolution report bot (@cryonixEvolution_bot)
-- `scripts/copilot-evolution.mjs` - Claude Code CLI autonomous evolution engine
+- `scripts/services/auto-trader.mjs` - Polls `/api/auto-trade` every 30s
+- `scripts/services/ws-server.mjs` - WebSocket server for real-time dashboard updates
+- `scripts/services/telegram-interactive.mjs` - Interactive Telegram bot (@cryptonixis_bot)
+- `scripts/services/telegram-bot.mjs` - Evolution report bot (@cryonixEvolution_bot)
+- `scripts/evolution/copilot-evolution.mjs` - Claude Code CLI autonomous evolution engine
 - `scripts/telegram-scraper/scraper.py` - Telegram channel signal scraper (Telethon/Python, Docker)
 
 ## Data Flow

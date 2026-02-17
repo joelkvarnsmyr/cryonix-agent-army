@@ -36,8 +36,8 @@ const CONFIG = {
 
   // Test suite to run after mutation
   VERIFICATION_COMMANDS: [
-    'python3 scripts/verify_deep_value.py',
-    'python3 scripts/verify_grid.py',
+    'python3 scripts/evolution/verify_deep_value.py',
+    'python3 scripts/evolution/verify_grid.py',
     'pnpm type-check',
     'pnpm test'
   ],
@@ -355,7 +355,7 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
       const result = await this.execCommand(
         `claude -p "$(cat ${promptPath})" ` +
         `--model ${model} ` +
-        `--allowedTools 'Edit,Read,Glob,Grep,Bash(python3 scripts/verify_deep_value.py),Bash(python3 scripts/verify_grid.py),Bash(git diff --stat)' ` +
+        `--allowedTools 'Edit,Read,Glob,Grep,Bash(python3 scripts/evolution/verify_deep_value.py),Bash(python3 scripts/evolution/verify_grid.py),Bash(git diff --stat)' ` +
         `--max-turns 25`,
         { timeout: CONFIG.CLAUDE_TIMEOUT, cwd: CONFIG.PROJECT_ROOT }
       );
@@ -414,7 +414,7 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
     // Load prompt template
     let promptTemplate = '';
     try {
-      promptTemplate = await readFile(join(CONFIG.PROJECT_ROOT, 'scripts/prompts/evolution_prompt.txt'), 'utf-8');
+      promptTemplate = await readFile(join(CONFIG.PROJECT_ROOT, 'scripts/evolution/prompts/evolution_prompt.txt'), 'utf-8');
     } catch {
       console.warn('⚠️  Could not load prompt template, using inline prompt');
     }
@@ -506,7 +506,7 @@ Analyze the performance data below, identify the most impactful issue, and make 
 ## Rules
 1. Make 1-3 small parameter tweaks or condition changes. No rewrites.
 2. NEVER remove risk checks (stop-loss, max position size, daily loss limits).
-3. After editing, run: python3 scripts/verify_deep_value.py && python3 scripts/verify_grid.py
+3. After editing, run: python3 scripts/evolution/verify_deep_value.py && python3 scripts/evolution/verify_grid.py
 4. Focus on EXIT strategy — historically our entries are better than our exits.
 5. If a pattern has negative EV, raise its confidence threshold.
 

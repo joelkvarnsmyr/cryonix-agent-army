@@ -6,7 +6,7 @@ WORKDIR /app
 # ws-server.mjs needs the ws package, auto-trader.mjs only uses native fetch
 RUN npm install --no-save ws@8 pg@8 ioredis@5 dotenv@16
 
-COPY scripts/auto-trader.mjs scripts/ws-server.mjs scripts/telegram-interactive.mjs ./scripts/
+COPY scripts/services/auto-trader.mjs scripts/services/ws-server.mjs scripts/services/telegram-interactive.mjs ./scripts/services/
 COPY scripts/lib/ ./scripts/lib/
 
 USER node

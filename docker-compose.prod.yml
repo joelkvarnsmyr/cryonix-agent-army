@@ -127,7 +127,7 @@ services:
       context: .
       dockerfile: Dockerfile.scripts
     restart: always
-    command: [ "node", "scripts/auto-trader.mjs" ]
+    command: [ "node", "scripts/services/auto-trader.mjs" ]
     volumes:
       - ./cryonix.toml:/app/cryonix.toml:ro
     environment:
@@ -147,7 +147,7 @@ services:
       context: .
       dockerfile: Dockerfile.scripts
     restart: always
-    command: [ "node", "scripts/ws-server.mjs" ]
+    command: [ "node", "scripts/services/ws-server.mjs" ]
     volumes:
       - ./cryonix.toml:/app/cryonix.toml:ro
     ports:
@@ -167,7 +167,7 @@ services:
       context: .
       dockerfile: Dockerfile.scripts
     restart: always
-    command: [ "node", "scripts/telegram-interactive.mjs" ]
+    command: [ "node", "scripts/services/telegram-interactive.mjs" ]
     volumes:
       - ./cryonix.toml:/app/cryonix.toml:ro
     environment:
