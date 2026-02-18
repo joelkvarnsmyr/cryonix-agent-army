@@ -3,7 +3,7 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Activity, BarChart3, Settings, Wifi, WifiOff } from 'lucide-react';
+import { Activity, BarChart3, LineChart, Settings, Wifi, WifiOff } from 'lucide-react';
 import { Button } from '@cryonix/ui';
 import { useSystemHealth } from '@/hooks/useSystemHealth';
 import { useWebSocket } from '@/hooks/use-websocket';
@@ -54,6 +54,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const navItems = [
     { href: '/', label: 'Terminal', icon: Activity },
+    { href: '/analytics', label: 'Analytics', icon: LineChart },
     { href: '/backtest', label: 'Backtest', icon: BarChart3 },
   ];
 
