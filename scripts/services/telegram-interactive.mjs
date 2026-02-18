@@ -2,7 +2,7 @@
 /**
  * Cryonix Interactive Telegram Bot (@cryptonixis_bot)
  * 
- * Commands: /status /positions /trades /pnl /signals /risk /evolve /help
+ * Commands: /status /positions /trades /pnl /signals /risk /evolve /journal /help
  * Auto-reports: morning brief, trade alerts, health alerts, daily summary
  * 
  * Run: node scripts/telegram-interactive.mjs
@@ -317,6 +317,7 @@ function cmdHelp() {
     `/audit — Full system audit\n` +
     `/evolve — Evolution history\n` +
     `/cost — AI API costs\n` +
+    `/journal — Trade journal &amp; config analysis\n` +
     `/help — This menu\n\n` +
     `<b>Auto Reports:</b>\n` +
     `📡 Every 15min — Pipeline health\n` +
@@ -675,6 +676,65 @@ async function cmdCost() {
   }
 }
 
+async function cmdJournal() {
+  try {
+    // Try position_history first (richer data)
+    const r = await query(`
+      SELECT symbol, pattern, pnl, close_reason,
+             EXTRACT(EPOCH FROM (closed_at - opened_at))/3600 as holding_h,
+             closed_at, metadata->>'configVersion' as config_version
+      FROM position_history
+      WHERE closed_at > NOW() - INTERVAL '7 days'
+      ORDER BY closed_at DESC
+      LIMIT 15
+    `);
+
+    if (r.rows.length === 0) {
+      // Fallback to trades table
+      const tr = await query(`
+        SELECT symbol, pattern, pnl, status, reasoning, timestamp, config_version
+        FROM trades WHERE timestamp > NOW() - INTERVAL '7 days' AND status = 'CLOSED'
+        ORDER BY timestamp DESC LIMIT 15
+      `);
+      if (tr.rows.length === 0) return '📭 No trades in the last 7 days';
+      const wins = tr.rows.filter(t => parseFloat(t.pnl || 0) > 0);
+      const totalPnl = tr.rows.reduce((s, t) => s + parseFloat(t.pnl || 0), 0);
+      const lines = tr.rows.map(t => {
+        const pnl = parseFloat(t.pnl || 0);
+        const icon = pnl > 0 ? '🟢' : pnl < 0 ? '🔴' : '⚪';
+        return `${icon} <b>${t.symbol}</b> ${t.pattern || '-'}\n   P&amp;L: $${pnl.toFixed(2)} | ${t.config_version || '-'}`;
+      });
+      return `📊 <b>Trade Journal (7d)</b>\n${tr.rows.length} trades | WR ${(wins.length/tr.rows.length*100).toFixed(0)}% | P&amp;L: $${totalPnl.toFixed(2)}\n\n${lines.join('\n\n')}`;
+    }
+
+    const wins = r.rows.filter(t => parseFloat(t.pnl || 0) > 0);
+    const totalPnl = r.rows.reduce((s, t) => s + parseFloat(t.pnl || 0), 0);
+
+    // Config version breakdown
+    const byConfig = {};
+    r.rows.forEach(t => {
+      const v = t.config_version || 'pre-tracking';
+      if (!byConfig[v]) byConfig[v] = { trades: 0, pnl: 0 };
+      byConfig[v].trades++;
+      byConfig[v].pnl += parseFloat(t.pnl || 0);
+    });
+    const configLines = Object.entries(byConfig)
+      .map(([v, d]) => `  ${v}: ${d.trades} trades, $${d.pnl.toFixed(2)}`)
+      .join('\n');
+
+    const lines = r.rows.slice(0, 10).map(t => {
+      const pnl = parseFloat(t.pnl || 0);
+      const icon = pnl > 0 ? '🟢' : pnl < 0 ? '🔴' : '⚪';
+      const h = parseFloat(t.holding_h || 0).toFixed(1);
+      return `${icon} <b>${t.symbol}</b> ${t.pattern || '-'}\n   P&amp;L: $${pnl.toFixed(2)} | ${t.close_reason || '-'} | ${h}h | ${t.config_version || '-'}`;
+    });
+
+    return `📊 <b>Trade Journal (7d)</b>\n${r.rows.length} trades | WR ${(wins.length/r.rows.length*100).toFixed(0)}% | P&amp;L: $${totalPnl.toFixed(2)}\n\n<b>Config Versions:</b>\n${configLines}\n\n${lines.join('\n\n')}`;
+  } catch (e) {
+    return `❌ Could not fetch journal: ${e.message}`;
+  }
+}
+
 // ─── Command router ──────────────────────────────────────
 const COMMANDS = {
   '/status': cmdStatus,
@@ -687,6 +747,7 @@ const COMMANDS = {
   '/gainers': cmdGainers,
   '/evolve': cmdEvolve,
   '/cost': cmdCost,
+  '/journal': cmdJournal,
   '/help': cmdHelp,
   '/start': cmdHelp,
 };
