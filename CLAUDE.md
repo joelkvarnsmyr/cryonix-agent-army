@@ -13,7 +13,7 @@ apps/web/                    # Next.js 15 (dashboard + API routes + trade execut
 packages/
   engine/                    # Python 3.11 FastAPI (Docker) - scanning + analysis
   agents/                    # TypeScript agent system (Orchestrator, MarketScout, ClaudeAssistant)
-  database/                  # Drizzle ORM schema (17 tables, Postgres)
+  database/                  # Drizzle ORM schema (19 tables, Postgres)
   types/                     # Shared TypeScript types + Zod schemas
   ui/                        # shadcn/ui component library
   intelligence/              # Python ML module (Docker, stub)
@@ -36,7 +36,8 @@ scripts/
     verify_grid.py             # Post-mutation verification
     prompts/evolution_prompt.txt
   strategy-lab/                # Calibration & analysis tools
-    calibrate.py               #   Pattern EV calibration (--days 30)
+    calibrate.py               #   Pattern EV calibration (--days 30) + Postgres snapshot
+    self_calibrate.py          #   Signal accuracy self-calibration + Postgres snapshot
     morning_report.py          #   Daily morning report
     x_sentiment.py             #   X/Twitter sentiment scanner
     engine_diagnostik.py       #   Engine diagnostics
@@ -99,7 +100,9 @@ Key modules:
 Dashboard + API routes + trade execution:
 
 - **Dashboard** (page.tsx): 3-column layout - stats/signals, risk gate/chart, positions/trade
-- **Auto-trade API** (api/auto-trade/route.ts): Core execution loop. Monitors positions (SL/TP/trailing), processes Redis queue, GROK AI validation, Binance execution
+- **Analytics** (analytics/page.tsx): Trade journal table, config version comparison, pattern performance
+- **Auto-trade API** (api/auto-trade/route.ts): Core execution loop. Monitors positions (SL/TP/trailing), processes Redis queue, GROK AI validation, Binance execution. Tags every trade with `config_version` hash.
+- **Trade Journal API** (api/analytics/journal/route.ts): Reads position_history (fallback: trades), returns journal + summary + config comparison
 - **Health API** (api/health/route.ts): Checks Redis, Postgres, Engine, MarketScout
 
 ### TypeScript Agents (packages/agents)
@@ -151,14 +154,39 @@ Auto-Trader (Node, every 30s)
   -> Execute BUY on Binance via CCXT
   -> Place Native STOP_LOSS_LIMIT order (safety net)
   -> Store position in Redis positions:open
+  -> Tag trade with config_version (SHA256 hash of cryonix.toml)
   -> Monitor SL/TP/trailing stop
+
+Calibration Pipeline (Python, every 6h + daily)
+  -> calibrate.py: Pattern EV from trades table → Redis calibration:patterns (24h TTL)
+  -> calibrate.py: Persist daily snapshot → Postgres calibration_history
+  -> self_calibrate.py: Signal accuracy → Redis calibration:accuracy (48h TTL)
+  -> self_calibrate.py: Persist daily snapshot → Postgres calibration_history
+  -> Auto-trader reads calibration:patterns for EV model filter
+
+Evolution System (Claude Code CLI, every 2h)
+  -> analyzePerformance(): pattern P&L from trades + position_history
+  -> Generate mutation plan via Claude Code
+  -> Backup cryonix.toml → .evolution-backups/{run_id}/
+  -> Apply mutation + verify
+  -> Compute structured TOML diff (old vs new params)
+  -> Log to evolution_runs (structured changes_made JSONB)
+  -> Log to config_changes table (change_type='evolution')
+  -> Commit with [Auto-Evolution {run_id}] prefix
 ```
 
-## Database Schema (15 tables)
+## Database Schema (19 tables)
 
-`users`, `portfolio`, `positions`, `trades`, `signals`, `market_data`, `agent_actions`, `ml_models`, `orchestrator_state`, `risk_checks`, `backtest_results`, `validation_history`, `position_history`, `telegram_signals`, `telegram_channels`
+`users`, `portfolio`, `positions`, `trades`, `signals`, `market_data`, `agent_actions`, `ml_models`, `orchestrator_state`, `risk_checks`, `backtest_results`, `validation_history`, `position_history`, `telegram_signals`, `telegram_channels`, `evolution_runs`, `config_changes`, `calibration_history`
 
 Time-series tables indexed on `timestamp`. Crypto amounts use decimal precision.
+
+### Analytical Core Tables
+
+- **`config_changes`** - Logs every parameter change (evolution/manual/calibration). Fields: `change_type`, `source`, `config_version` (8-char SHA256 hash of cryonix.toml), `parameters` (JSONB: `[{param, section, old, new}]`), `reasoning`.
+- **`calibration_history`** - Daily snapshots of pattern EV calibration and self-calibration accuracy. Unique on `(snapshot_date, run_type)`. Fields: `patterns` (JSONB), `overall` (JSONB).
+- **`trades.config_version`** - Every trade is tagged with the 8-char config hash active at execution time. Enables grouping trades by config version to measure impact of parameter changes.
+- **`evolution_runs.changes_made`** - Now stores structured TOML diffs: `[{param, section, old, new}]` instead of the old string format.
 
 ## Types (packages/types)
 
@@ -200,3 +228,8 @@ CMC_API_KEY=...                      # CoinMarketCap Free tier API key (engine)
 - `host.docker.internal` for dev Docker -> host communication
 - Auto-trader is SPOT_ONLY (rejects SELL signals, only BUY)
 - **Risk parameters**: single source of truth is `CONFIG` in `auto-trade/route.ts`
+- **Config version tracking**: Every trade is tagged with an 8-char SHA256 hash of `cryonix.toml`. Utility: `apps/web/src/lib/config-version.ts`
+- **Change tracking**: Parameter changes logged to `config_changes` table. Evolution system computes structured diffs automatically.
+- **Calibration history**: Daily snapshots persisted to `calibration_history` table (ON CONFLICT upsert).
+- **Telegram commands**: `/status`, `/positions`, `/trades`, `/pnl`, `/signals`, `/risk`, `/audit`, `/gainers`, `/evolve`, `/cost`, `/journal`, `/help`
+- **Analytics page**: `/analytics` — trade journal, config version comparison, pattern performance
