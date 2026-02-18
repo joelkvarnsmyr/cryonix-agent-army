@@ -10,12 +10,48 @@ import { readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import pg from 'pg';
 import Redis from 'ioredis';
-import { TelegramBot } from './telegram-bot.mjs';
+import { TelegramBot } from '../services/telegram-bot.mjs';
 import { tmpdir } from 'os';
 import { unlink } from 'fs/promises';
+import { createHash } from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import 'dotenv/config'; // Load .env file
 
 const { Client } = pg;
+
+function parseTomlDiff(oldContent, newContent) {
+  const changes = [];
+  const parseToml = (text) => {
+    const result = {};
+    let section = 'root';
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('#') || !trimmed) continue;
+      const sectionMatch = trimmed.match(/^\[(\w+)\]$/);
+      if (sectionMatch) { section = sectionMatch[1]; continue; }
+      const kvMatch = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
+      if (kvMatch) {
+        result[`${section}.${kvMatch[1]}`] = kvMatch[2].replace(/^["']|["']$/g, '').trim();
+      }
+    }
+    return result;
+  };
+  const oldParsed = parseToml(oldContent);
+  const newParsed = parseToml(newContent);
+  const allKeys = new Set([...Object.keys(oldParsed), ...Object.keys(newParsed)]);
+  for (const key of allKeys) {
+    if (oldParsed[key] !== newParsed[key]) {
+      const [section, param] = key.split('.');
+      changes.push({ param, section, old: oldParsed[key] ?? null, new: newParsed[key] ?? null });
+    }
+  }
+  return changes;
+}
+
+function computeConfigVersion(tomlContent) {
+  return createHash('sha256').update(tomlContent).digest('hex').slice(0, 8);
+}
 
 // Configuration
 const CONFIG = {
@@ -677,10 +713,31 @@ Co-authored-by: Claude <noreply@anthropic.com>"`);
       });
     }
 
+    // Compute structured diff from backup
+    let structuredChanges = details.changes || [];
+    try {
+      const backupPath = path.join('.evolution-backups', this.runId, 'cryonix.toml');
+      const currentPath = 'cryonix.toml';
+      if (fs.existsSync(backupPath) && fs.existsSync(currentPath)) {
+        const oldContent = fs.readFileSync(backupPath, 'utf-8');
+        const newContent = fs.readFileSync(currentPath, 'utf-8');
+        structuredChanges = parseTomlDiff(oldContent, newContent);
+        if (structuredChanges.length > 0) {
+          const configVersion = computeConfigVersion(newContent);
+          await this.db.query(`
+            INSERT INTO config_changes (change_type, source, config_version, parameters, reasoning, created_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+          `, ['evolution', `evolution:${this.runId}`, configVersion, JSON.stringify(structuredChanges), details.reasoning || `Evolution run ${this.runId}`]);
+        }
+      }
+    } catch (e) {
+      console.error('[EVOLUTION] Failed to compute structured diff:', e.message);
+    }
+
     // Store in Postgres for historical analysis
     await this.db.query(`
       INSERT INTO evolution_runs (
-        run_id, started_at, ended_at, duration_seconds, 
+        run_id, started_at, ended_at, duration_seconds,
         status, performance_data, changes_made
       ) VALUES ($1, $2, $3, $4, $5, $6, $7)
     `, [
@@ -690,7 +747,7 @@ Co-authored-by: Claude <noreply@anthropic.com>"`);
       Math.round(duration),
       success ? 'SUCCESS' : 'FAILED',
       JSON.stringify(details.performance || {}),
-      JSON.stringify(details.changes || [])
+      JSON.stringify(structuredChanges)
     ]).catch(() => {
       // Table might not exist yet, ignore
       console.log('⚠️  Could not log to evolution_runs table (might not exist yet)');
