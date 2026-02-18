@@ -570,10 +570,28 @@ def main():
         if not args.no_redis:
             r = get_redis()
             try:
-                write_to_redis(r, metrics, args.hours)
+                payload = write_to_redis(r, metrics, args.hours)
                 print(f"Wrote calibration:accuracy to Redis (TTL {REDIS_TTL // 3600}h)")
             finally:
                 r.close()
+
+            # Persist daily snapshot to calibration_history
+            try:
+                pg_hist = get_pg()
+                cur = pg_hist.cursor()
+                today = datetime.now().strftime('%Y-%m-%d')
+                cur.execute("""
+                    INSERT INTO calibration_history (run_type, snapshot_date, patterns, overall, created_at)
+                    VALUES ('self_calibration', %s, %s, %s, NOW())
+                    ON CONFLICT (snapshot_date, run_type) DO UPDATE
+                    SET patterns = EXCLUDED.patterns, overall = EXCLUDED.overall, created_at = NOW()
+                """, [today, json.dumps(payload.get('patterns', {})), json.dumps(payload.get('overall', {}))])
+                pg_hist.commit()
+                cur.close()
+                pg_hist.close()
+                print(f"[SELF-CALIBRATION] Saved daily snapshot to calibration_history ({today})")
+            except Exception as e:
+                print(f"[SELF-CALIBRATION] Failed to persist to Postgres: {e}")
 
         # 6. Output
         if args.json:

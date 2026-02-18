@@ -205,6 +205,30 @@ def main():
             r.close()
             print(f"Wrote {len(calibration)} patterns to Redis calibration:patterns")
 
+            # Persist daily snapshot to calibration_history
+            try:
+                pg_hist = get_pg()
+                cur = pg_hist.cursor()
+                today = datetime.now().strftime('%Y-%m-%d')
+                overall = {
+                    'total_trades': sum(p.get('trades', 0) for p in calibration.values()),
+                    'avg_ev': round(sum(p.get('ev', 0) for p in calibration.values()) / max(len(calibration), 1), 4),
+                    'positive_ev_patterns': sum(1 for p in calibration.values() if p.get('ev', 0) > 0),
+                    'negative_ev_patterns': sum(1 for p in calibration.values() if p.get('ev', 0) < 0),
+                }
+                cur.execute("""
+                    INSERT INTO calibration_history (run_type, snapshot_date, patterns, overall, created_at)
+                    VALUES ('calibration', %s, %s, %s, NOW())
+                    ON CONFLICT (snapshot_date, run_type) DO UPDATE
+                    SET patterns = EXCLUDED.patterns, overall = EXCLUDED.overall, created_at = NOW()
+                """, [today, json.dumps(calibration), json.dumps(overall)])
+                pg_hist.commit()
+                cur.close()
+                pg_hist.close()
+                print(f"[CALIBRATION] Saved daily snapshot to calibration_history ({today})")
+            except Exception as e:
+                print(f"[CALIBRATION] Failed to persist to Postgres: {e}")
+
         if args.json:
             result = {}
             for _, row in metrics.iterrows():
