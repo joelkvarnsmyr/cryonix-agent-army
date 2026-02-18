@@ -41,6 +41,15 @@ async function acquireInstanceLock(): Promise<{ acquired: boolean; holder?: stri
     await redis.expire(INSTANCE_LOCK_KEY, INSTANCE_LOCK_TTL);
     return { acquired: true };
   }
+  // Self-healing: if lock holder hasn't refreshed within 2x TTL, force-acquire
+  // This handles stale locks from crashed/redeployed containers
+  const ttl = await redis.ttl(INSTANCE_LOCK_KEY);
+  if (ttl <= 0) {
+    // Lock expired or has no TTL — force acquire
+    await redis.set(INSTANCE_LOCK_KEY, INSTANCE_ID, 'EX', INSTANCE_LOCK_TTL);
+    console.log(`[INSTANCE-LOCK] Force-acquired stale lock (was held by ${holder}, TTL=${ttl})`);
+    return { acquired: true };
+  }
   return { acquired: false, holder: holder as string };
 }
 
@@ -1089,6 +1098,15 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     return { pass: false, reason: `R/R ${(reward / risk).toFixed(2)} < ${minRR}` };
   }
 
+  // === WEAK PATTERN FILTER: reject single-pattern signals with known poor performance ===
+  // These patterns consistently lose money when they fire alone (no confirming pattern).
+  // Data: RSI_OVERSOLD solo → 33% WR, -$0.48 total | EMA_BULLISH_CROSS solo → 0% WR, -$0.05
+  const weakSoloPatterns = ['RSI_OVERSOLD', 'EMA_BULLISH_CROSS', 'MACD_BULLISH_CROSS'];
+  const patterns = signal.patterns || [];
+  if (patterns.length === 1 && weakSoloPatterns.includes(patterns[0])) {
+    return { pass: false, reason: `Weak solo pattern: ${patterns[0]} (requires 2+ confirming patterns)` };
+  }
+
   // === EV-MODEL: Expected Value filter based on historical pattern performance ===
   const ev = await calculateExpectedValue(signal);
   if (ev !== null && ev.ev < 0) {
@@ -1808,11 +1826,23 @@ export async function POST() {
     // STEP 2.5: Check grid triggers (priority over normal signals)
     const gridResults = await checkGridTriggers();
 
-    // STEP 3: Process new BUY signals (top 5 by confidence to save AI tokens)
+    // STEP 3: Process new BUY signals (top by confidence to save AI tokens)
     const rawList = await redis.lrange('trades:pending', 0, 49);
     const parsed: { signal: Signal; raw: string }[] = [];
+    const SIGNAL_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutes — stale signals are irrelevant
     for (const raw of rawList) {
-      try { parsed.push({ signal: JSON.parse(raw), raw }); } catch { continue; }
+      try {
+        const signal = JSON.parse(raw);
+        // Drop stale signals — market has moved since detection
+        if (signal.timestamp) {
+          const age = Date.now() - new Date(signal.timestamp).getTime();
+          if (age > SIGNAL_MAX_AGE_MS) {
+            await redis.lrem('trades:pending', 1, raw);
+            continue;
+          }
+        }
+        parsed.push({ signal, raw });
+      } catch { continue; }
     }
 
     // STEP 3a: Boost signals from GainerScanner top movers (only if direction matches)
