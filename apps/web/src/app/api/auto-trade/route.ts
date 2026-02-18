@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
 import { logTrade, saveValidation, archivePosition, createPosition, closePositionBySymbol, markLatestSignalExecuted } from '@cryonix/database';
 import { fullConfig, loadConfig } from '@/lib/config';
+import { getConfigVersion } from '@/lib/config-version';
 import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
 
@@ -484,6 +485,7 @@ async function reconcilePositions(): Promise<void> {
             reasoning: `Phantom position reconciled: Binance balance ${actualQty} vs Redis ${pos.quantity}`,
             status: 'CLOSED',
             agentId: 'auto-trader',
+            configVersion: getConfigVersion(),
           });
         }
       } else if (actualQty < pos.quantity * (TOML?.reconciliation.mismatch_warning_low ?? 0.9)) {
@@ -540,6 +542,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
               reasoning: `Native SL triggered on Binance (order ${pos.nativeSlOrderId} filled @ $${fillPrice})`,
               status: 'CLOSED',
               agentId: 'auto-trader',
+              configVersion: getConfigVersion(),
             });
 
             try {
@@ -559,7 +562,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
                 closedAt: new Date(),
                 closeReason: 'SOLD_SL',
                 pattern: pos.pattern,
-                metadata: { nativeSlFill: true, nativeSlOrderId: pos.nativeSlOrderId, fillPrice },
+                metadata: { nativeSlFill: true, nativeSlOrderId: pos.nativeSlOrderId, fillPrice, configVersion: getConfigVersion() },
                 agentId: 'auto-trader',
               });
             } catch (archiveErr) {
@@ -728,6 +731,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             reasoning: exitReason,
             status: 'CLOSED',
             agentId: 'auto-trader',
+            configVersion: getConfigVersion(),
           });
 
           const exitType = exitReason.startsWith('Stagnation') ? 'SOLD_STAGNATION' :
@@ -759,6 +763,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
                 confidence: pos.confidence,
                 entryPrice: pos.entryPrice,
                 exitReason,
+                configVersion: getConfigVersion(),
               },
               agentId: 'auto-trader',
             });
@@ -809,6 +814,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
               reasoning: `DUST write-off: value $${dustValue.toFixed(2)} below NOTIONAL`,
               status: 'CLOSED',
               agentId: 'auto-trader',
+              configVersion: getConfigVersion(),
             });
 
             try {
@@ -833,6 +839,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
                   trailingStop: pos.trailingStop,
                   confidence: pos.confidence,
                   dustValue,
+                  configVersion: getConfigVersion(),
                 },
                 agentId: 'auto-trader',
               });
@@ -1754,6 +1761,7 @@ async function checkGridTriggers(): Promise<GridResult[]> {
               reasoning: `Grid level #${i}: $${levelPrice.toFixed(2)} (range $${config.lowerBound}-$${config.upperBound})`,
               status: 'FILLED',
               agentId: 'grid-trader',
+              configVersion: getConfigVersion(),
             });
 
             results.push({
@@ -2075,6 +2083,7 @@ export async function POST() {
           reasoning: `${signal.reason} | AI: ${aiResult.reasoning}`,
           status: 'FILLED',
           agentId: 'auto-trader',
+          configVersion: getConfigVersion(),
         });
 
         // Mark matching signal as executed in Postgres

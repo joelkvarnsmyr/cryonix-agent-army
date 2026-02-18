@@ -24,6 +24,7 @@ export interface TradeExecution {
     status?: string;
     agentId?: string;
     userId?: number;
+    configVersion?: string;
 }
 
 export interface TradeFilters {
@@ -77,6 +78,7 @@ export async function logTrade(trade: TradeExecution): Promise<Trade> {
             status: trade.status || 'PENDING',
             agentId: trade.agentId,
             userId: trade.userId,
+            configVersion: trade.configVersion,
         })
         .returning();
 
