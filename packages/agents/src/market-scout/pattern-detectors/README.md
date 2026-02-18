@@ -1,3 +1,7 @@
+> **DEPRECATED:** This documents the legacy TypeScript pattern detectors. Production uses the Python QuantGuild engine (`packages/engine/src/guilds/quant.py`) with 8 different patterns: RSI, Bollinger, MACD, EMA, Volume Spike, Dip Buy, Deep Value Crash, Momentum Gainer. See root `CLAUDE.md` for current architecture.
+
+---
+
 # Market Scout Pattern Detectors
 
 Comprehensive pattern detection system for identifying trading opportunities using technical analysis.

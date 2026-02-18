@@ -1,473 +1,144 @@
-# Cryonix API Documentation
+# Cryonix API Reference
+
+> Auto-generated from `apps/web/src/app/api/` route scan. Last updated: 2026-02-18.
 
 ## Base URL
 
-- **Development**: `http://localhost:3003`
-- **Production**: `https://your-domain.vercel.app`
+- **Development:** `http://localhost:3000`
+- **Production:** `https://cryonix.openclaw.ai` (via Caddy reverse proxy)
+
+All routes are Next.js App Router API routes (`apps/web/src/app/api/`).
 
 ---
 
-## Authentication
+## Trading (critical)
 
-Currently, the API does not require authentication for local development. In production, implement appropriate authentication mechanisms.
+| Method | Path | Description |
+|--------|------|-------------|
+| **GET** | `/api/auto-trade` | **CRITICAL.** Core auto-trade loop: reads Redis `trades:pending`, runs filters (EV, CMC, spread, GROK AI validation), executes on Binance, monitors SL/TP/trailing. Polled every 30s by auto-trader worker. |
+| **POST** | `/api/auto-trade` | Same endpoint, POST variant for the execution cycle. |
+| **POST** | `/api/trade` | Execute a manual trade on Binance (BUY/SELL). |
+| **GET** | `/api/trade` | Get recent trade history from Postgres. |
+| **DELETE** | `/api/trade` | Cancel an open order on Binance. |
+| **GET** | `/api/positions` | List open or closed positions (`?action=open\|history\|stats\|summary`). |
+| **POST** | `/api/positions` | Close a position (triggers Binance sell + archive). |
+| **PUT** | `/api/positions` | Update SL/TP levels on an open position. |
+| **DELETE** | `/api/positions` | Force-close/remove a position. |
+
+### `/api/auto-trade` (GET) -- request/response
+
+No query parameters. Called by the auto-trader worker on a 30s loop.
+
+```
+Response: { status: "ok", cycle: { ... }, positions_monitored: N, trades_executed: N }
+```
+
+The response includes the full cycle result: signals processed, trades executed, positions monitored, and any errors. The exact shape varies per cycle.
 
 ---
 
-## Endpoints
+## Analytics
 
-### Market Data
+| Method | Path | Description |
+|--------|------|-------------|
+| **GET** | `/api/analytics/journal` | **CRITICAL.** Trade journal: closed positions with P&L, pattern, config version. Supports `?days=7&pattern=X&config_version=X`. |
+| **GET** | `/api/costs` | GROK AI API cost breakdown (24h, 7d, 30d) by model. |
+| **GET** | `/api/evolution` | Evolution run history + calibration data from Postgres + Redis. |
+| **GET** | `/api/calibration` | Current pattern EV calibration data from Redis. |
+| **POST** | `/api/calibration` | Trigger calibration: compute pattern performance from trade history, store in Redis. |
+| **GET** | `/api/process-log` | Unified process log: signals, validations, risk checks, trades from last 24h. |
 
-#### GET `/api/market`
+### `/api/analytics/journal` (GET) -- request/response
 
-Fetch live market data from Binance.
+```
+Query: ?days=7&pattern=volume_spike_up&config_version=abc12345
+Response: { success: true, journal: [...], summary: { totalTrades, winRate, avgPnl, ... }, configComparison: [...] }
+```
 
-**Query Parameters:**
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `symbol` | string | No | `BTCUSDT` | Trading pair symbol |
-| `interval` | string | No | `1h` | Candlestick interval |
-| `limit` | number | No | `100` | Number of candles |
+---
 
-**Response:**
-```json
-{
-  "status": "ok",
-  "data": {
-    "ticker": {
-      "symbol": "BTCUSDT",
-      "price": "50000.00",
-      "change24h": "2.5%"
-    },
-    "ohlcv": [
-      { "timestamp": 1704067200000, "open": 49000, "high": 50500, "low": 48500, "close": 50000, "volume": 1500000 }
-    ]
+## Market Data
+
+| Method | Path | Description |
+|--------|------|-------------|
+| **GET** | `/api/market` | Live ticker + OHLCV candles from Binance (`?symbol=BTCUSDT&interval=1h&limit=100`). |
+| **GET** | `/api/chart-data` | Chart data for dashboard: candles, trade markers, position history, signals (`?action=candles\|trades\|positions\|signals`). |
+| **GET** | `/api/signals` | **CRITICAL.** List trading signals (`?action=list\|unexecuted\|stats&symbol=X&pattern=X&limit=50`). |
+| **POST** | `/api/signals` | Create/persist a new signal (used by Python engine via HTTP). |
+| **GET** | `/api/scanner-history` | GainerScanner snapshots from Redis (`?limit=10`). |
+| **POST** | `/api/scanner-history` | Store a GainerScanner snapshot (keeps last 96 = 24h). |
+| **GET** | `/api/telegram-signals` | Active Telegram channel signals + channel quality stats from Redis. |
+| **GET** | `/api/x-sentiment` | Cached X/Twitter sentiment data from Redis. |
+| **POST** | `/api/x-sentiment` | Trigger X sentiment scan via GROK with live search. |
+
+### `/api/signals` (GET) -- request/response
+
+```
+Query: ?action=list&symbol=BTC/USDT&pattern=bollinger_squeeze&limit=50
+Response: { success: true, count: N, data: [{ id, timestamp, symbol, action, confidence, pattern, entry_price, target_price, stop_loss, reasoning, executed, ... }] }
+```
+
+---
+
+## System (critical)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| **GET** | `/api/health` | **CRITICAL.** Health check: Redis, Postgres, Engine, MarketScout status + latency. Used by `health-monitor.sh` cron. |
+| **POST** | `/api/analyze` | Send data to GROK AI for market analysis. |
+| **POST** | `/api/chat` | Chat with GROK AI assistant. |
+| **POST** | `/api/validate-signal` | Multi-source signal validation (consensus scoring). |
+| **GET** | `/api/validate-signal` | Get recent validation history. |
+| **GET** | `/api/risk` | Current risk status: portfolio exposure, daily/weekly P&L limits, circuit breaker state. |
+| **POST** | `/api/risk` | Update risk parameters. |
+| **POST** | `/api/risk-check` | Check if a proposed trade passes risk rules (Kelly sizing, limits). |
+| **GET** | `/api/risk-check` | Get recent risk check history. |
+| **GET** | `/api/grid-config` | Get active grid trading configuration from Redis. |
+| **POST** | `/api/grid-config` | Generate and store a new grid config (GROK AI-assisted range selection). |
+| **DELETE** | `/api/grid-config` | Cancel an active grid config. |
+| **POST** | `/api/backtest` | Run a backtest simulation. |
+| **GET** | `/api/backtest` | Get backtest results. |
+| **DELETE** | `/api/backtest` | Delete a backtest result. |
+
+### `/api/health` (GET) -- request/response
+
+```
+Response: {
+  status: "ok",
+  uptime_s: 12345,
+  config_hash: "abc12345",
+  checks: {
+    redis: { status: "ok", latency_ms: 2 },
+    postgres: { status: "ok", latency_ms: 5 },
+    engine: { status: "ok", latency_ms: 12 },
+    market_scout: { status: "ok", latency_ms: 3 }
   }
 }
 ```
 
 ---
 
-### Portfolio
+## Agents (legacy)
 
-#### GET `/api/portfolio`
-
-Get current Binance account balances.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "summary": {
-    "totalValueUSD": 10500.00,
-    "availableUSD": 5000.00,
-    "positionsValueUSD": 5500.00
-  },
-  "balances": [
-    { "asset": "USDT", "free": 5000, "locked": 0, "usdValue": 5000 },
-    { "asset": "BTC", "free": 0.1, "locked": 0, "usdValue": 5000 },
-    { "asset": "ETH", "free": 0.5, "locked": 0, "usdValue": 500 }
-  ]
-}
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| **GET** | `/api/agents` | Get status of legacy TypeScript agents (Orchestrator, MarketScout, ClaudeAssistant). |
+| **POST** | `/api/agents` | Control legacy agents (start/stop). |
+| **GET** | `/api/orchestrator/status` | Legacy orchestrator state (running, agents, P&L). |
+| **POST** | `/api/orchestrator/start` | Start legacy orchestrator. |
+| **POST** | `/api/orchestrator/stop` | Stop legacy orchestrator. |
+| **GET** | `/api/tanks/status` | Python tank status from Redis (`?id=market_scout`). |
+| **GET** | `/api/tanks/approvals` | List pending trades from Redis `trades:pending` queue. |
+| **POST** | `/api/tanks/approvals` | Approve or reject a pending trade signal. |
 
 ---
 
-### Trading
-
-#### POST `/api/trade`
-
-Execute a trade on Binance.
-
-**Request Body:**
-```json
-{
-  "symbol": "BTCUSDT",
-  "side": "BUY",
-  "quantity": 0.001,
-  "type": "MARKET"
-}
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "order": {
-    "orderId": "12345678",
-    "symbol": "BTCUSDT",
-    "side": "BUY",
-    "type": "MARKET",
-    "status": "FILLED",
-    "executedQty": "0.001",
-    "avgPrice": "50000.00"
-  }
-}
-```
-
----
-
-### AI Analysis
-
-#### POST `/api/analyze`
-
-Get GROK AI market analysis.
-
-**Request Body:**
-```json
-{
-  "symbol": "BTCUSDT",
-  "action": "full_analysis"
-}
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "data": {
-    "analysis": {
-      "signal": "BUY",
-      "confidence": 75,
-      "entry": 50000,
-      "target": 55000,
-      "stopLoss": 48000,
-      "reasoning": ["Strong momentum", "Volume confirmation"],
-      "summary": "Bullish setup with good risk/reward"
-    }
-  }
-}
-```
-
----
-
-### Backtesting
-
-#### POST `/api/backtest`
-
-Run a backtest simulation.
-
-**Request Body:**
-```json
-{
-  "symbols": ["BTC/USDT", "ETH/USDT"],
-  "startDate": "2024-01-01",
-  "endDate": "2024-06-01",
-  "initialCapital": 10000,
-  "patterns": ["bollinger_squeeze", "volume_spike"],
-  "timeframe": "1h",
-  "positionSizing": "kelly",
-  "maxPositionPercent": 20,
-  "minConfidence": 0.6
-}
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "result": {
-    "metrics": {
-      "totalReturn": 0.25,
-      "sharpeRatio": 1.8,
-      "sortinoRatio": 2.1,
-      "maxDrawdown": 0.12,
-      "winRate": 0.58,
-      "profitFactor": 1.65,
-      "totalTrades": 45
-    },
-    "trades": [...],
-    "equity": [...]
-  }
-}
-```
-
----
-
-### Signal Validation
-
-#### POST `/api/validate-signal`
-
-Validate a trading signal with multi-source consensus.
-
-**Request Body:**
-```json
-{
-  "symbol": "BTC/USDT",
-  "action": "BUY",
-  "confidence": 0.75,
-  "entryPrice": 50000,
-  "stopLoss": 48000,
-  "targetPrice": 55000,
-  "pattern": "bollinger_squeeze"
-}
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "validation": {
-    "isValid": true,
-    "consensusScore": 0.72,
-    "adjustedConfidence": 0.68,
-    "votes": {
-      "pattern_detector": { "agrees": true, "confidence": 0.75, "weight": 0.25 },
-      "technical_indicators": { "agrees": true, "confidence": 0.65, "weight": 0.20 },
-      "ai_analysis": { "agrees": true, "confidence": 0.70, "weight": 0.25 },
-      "market_structure": { "agrees": false, "confidence": 0.40, "weight": 0.15 },
-      "volume_analysis": { "agrees": true, "confidence": 0.80, "weight": 0.15 }
-    },
-    "reasoning": ["Strong technical alignment", "Good volume support"]
-  }
-}
-```
-
----
-
-### Risk Management
-
-#### GET `/api/risk`
-
-Get current risk status.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "risk": {
-    "portfolio": {
-      "total_capital": 10000,
-      "available_capital": 7000,
-      "open_positions": 2
-    },
-    "daily": {
-      "pnl": -150,
-      "limit": -500,
-      "remaining": -350,
-      "trades": 5,
-      "max_trades": 10
-    },
-    "weekly": {
-      "pnl": -200,
-      "limit": -1000,
-      "remaining": -800
-    },
-    "circuit_breaker": {
-      "active": false,
-      "reason": null,
-      "until": null
-    },
-    "consecutive_losses": 1,
-    "limits": {
-      "max_daily_loss_pct": 0.05,
-      "max_weekly_loss_pct": 0.10,
-      "max_position_size_pct": 0.20,
-      "min_confidence": 0.55
-    }
-  }
-}
-```
-
-#### POST `/api/risk-check`
-
-Check if a trade passes risk rules.
-
-**Request Body:**
-```json
-{
-  "symbol": "BTCUSDT",
-  "side": "BUY",
-  "confidence": 0.75,
-  "entry_price": 50000,
-  "stop_loss": 48000,
-  "target_price": 55000
-}
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "result": {
-    "approved": true,
-    "position_size": 0.05,
-    "position_value": 2500,
-    "risk_amount": 100,
-    "kelly_fraction": 0.12,
-    "reasoning": "Trade approved: Kelly 12%, Position 25% of capital",
-    "adjustments": {
-      "adjusted_stop_loss": 47500,
-      "adjusted_target": 55500
-    },
-    "limits": {
-      "portfolio_exposure": "25%",
-      "daily_loss_remaining": "3.5%",
-      "weekly_loss_remaining": "8%",
-      "open_positions": 3
-    }
-  }
-}
-```
-
----
-
-### Orchestrator
-
-#### GET `/api/orchestrator/status`
-
-Get orchestrator state.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "orchestrator": {
-    "status": "running",
-    "isRunning": true,
-    "enableAutoTrading": false,
-    "emergencyStopTriggered": false,
-    "lastScanTime": "2024-01-15T10:30:00Z",
-    "dailyStartValue": 10000,
-    "currentPortfolioValue": 10250,
-    "registeredAgents": [
-      { "id": "market_scout", "name": "Market Scout Agent", "status": "running" },
-      { "id": "risk_manager", "name": "Risk Manager Agent", "status": "running" }
-    ]
-  }
-}
-```
-
-#### POST `/api/orchestrator/start`
-
-Start the orchestrator.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "message": "Orchestrator started"
-}
-```
-
-#### POST `/api/orchestrator/stop`
-
-Stop the orchestrator.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "message": "Orchestrator stopped"
-}
-```
-
----
-
-### Signals
-
-#### GET `/api/signals`
-
-Get recent trading signals.
-
-**Query Parameters:**
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `limit` | number | No | `20` | Number of signals |
-| `symbol` | string | No | - | Filter by symbol |
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "signals": [
-    {
-      "id": "uuid",
-      "timestamp": "2024-01-15T10:30:00Z",
-      "symbol": "BTC/USDT",
-      "action": "BUY",
-      "confidence": 0.75,
-      "pattern": "bollinger_squeeze",
-      "entry_price": 50000,
-      "target_price": 55000,
-      "stop_loss": 48000,
-      "executed": false,
-      "reasoning": ["Volatility compression", "Volume confirmation"]
-    }
-  ]
-}
-```
-
----
-
-### Chat
-
-#### POST `/api/chat`
-
-Chat with GROK AI assistant.
-
-**Request Body:**
-```json
-{
-  "messages": [
-    { "role": "user", "content": "Vad tycker du om BTC just nu?" }
-  ]
-}
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "response": {
-    "role": "assistant",
-    "content": "BTC visar styrka med..."
-  }
-}
-```
-
----
-
-## Error Responses
-
-All endpoints return errors in this format:
-
-```json
-{
-  "status": "error",
-  "error": "Error message description",
-  "code": "ERROR_CODE"
-}
-```
-
-### Common Error Codes
-
-| Code | Description |
-|------|-------------|
-| `INVALID_PARAMS` | Missing or invalid parameters |
-| `EXCHANGE_ERROR` | Binance API error |
-| `RATE_LIMITED` | Too many requests |
-| `RISK_REJECTED` | Trade rejected by risk manager |
-| `INSUFFICIENT_BALANCE` | Not enough funds |
-| `CIRCUIT_BREAKER_ACTIVE` | Trading halted |
-
----
-
-## Rate Limits
-
-- **Market data**: 10 requests/second
-- **Trading**: 5 requests/second
-- **Analysis**: 1 request/second
-
----
-
-## WebSocket (Coming Soon)
-
-Real-time updates will be available via WebSocket at `ws://localhost:3004`.
-
-### Message Types
-
-- `SIGNAL_ALERT` - New trading signal
-- `TRADE_EXECUTED` - Trade completed
-- `POSITION_UPDATE` - Position changed
-- `RISK_WARNING` - Risk alert
-- `CIRCUIT_BREAKER_TRIGGERED` - Trading halted
+## Route Count Summary
+
+29 route files, ~50 method handlers across 5 categories.
+
+**Critical paths** (affect live trading or monitoring):
+- `GET /api/auto-trade` -- core execution loop
+- `GET /api/health` -- uptime monitoring + alerting
+- `GET /api/signals` -- signal pipeline visibility
+- `GET /api/analytics/journal` -- trade performance tracking

@@ -1,3 +1,7 @@
+> **DEPRECATED:** This documents the legacy TypeScript orchestrator. Production trading uses the Python MarketScoutTank → Redis → Auto-Trader pipeline. See root `CLAUDE.md` for current architecture.
+
+---
+
 # Orchestrator Agent - README
 
 ## Overview
