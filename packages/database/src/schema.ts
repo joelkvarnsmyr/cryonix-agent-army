@@ -64,6 +64,7 @@ export const trades = pgTable('trades', {
   reasoning: text('reasoning'),
   status: varchar('status', { length: 20 }).default('PENDING'), // 'PENDING', 'FILLED', 'CLOSED'
   agentId: varchar('agent_id', { length: 50 }),
+  configVersion: varchar('config_version', { length: 16 }),
 });
 
 // ============================================================================
@@ -224,6 +225,27 @@ export const evolutionRuns = pgTable('evolution_runs', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
+// === Analytical Core: Change Tracking & Calibration History ===
+
+export const configChanges = pgTable('config_changes', {
+  id: serial('id').primaryKey(),
+  changeType: varchar('change_type', { length: 20 }).notNull(),
+  source: text('source'),
+  configVersion: varchar('config_version', { length: 16 }),
+  parameters: jsonb('parameters'),
+  reasoning: text('reasoning'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const calibrationHistory = pgTable('calibration_history', {
+  id: serial('id').primaryKey(),
+  runType: varchar('run_type', { length: 20 }).notNull(),
+  snapshotDate: varchar('snapshot_date', { length: 10 }).notNull(),
+  patterns: jsonb('patterns'),
+  overall: jsonb('overall'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
 // ============================================================================
 // POSITION HISTORY TABLE
 // ============================================================================
@@ -335,3 +357,8 @@ export type NewTelegramSignal = typeof telegramSignals.$inferInsert;
 
 export type TelegramChannel = typeof telegramChannels.$inferSelect;
 export type NewTelegramChannel = typeof telegramChannels.$inferInsert;
+
+export type ConfigChange = typeof configChanges.$inferSelect;
+export type NewConfigChange = typeof configChanges.$inferInsert;
+export type CalibrationHistoryRow = typeof calibrationHistory.$inferSelect;
+export type NewCalibrationHistoryRow = typeof calibrationHistory.$inferInsert;
