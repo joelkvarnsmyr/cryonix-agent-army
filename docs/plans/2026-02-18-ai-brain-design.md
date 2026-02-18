@@ -154,6 +154,61 @@ Auto-trader triggers an acute AI Brain run when 3+ trades lose in a row:
 | applied | boolean | true if auto-applied |
 | created_at | timestamp | |
 
+## AI Brain → Evolution Directives
+
+AI Brain handles fast parameter tuning (cryonix.toml). But some insights require **code changes** — that's Evolution's domain. AI Brain communicates these via Redis directives.
+
+### Mechanism
+
+AI Brain writes to Redis key `evolution:directives` (JSON array, 24h TTL):
+```json
+[
+  {
+    "type": "code_change",
+    "target": "risk_gate.py",
+    "description": "Add volume confirmation to DIP_BUY pattern — solo DIP_BUY has 33% WR but DIP_BUY+VOLUME has 75% WR",
+    "priority": "high",
+    "created_at": "2026-02-18T12:00:00Z",
+    "brain_run_id": "brain_2026-02-18T12:00"
+  },
+  {
+    "type": "investigation",
+    "target": "quant.py",
+    "description": "MACD signals spike at 03:00 UTC but 0% win rate — possible low-liquidity false signals",
+    "priority": "medium",
+    "created_at": "2026-02-18T12:00:00Z",
+    "brain_run_id": "brain_2026-02-18T12:00"
+  }
+]
+```
+
+### Directive Types
+- **code_change**: AI Brain identified a pattern that needs code-level fix (Evolution acts on it)
+- **investigation**: AI Brain flagged something suspicious but can't determine the fix (Evolution investigates)
+
+### Evolution Side
+
+`copilot-evolution.mjs` reads `evolution:directives` at startup and includes them in its analysis prompt:
+```
+AI Brain directives (from last 24h):
+- [HIGH] risk_gate.py: Add volume confirmation to DIP_BUY pattern...
+- [MEDIUM] quant.py: MACD signals spike at 03:00 UTC...
+
+Consider these directives when planning mutations. High priority directives should be addressed first.
+```
+
+After processing, Evolution clears consumed directives from Redis.
+
+### Flow
+```
+AI Brain (every 6h)
+  → Grok analysis finds code-level insight
+  → Writes directive to Redis evolution:directives (24h TTL)
+  → Evolution (every 2h) reads directives
+  → Claude Code mutation plan incorporates directives
+  → Evolution applies code changes + clears directive
+```
+
 ## Implementation Order
 
 1. Add `autopilot_actions` table to schema
@@ -164,7 +219,9 @@ Auto-trader triggers an acute AI Brain run when 3+ trades lose in a row:
 6. Add Telegram report sender
 7. Add cron job (every 6h)
 8. Add acute trigger in auto-trade/route.ts (3+ loss streak)
-9. Deploy and verify
+9. Add evolution directive writing in ai_brain.py
+10. Add evolution directive reading in copilot-evolution.mjs
+11. Deploy and verify
 
 ## Relationship to Existing Systems
 
