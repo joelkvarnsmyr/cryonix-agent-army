@@ -13,7 +13,7 @@ apps/web/                    # Next.js 15 (dashboard + API routes + trade execut
 packages/
   engine/                    # Python 3.11 FastAPI (Docker) - scanning + analysis
   agents/                    # TypeScript agent system (Orchestrator, MarketScout, ClaudeAssistant)
-  database/                  # Drizzle ORM schema (19 tables, Postgres)
+  database/                  # Drizzle ORM schema (20 tables, Postgres)
   types/                     # Shared TypeScript types + Zod schemas
   ui/                        # shadcn/ui component library
   intelligence/              # Python ML module (Docker, stub)
@@ -119,6 +119,7 @@ Legacy agent system. Key classes:
 - `scripts/services/telegram-interactive.mjs` - Interactive Telegram bot (@cryptonixis_bot)
 - `scripts/services/telegram-bot.mjs` - Evolution report bot (@cryonixEvolution_bot)
 - `scripts/evolution/copilot-evolution.mjs` - Claude Code CLI autonomous evolution engine
+- `scripts/strategy-lab/ai_brain.py` - AI Brain autonomous analysis (every 6h + acute trigger)
 - `scripts/telegram-scraper/scraper.py` - Telegram channel signal scraper (Telethon/Python, Docker)
 
 ## Data Flow
@@ -173,11 +174,20 @@ Evolution System (Claude Code CLI, every 2h)
   -> Log to evolution_runs (structured changes_made JSONB)
   -> Log to config_changes table (change_type='evolution')
   -> Commit with [Auto-Evolution {run_id}] prefix
+
+AI Brain (Python, every 6h + acute on 3+ losses)
+  -> Collect: closed trades, open positions, calibration, pipeline stats, capital
+  -> Collect: config_changes (48h), evolution_runs (48h), previous brain actions
+  -> Call Grok API for analysis + action recommendations
+  -> Validate actions against safety bounds (range, delta, min patterns)
+  -> Apply: update cryonix.toml + Redis + config_changes + autopilot_actions
+  -> Write evolution:directives to Redis (24h TTL) for code-level insights
+  -> Send Telegram report
 ```
 
-## Database Schema (19 tables)
+## Database Schema (20 tables)
 
-`users`, `portfolio`, `positions`, `trades`, `signals`, `market_data`, `agent_actions`, `ml_models`, `orchestrator_state`, `risk_checks`, `backtest_results`, `validation_history`, `position_history`, `telegram_signals`, `telegram_channels`, `evolution_runs`, `config_changes`, `calibration_history`
+`users`, `portfolio`, `positions`, `trades`, `signals`, `market_data`, `agent_actions`, `ml_models`, `orchestrator_state`, `risk_checks`, `backtest_results`, `validation_history`, `position_history`, `telegram_signals`, `telegram_channels`, `evolution_runs`, `config_changes`, `calibration_history`, `autopilot_actions`
 
 Time-series tables indexed on `timestamp`. Crypto amounts use decimal precision.
 
@@ -223,7 +233,7 @@ CMC_API_KEY=...                      # CoinMarketCap Free tier API key (engine)
 ## Key Conventions
 
 - Python engine packages use `echo` skip for `pnpm build` since they run in Docker
-- Redis key patterns: `trades:pending`, `trades:approved`, `positions:open`, `sentiment:{SYMBOL}`, `agent:{NAME}:status`, `risk:portfolio_state`, `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:{channel}:{symbol}:{action}`, `cmc:global`, `cmc:fear_greed`, `cmc:mcap:{SYMBOL}`
+- Redis key patterns: `trades:pending`, `trades:approved`, `positions:open`, `sentiment:{SYMBOL}`, `agent:{NAME}:status`, `risk:portfolio_state`, `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:{channel}:{symbol}:{action}`, `cmc:global`, `cmc:fear_greed`, `cmc:mcap:{SYMBOL}`, `brain:acute_trigger`, `brain:loss_streak`, `brain:blocked_patterns`, `evolution:directives`
 - Docker networking: containers use service names (web, engine, redis, postgres) not localhost
 - `host.docker.internal` for dev Docker -> host communication
 - Auto-trader is SPOT_ONLY (rejects SELL signals, only BUY)
