@@ -489,10 +489,12 @@ class QuantGuild:
             boosts.append(f"WARNING: extreme velocity ({drop_velocity:.1f}%/h)")
 
         # --- Recovery check: is price showing any sign of bounce? ---
+        # Require at least a green candle. Without recovery, deep value entries
+        # are catching a falling knife (OP/USDC 0% WR without bounce).
         is_recovering = current_price > close.iloc[-2]  # Green candle
         if not is_recovering:
-            confidence *= 0.9  # Slight penalty if still falling
-            boosts.append("no recovery candle yet")
+            confidence *= 0.82  # Stronger penalty: falling knife risk
+            boosts.append("no recovery candle yet (falling knife penalty)")
 
         # --- SL/TP: wider than normal (3*ATR SL, 4*ATR TP) ---
         atr = indicators['atr']
