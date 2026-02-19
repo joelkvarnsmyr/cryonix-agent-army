@@ -420,6 +420,13 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
 
       console.log('\n✅ Claude Code evolution completed');
       await this.telegram.sendClaudeMutation(true, model);
+
+      // Clear consumed AI Brain directives
+      try {
+        await this.redis.del('evolution:directives');
+        console.log('🧹 Cleared consumed AI Brain directives');
+      } catch {}
+
       return true;
 
     } catch (error) {
@@ -526,6 +533,23 @@ DIAGNOSIS: Coins with score ≥2 and high volume are momentum candidates. Coins 
       }
     } catch {}
 
+    // Fetch AI Brain directives
+    let directivesSection = '';
+    try {
+      const directivesRaw = await this.redis.get('evolution:directives');
+      if (directivesRaw) {
+        const directives = JSON.parse(directivesRaw);
+        if (directives.length > 0) {
+          directivesSection = `
+## 🧠 AI Brain Directives (from last 24h)
+${directives.map(d => `- [${d.priority?.toUpperCase() || 'MEDIUM'}] ${d.target}: ${d.description}`).join('\n')}
+
+Consider these directives when planning mutations. HIGH priority directives should be addressed first.
+These come from the AI Brain's analysis of trading performance data.`;
+        }
+      }
+    } catch {}
+
     // Build structural issues section
     const issuesSection = structuralIssues?.length > 0 ? `
 ## ⚡ STRUCTURAL ISSUES DETECTED
@@ -572,6 +596,7 @@ ${scannerSection}
 ${calibrationSection}
 ${sentimentSection}
 ${issuesSection}
+${directivesSection}
 
 ## Open Positions
 ${openPositions?.map(p => `- ${p.symbol} entry=$${p.entry} pattern=${p.pattern}`).join('\n') || 'None'}
