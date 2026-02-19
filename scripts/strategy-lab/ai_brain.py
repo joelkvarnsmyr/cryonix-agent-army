@@ -17,7 +17,7 @@ import httpx
 import json
 import os
 import sys
-import toml
+import tomlkit
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -58,10 +58,11 @@ def config_version(toml_content):
 
 
 def load_toml_config():
-    """Load and return cryonix.toml as dict + raw content."""
+    """Load and return cryonix.toml as tomlkit doc + raw content.
+    Uses tomlkit to preserve comments when writing back."""
     with open(TOML_PATH, 'r') as f:
         raw = f.read()
-    return toml.loads(raw), raw
+    return tomlkit.parse(raw), raw
 
 
 def collect_data(pg, r, period_hours=6, is_acute=False):
@@ -291,13 +292,14 @@ def validate_action(action, cfg, r):
     if atype in SAFETY_BOUNDS:
         bounds = SAFETY_BOUNDS[atype]
         new_val = float(action.get('new_value', 0))
-        old_val = float(action.get('old_value', 0))
+        # Use ACTUAL current value from config, not Grok's reported old_value
+        actual_old = float(cfg.get(bounds['section'], {}).get(bounds['key'], 0))
 
         if new_val < bounds['min'] or new_val > bounds['max']:
             return False, f'out of range [{bounds["min"]}, {bounds["max"]}]: {new_val}'
 
-        if abs(new_val - old_val) > bounds['max_delta']:
-            return False, f'delta {abs(new_val - old_val):.2f} exceeds max {bounds["max_delta"]}'
+        if abs(new_val - actual_old) > bounds['max_delta']:
+            return False, f'delta {abs(new_val - actual_old):.2f} from actual {actual_old} exceeds max {bounds["max_delta"]}'
 
         return True, 'ok'
 
@@ -350,9 +352,9 @@ def apply_action(action, cfg, cfg_raw, r, pg, run_id):
         section = bounds['section']
         key = bounds['key']
 
-        # Update TOML
+        # Update TOML (tomlkit preserves comments and formatting)
         cfg[section][key] = new_val
-        new_raw = toml.dumps(cfg)
+        new_raw = tomlkit.dumps(cfg)
         with open(TOML_PATH, 'w') as f:
             f.write(new_raw)
 
