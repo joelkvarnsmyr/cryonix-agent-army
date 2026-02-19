@@ -386,13 +386,13 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
       // Notify Telegram
       await this.telegram.sendClaudeAnalysis(model, 25);
 
-      // Run Claude Code CLI
+      // Run Claude Code CLI (pipe prompt via stdin to avoid shell escaping issues)
       console.log(`\n🧠 Claude Code CLI analyzing + mutating (model: ${model})...`);
       const result = await this.execCommand(
-        `claude -p "$(cat ${promptPath})" ` +
+        `cat ${promptPath} | CLAUDECODE= claude -p ` +
         `--model ${model} ` +
         `--allowedTools 'Edit,Read,Glob,Grep,Bash(python3 scripts/evolution/verify_deep_value.py),Bash(python3 scripts/evolution/verify_grid.py),Bash(git diff --stat)' ` +
-        `--max-turns 25`,
+        `--max-budget-usd 5`,
         { timeout: CONFIG.CLAUDE_TIMEOUT, cwd: CONFIG.PROJECT_ROOT }
       );
 
