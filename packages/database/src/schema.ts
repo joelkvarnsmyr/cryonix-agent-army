@@ -246,6 +246,21 @@ export const calibrationHistory = pgTable('calibration_history', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
+// === AI Brain: Autopilot Action Log ===
+
+export const autopilotActions = pgTable('autopilot_actions', {
+  id: serial('id').primaryKey(),
+  runId: text('run_id').notNull(),
+  actionType: varchar('action_type', { length: 30 }).notNull(),
+  target: text('target'),
+  oldValue: text('old_value'),
+  newValue: text('new_value'),
+  reasoning: text('reasoning'),
+  confidence: decimal('confidence', { precision: 3, scale: 2 }),
+  applied: boolean('applied').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
 // ============================================================================
 // POSITION HISTORY TABLE
 // ============================================================================
@@ -362,3 +377,6 @@ export type ConfigChange = typeof configChanges.$inferSelect;
 export type NewConfigChange = typeof configChanges.$inferInsert;
 export type CalibrationHistoryRow = typeof calibrationHistory.$inferSelect;
 export type NewCalibrationHistoryRow = typeof calibrationHistory.$inferInsert;
+
+export type AutopilotAction = typeof autopilotActions.$inferSelect;
+export type NewAutopilotAction = typeof autopilotActions.$inferInsert;
