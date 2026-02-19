@@ -100,29 +100,30 @@ def collect_data(pg, r, period_hours=6, is_acute=False):
         t['hours_ago'] = round(float(t['hours_ago']), 1) if t['hours_ago'] else 0
         t['timestamp'] = t['timestamp'].isoformat() if t['timestamp'] else None
 
-    # 2. Open positions from Redis
+    # 2. Open positions from Redis (stored as JSON array string)
     open_positions = []
     try:
-        pos_raw = r.hgetall('positions:open')
-        for symbol, data in pos_raw.items():
-            p = json.loads(data) if isinstance(data, str) else data
-            entry = float(p.get('entryPrice', 0))
-            opened = p.get('openedAt', '')
-            holding_h = 0
-            if opened:
-                try:
-                    opened_dt = datetime.fromisoformat(opened.replace('Z', '+00:00'))
-                    holding_h = round((datetime.now(timezone.utc) - opened_dt).total_seconds() / 3600, 1)
-                except Exception:
-                    pass
-            open_positions.append({
-                'symbol': symbol,
-                'entry': entry,
-                'pattern': p.get('pattern', ''),
-                'holding_h': holding_h,
-                'stop_loss': float(p.get('stopLoss', 0)),
-                'take_profit': float(p.get('takeProfit', 0)),
-            })
+        pos_raw = r.get('positions:open')
+        if pos_raw:
+            positions_list = json.loads(pos_raw)
+            for p in positions_list:
+                entry = float(p.get('entryPrice', 0))
+                opened = p.get('openedAt', '')
+                holding_h = 0
+                if opened:
+                    try:
+                        opened_dt = datetime.fromisoformat(opened.replace('Z', '+00:00'))
+                        holding_h = round((datetime.now(timezone.utc) - opened_dt).total_seconds() / 3600, 1)
+                    except Exception:
+                        pass
+                open_positions.append({
+                    'symbol': p.get('symbol', ''),
+                    'entry': entry,
+                    'pattern': p.get('pattern', ''),
+                    'holding_h': holding_h,
+                    'stop_loss': float(p.get('stopLoss', 0)),
+                    'take_profit': float(p.get('takeProfit', 0)),
+                })
     except Exception as e:
         print(f'[BRAIN] Failed to read positions: {e}')
 
