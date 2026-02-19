@@ -49,6 +49,7 @@ services:
     restart: always
     volumes:
       - ./cryonix.toml:/app/cryonix.toml:ro
+      - ./scripts/strategy-lab:/app/scripts/strategy-lab:ro
     environment:
       - PYTHONUNBUFFERED=1
       - KV_URL=redis://redis:6379

@@ -32,6 +32,15 @@ export interface BacktestRequest {
     method?: 'shuffle' | 'bootstrap' | 'both';
     confidenceLevels?: number[];
   };
+  /** Injected from cryonix.toml by the API route — overrides hardcoded defaults */
+  tomlConfig?: {
+    maxPositionPercent?: number;
+    maxSlippagePercent?: number;
+    feePercent?: number;
+    minConfidence?: number;
+    maxConcurrentPositions?: number;
+    kellyFractionMultiplier?: number;
+  };
 }
 
 export class BacktesterAgent extends BaseAgent {
@@ -92,7 +101,8 @@ export class BacktesterAgent extends BaseAgent {
     this.log('info', 'Starting backtest...', request);
     this.setStatus('running');
 
-    // Build config with defaults
+    // Build config with defaults — tomlConfig overrides hardcoded values when present
+    const tc = request.tomlConfig;
     const config: BacktestConfig = {
       initialCapital: request.initialCapital ?? 10000,
       symbols: request.symbols ?? ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'],
@@ -103,12 +113,12 @@ export class BacktesterAgent extends BaseAgent {
       positionSizing: request.positionSizing ?? 'kelly',
       useHalfKelly: request.useHalfKelly ?? true,
       fixedPositionPercent: 0.02,
-      maxPositionPercent: 0.30,
+      maxPositionPercent: tc?.maxPositionPercent ?? 0.35,
       maxRiskPercent: 0.02,
-      slippagePercent: 0.1,
-      feePercent: 0.1,
-      minConfidence: 0.6,
-      maxConcurrentPositions: 5,
+      slippagePercent: tc?.maxSlippagePercent ?? 0.1,
+      feePercent: tc?.feePercent ?? 0.1,
+      minConfidence: tc?.minConfidence ?? 0.60,
+      maxConcurrentPositions: tc?.maxConcurrentPositions ?? 5,
       walkForward: request.walkForward?.enabled
         ? {
             windows: request.walkForward.windows ?? 4,

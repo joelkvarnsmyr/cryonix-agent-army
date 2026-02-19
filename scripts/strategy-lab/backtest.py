@@ -30,8 +30,14 @@ from tabulate import tabulate
 sys.path.insert(0, os.path.dirname(__file__))
 from db import get_pg
 
-# Import QuantGuild engine
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'packages', 'engine', 'src'))
+# Import QuantGuild engine — works in Docker (/app/src/) and on host (packages/engine/src/)
+_engine_paths = [
+    os.path.join(os.path.dirname(__file__), '..', '..', 'packages', 'engine', 'src'),  # host
+    '/app/src',                                                                          # Docker
+]
+for _p in _engine_paths:
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 from guilds.quant import QuantGuild
 
 
@@ -737,6 +743,39 @@ def print_report(config: BacktestConfig, metrics: Dict[str, Any]):
 # Postgres persistence
 # ---------------------------------------------------------------------------
 
+def _to_camel_case_metrics(m: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert snake_case metrics dict to camelCase for DB consistency with TS backtester."""
+    mapping = {
+        'total_trades': 'totalTrades',
+        'winning_trades': 'winningTrades',
+        'losing_trades': 'losingTrades',
+        'win_rate': 'winRate',
+        'total_pnl': 'totalReturn',
+        'total_fees': 'totalFees',
+        'total_return_pct': 'totalReturnPercent',
+        'annualized_return_pct': 'annualizedReturn',
+        'avg_win': 'averageWin',
+        'avg_loss': 'averageLoss',
+        'largest_win': 'largestWin',
+        'largest_loss': 'largestLoss',
+        'profit_factor': 'profitFactor',
+        'expectancy': 'expectancy',
+        'sharpe_ratio': 'sharpeRatio',
+        'sortino_ratio': 'sortinoRatio',
+        'calmar_ratio': 'calmarRatio',
+        'max_drawdown': 'maxDrawdown',
+        'max_drawdown_pct': 'maxDrawdownPercent',
+        'max_dd_duration_days': 'maxDrawdownDuration',
+        'max_consec_wins': 'maxConsecutiveWins',
+        'max_consec_losses': 'maxConsecutiveLosses',
+        'exit_reasons': 'exitReasons',
+        'trading_days': 'tradingDays',
+        'initial_capital': 'initialCapital',
+        'final_equity': 'finalEquity',
+    }
+    return {mapping.get(k, k): v for k, v in m.items()}
+
+
 def save_to_postgres(config: BacktestConfig, metrics: Dict[str, Any],
                      trades: List[Trade], equity_curve: List[EquityPoint]):
     """Save backtest results to backtest_results table."""
@@ -777,13 +816,17 @@ def save_to_postgres(config: BacktestConfig, metrics: Dict[str, Any],
             'equity': pt.equity,
         } for pt in equity_curve]
 
+        # Convert snake_case → camelCase for DB consistency with TS backtester
+        metrics = _to_camel_case_metrics(metrics)
+
         # Separate pattern_performance and monthly_returns for dedicated columns
-        pattern_perf = metrics.get('pattern_performance', {})
-        monthly_ret = metrics.get('monthly_returns', {})
+        pattern_perf = metrics.get('patternPerformance', metrics.get('pattern_performance', {}))
+        monthly_ret = metrics.get('monthlyReturns', metrics.get('monthly_returns', {}))
 
         # Clean metrics for the metrics column (remove nested dicts)
         metrics_clean = {k: v for k, v in metrics.items()
-                        if k not in ('pattern_performance', 'monthly_returns')}
+                        if k not in ('patternPerformance', 'monthlyReturns',
+                                     'pattern_performance', 'monthly_returns')}
 
         cur.execute("""
             INSERT INTO backtest_results

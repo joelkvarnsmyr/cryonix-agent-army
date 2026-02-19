@@ -8,6 +8,20 @@ import {
   deleteBacktestResult,
   cleanupOldBacktests,
 } from '@cryonix/database';
+import { fullConfig } from '@/lib/config';
+
+function getTomlConfigForBacktest() {
+  const toml = fullConfig();
+  if (!toml) return undefined;
+  return {
+    maxPositionPercent: toml.capital.max_position_size_pct,
+    maxSlippagePercent: toml.exits.max_slippage_pct,
+    feePercent: 0.1,
+    minConfidence: toml.risk.min_confidence,
+    maxConcurrentPositions: toml.limits.max_open_positions,
+    kellyFractionMultiplier: toml.capital.kelly_fraction_multiplier,
+  };
+}
 
 // Singleton backtester instance
 let backtesterInstance: BacktesterAgent | null = null;
@@ -92,6 +106,7 @@ export async function GET(request: NextRequest) {
           startDate: new Date(Date.now() - days * 24 * 60 * 60 * 1000),
           endDate: new Date(),
           initialCapital: 10000,
+          tomlConfig: getTomlConfigForBacktest(),
         });
 
         // Save to database
@@ -183,6 +198,7 @@ export async function POST(request: NextRequest) {
       patterns: patterns as PatternType[],
       positionSizing: positionSizing,
       useHalfKelly: useHalfKelly,
+      tomlConfig: getTomlConfigForBacktest(),
       walkForward: walkForward
         ? {
           enabled: walkForward.enabled,
