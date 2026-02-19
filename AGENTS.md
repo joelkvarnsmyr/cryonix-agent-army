@@ -151,6 +151,15 @@ Cryonix runs multiple autonomous systems that scan markets, validate trades, exe
 - **AI component:** None -- shell script
 - **Output:** Telegram alerts on failures
 
+## 14. AI Brain (`scripts/strategy-lab/ai_brain.py`)
+
+- **Schedule:** Every 6h via cron + acute trigger on 3+ consecutive losses
+- **AI:** Grok 3 Mini Fast (analysis + action decisions)
+- **Input:** Closed trades, open positions, calibration data, pipeline stats, capital, config changes, evolution runs
+- **Output:** Parameter tuning (cryonix.toml), pattern blocking (Redis), evolution directives (Redis), Telegram report
+- **Safety:** Bounded ranges per action type, max 4 actions/run, confidence >= 0.7 to auto-apply
+- **Communication:** Writes `evolution:directives` to Redis for Evolution Engine to consume
+
 ## Data Flow Between Agents
 
 ```
@@ -183,7 +192,7 @@ Calibrator -> Redis calibration:* (EV filter)  --+
                         |
                         v
         Evolution Engine <-- reads performance data
-               |
+               |              + reads evolution:directives from AI Brain
                v
         Claude Code CLI (claude-opus-4-6)
                |
@@ -192,6 +201,20 @@ Calibrator -> Redis calibration:* (EV filter)  --+
                |
                v
         config_changes + evolution_runs tables
+
+        AI Brain (Python, every 6h + acute trigger)
+               |
+               v
+        Grok 3 Mini Fast (analysis + action decisions)
+               |
+               v
+        Parameter tuning (cryonix.toml) + pattern blocking (Redis)
+               |
+               v
+        evolution:directives -> Redis (consumed by Evolution Engine)
+               |
+               v
+        Telegram report + autopilot_actions table
 ```
 
 ## Cron Schedule Summary
@@ -207,6 +230,7 @@ Calibrator -> Redis calibration:* (EV filter)  --+
 | Calibrator | Every 6h | `0 */6 * * *` |
 | Morning Report | Daily 06:00 | `0 6 * * *` |
 | Evolution Engine | Every 2h | `0 */2 * * *` |
+| AI Brain | Every 6h + acute | `0 */6 * * *` + loss trigger |
 | Health Monitor | Every 5min | `*/5 * * * *` |
 | Postgres Backup | Daily 03:00 | `0 3 * * *` |
 | Auto-Deploy | Every 1min | `* * * * *` |
@@ -218,6 +242,7 @@ Calibrator -> Redis calibration:* (EV filter)  --+
 | Grok AI Validator | grok-4-1-fast-reasoning | xAI | Trade signal approval/rejection |
 | X Sentiment Scanner | grok-3-mini | xAI | Social media sentiment analysis |
 | Evolution Engine | claude-opus-4-6 | Anthropic (Claude Code CLI) | Performance analysis + code mutation |
+| AI Brain | grok-3-mini-fast | xAI | Autonomous parameter tuning + directives |
 
 ## Configuration
 
