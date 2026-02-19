@@ -681,7 +681,7 @@ dust_sell_floor = 5.0
 
 # Master switch. When false, CMCScout does not run and auto-trader
 # skips all CMC-based checks. Enable after adding CMC_API_KEY to .env.
-enabled = false
+enabled = true
 
 # How often CMCScout polls CoinMarketCap (seconds).
 # 600 = 10 min. With batched quote calls this uses ~5,500 credits/month
