@@ -30,15 +30,16 @@ from tabulate import tabulate
 sys.path.insert(0, os.path.dirname(__file__))
 from db import get_pg
 
-# Import QuantGuild engine — works in Docker (/app/src/) and on host (packages/engine/src/)
+# Import QuantGuild engine — works in Docker (/app/) and on host (packages/engine/)
+# quant.py uses `from src.core.config import ...` so we need the parent of src/ in path
 _engine_paths = [
-    os.path.join(os.path.dirname(__file__), '..', '..', 'packages', 'engine', 'src'),  # host
-    '/app/src',                                                                          # Docker
+    os.path.join(os.path.dirname(__file__), '..', '..', 'packages', 'engine'),  # host: packages/engine/
+    '/app',                                                                      # Docker: /app/
 ]
 for _p in _engine_paths:
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
-from guilds.quant import QuantGuild
+from src.guilds.quant import QuantGuild
 
 
 # ---------------------------------------------------------------------------
