@@ -238,12 +238,12 @@ orderbook_depth = 5
 #   - Tighter SL (2.5-3.0): fewer large losses, more small stopouts
 #   - Wider TP (6.0-8.0): bigger wins but lower win rate
 #   - The tp/sl ratio should stay above min_risk_reward (1.3)
-sl_atr_multiplier = 4.0
+sl_atr_multiplier = 4.5
 tp_atr_multiplier = 6.5
 
 # Deep value crash trades use different (tighter) ATR multipliers
 # because crash bounces tend to be sharp but shorter-lived.
-deep_value_sl_atr = 4.5
+deep_value_sl_atr = 5.5
 deep_value_tp_atr = 5.0
 
 # Stagnation exit timeout. If a position hasn't moved more than 1%
@@ -391,7 +391,7 @@ three_pattern_boost = 0.15
 # when the market regime is classified as "ranging" (ADX < 25).
 # Trend signals in ranging markets have historically low win rates.
 # When to change: raise to 0.10 if trend signals keep losing in ranges.
-ranging_trend_penalty = 0.10
+ranging_trend_penalty = 0.15
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
