@@ -498,11 +498,12 @@ export class SignalValidator {
 
     // If override is disabled, keep original action but adjust confidence
     if (!this.config.allowActionOverride && validatedAction !== originalSignal.action) {
+      const consensusAction = validatedAction; // Save before override
       validatedAction = originalSignal.action;
       // Reduce confidence significantly when consensus disagrees, especially if opposite
       if (
-        (validatedAction === 'BUY' && originalSignal.action === 'SELL') ||
-        (validatedAction === 'SELL' && originalSignal.action === 'BUY')
+        (consensusAction === 'BUY' && originalSignal.action === 'SELL') ||
+        (consensusAction === 'SELL' && originalSignal.action === 'BUY')
       ) {
         validatedConfidence = originalSignal.confidence * 0.2; // Severe penalty for opposite signals
       } else {

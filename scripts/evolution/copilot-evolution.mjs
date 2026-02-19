@@ -83,7 +83,8 @@ const CONFIG = {
     'packages/engine/src/guilds/quant.py',
     'packages/engine/src/core/risk_gate.py',
     'packages/engine/src/core/risk_manager.py',
-    'apps/web/src/app/api/auto-trade/route.ts'
+    'apps/web/src/app/api/auto-trade/route.ts',
+    'cryonix.toml'
   ]
 };
 
@@ -621,6 +622,11 @@ ${sourceCode['packages/engine/src/core/risk_manager.py']}
 ### apps/web/src/app/api/auto-trade/route.ts
 \`\`\`typescript
 ${sourceCode['apps/web/src/app/api/auto-trade/route.ts']}
+\`\`\`
+
+### cryonix.toml (trading parameters)
+\`\`\`toml
+${sourceCode['cryonix.toml']}
 \`\`\`
 
 ${promptTemplate ? `## Additional Guidelines\n${promptTemplate}` : ''}`;
