@@ -1825,6 +1825,34 @@ export async function POST() {
     const monitorResults = await monitorPositions();
     const sells = monitorResults.filter(r => r.action !== 'HOLD' && r.action !== 'ERROR');
 
+    // ACUTE TRIGGER: Track consecutive SL losses for AI Brain
+    const slSells = sells.filter(s => s.action === 'SOLD_SL');
+    if (slSells.length > 0) {
+      try {
+        const streakRaw = await redis.get('brain:loss_streak');
+        const currentStreak = streakRaw ? parseInt(streakRaw) : 0;
+        const newStreak = currentStreak + slSells.length;
+        await redis.set('brain:loss_streak', String(newStreak), 'EX', 86400);
+
+        if (newStreak >= 3) {
+          await redis.set('brain:acute_trigger', JSON.stringify({
+            streak: newStreak,
+            last_losses: slSells.map(s => ({ symbol: s.symbol, pnl: s.pnl })),
+            triggered_at: new Date().toISOString(),
+          }), 'EX', 3600);
+          console.log(`[BRAIN] Acute trigger set: ${newStreak} consecutive losses`);
+        }
+      } catch (e) {
+        console.error('[BRAIN] Loss streak tracking error:', e);
+      }
+    }
+
+    // Reset streak on any win
+    const wins = sells.filter(s => s.action === 'SOLD_TP' || s.action === 'SOLD_TRAILING');
+    if (wins.length > 0) {
+      await redis.del('brain:loss_streak').catch(() => {});
+    }
+
     // Sync risk state after monitoring (positions may have closed)
     await syncRiskState();
 
