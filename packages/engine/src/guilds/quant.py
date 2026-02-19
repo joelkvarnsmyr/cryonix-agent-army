@@ -352,7 +352,7 @@ class QuantGuild:
             return {
                 "pattern": "EMA_BULLISH_CROSS",
                 "action": "BUY",
-                "confidence": 0.76,
+                "confidence": 0.65,  # Lowered: EMA cross alone is lagging, needs strong confirming pattern
                 "reason": "EMA 9/21 bullish crossover",
             }
         # Bearish crossover
@@ -360,7 +360,7 @@ class QuantGuild:
             return {
                 "pattern": "EMA_BEARISH_CROSS",
                 "action": "SELL",
-                "confidence": 0.76,
+                "confidence": 0.65,  # Lowered: EMA cross alone is lagging, needs strong confirming pattern
                 "reason": "EMA 9/21 bearish crossover",
             }
 
