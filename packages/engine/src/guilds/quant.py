@@ -352,7 +352,7 @@ class QuantGuild:
             return {
                 "pattern": "EMA_BULLISH_CROSS",
                 "action": "BUY",
-                "confidence": 0.65,  # Lowered: EMA cross alone is lagging, needs strong confirming pattern
+                "confidence": 0.55,  # Heavily penalized: 0% WR across 6 trades (solo + combos). Needs 3+ confirming patterns to pass min_confidence.
                 "reason": "EMA 9/21 bullish crossover",
             }
         # Bearish crossover
@@ -360,7 +360,7 @@ class QuantGuild:
             return {
                 "pattern": "EMA_BEARISH_CROSS",
                 "action": "SELL",
-                "confidence": 0.65,  # Lowered: EMA cross alone is lagging, needs strong confirming pattern
+                "confidence": 0.55,  # Penalized symmetrically with bullish cross
                 "reason": "EMA 9/21 bearish crossover",
             }
 
@@ -493,7 +493,7 @@ class QuantGuild:
         # are catching a falling knife (OP/USDC 0% WR without bounce).
         is_recovering = current_price > close.iloc[-2]  # Green candle
         if not is_recovering:
-            confidence *= 0.82  # Stronger penalty: falling knife risk
+            confidence *= 0.70  # Aggressive penalty: DEEP_VALUE without recovery has 0% WR (OP/USDC -$0.91)
             boosts.append("no recovery candle yet (falling knife penalty)")
 
         # --- SL/TP: wider than normal (3*ATR SL, 4*ATR TP) ---
