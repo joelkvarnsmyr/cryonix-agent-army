@@ -227,7 +227,7 @@ trailing_stop_pct = 3.0
 # 1.5 = 1.5%. Prevents trailing stop from triggering on small noise.
 # When to change: raise to 2-3% if positions are getting stopped out
 # too early on minor pullbacks.
-trailing_activation_pct = 2.5
+trailing_activation_pct = 3.0
 
 # Maximum allowed slippage between signal entry price and current market
 # price when the order is about to execute. Rejects if exceeded.

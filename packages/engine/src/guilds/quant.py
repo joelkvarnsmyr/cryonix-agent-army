@@ -403,7 +403,7 @@ class QuantGuild:
             return {
                 "pattern": "EMA_BULLISH_CROSS",
                 "action": "BUY",
-                "confidence": 0.60,  # Raised from 0.55: HTF confirmation improves quality
+                "confidence": 0.52,  # Lowered from 0.60: EMA cross has -$0.12 EV solo, -$0.32 with VOL_SPIKE (0% WR over 7 trades)
                 "reason": "EMA 9/21 bullish crossover",
             }
         # Bearish crossover
@@ -417,7 +417,7 @@ class QuantGuild:
             return {
                 "pattern": "EMA_BEARISH_CROSS",
                 "action": "SELL",
-                "confidence": 0.60,  # Raised from 0.55: HTF confirmation improves quality
+                "confidence": 0.52,  # Symmetric with bullish
                 "reason": "EMA 9/21 bearish crossover",
             }
 
@@ -550,7 +550,7 @@ class QuantGuild:
         # are catching a falling knife (OP/USDC 0% WR without bounce).
         is_recovering = current_price > close.iloc[-2]  # Green candle
         if not is_recovering:
-            confidence *= 0.70  # Aggressive penalty: DEEP_VALUE without recovery has 0% WR (OP/USDC -$0.91)
+            confidence *= 0.50  # Severe penalty: DEEP_VALUE without recovery has 0% WR across all trades (OP/USDC -$0.91, DV+DIP+RSI -$0.91 EV)
             boosts.append("no recovery candle yet (falling knife penalty)")
 
         # --- SL/TP: wider than normal (3*ATR SL, 4*ATR TP) ---
