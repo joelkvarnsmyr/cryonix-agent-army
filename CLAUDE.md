@@ -39,6 +39,7 @@ scripts/
     calibrate.py               #   Pattern EV calibration (--days 30) + Postgres snapshot
     self_calibrate.py          #   Signal accuracy self-calibration + Postgres snapshot
     morning_report.py          #   Daily morning report
+    baseline.py                #   Baseline freeze mode (freeze/unfreeze/status/compare)
     x_sentiment.py             #   X/Twitter sentiment scanner
     engine_diagnostik.py       #   Engine diagnostics
   telegram-scraper/            # Telegram signal scraper (Python/Telethon, Docker)
@@ -69,6 +70,13 @@ pnpm db:studio               # Open Drizzle Studio UI
 # Deploy to VM
 git archive --format=tar HEAD | ssh azureuser@openclaw-vm "cd ~/cryonix && tar xf -"
 ssh azureuser@openclaw-vm "cd ~/cryonix && docker compose -f docker-compose.prod.yml up -d --build"
+
+# Baseline mode (freeze mutations to measure clean performance)
+# Requires: set -a && source .env && set +a && TELEGRAM_EVOLUTION_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
+python3 scripts/strategy-lab/baseline.py freeze        # Freeze AI Brain + Evolution, take snapshot
+python3 scripts/strategy-lab/baseline.py status        # Show frozen state + trade count
+python3 scripts/strategy-lab/baseline.py unfreeze      # Unfreeze + take end snapshot
+python3 scripts/strategy-lab/baseline.py compare <id>  # Compare baseline vs post-baseline
 ```
 
 ## Architecture
@@ -118,8 +126,8 @@ Legacy agent system. Key classes:
 - `scripts/services/ws-server.mjs` - WebSocket server for real-time dashboard updates
 - `scripts/services/telegram-interactive.mjs` - Interactive Telegram bot (@cryptonixis_bot)
 - `scripts/services/telegram-bot.mjs` - Evolution report bot (@cryonixEvolution_bot)
-- `scripts/evolution/copilot-evolution.mjs` - Claude Code CLI autonomous evolution engine
-- `scripts/strategy-lab/ai_brain.py` - AI Brain autonomous analysis (every 6h + acute trigger)
+- `scripts/evolution/copilot-evolution.mjs` - Claude Code CLI autonomous evolution engine (respects baseline freeze)
+- `scripts/strategy-lab/ai_brain.py` - AI Brain autonomous analysis (every 6h + acute trigger, respects baseline freeze)
 - `scripts/telegram-scraper/scraper.py` - Telegram channel signal scraper (Telethon/Python, Docker)
 
 ## Data Flow
@@ -166,6 +174,7 @@ Calibration Pipeline (Python, every 6h + daily)
   -> Auto-trader reads calibration:patterns for EV model filter
 
 Evolution System (Claude Code CLI, every 2h)
+  -> Check baseline freeze flag → exit early if frozen
   -> analyzePerformance(): pattern P&L from trades + position_history
   -> Generate mutation plan via Claude Code
   -> Backup cryonix.toml → .evolution-backups/{run_id}/
@@ -176,6 +185,7 @@ Evolution System (Claude Code CLI, every 2h)
   -> Commit with [Auto-Evolution {run_id}] prefix
 
 AI Brain (Python, every 6h + acute on 3+ losses)
+  -> Check baseline freeze flag → exit early if frozen
   -> Collect: closed trades, open positions, calibration, pipeline stats, capital
   -> Collect: config_changes (48h), evolution_runs (48h), previous brain actions
   -> Call Grok API for analysis + action recommendations
@@ -183,6 +193,15 @@ AI Brain (Python, every 6h + acute on 3+ losses)
   -> Apply: update cryonix.toml + Redis + config_changes + autopilot_actions
   -> Write evolution:directives to Redis (24h TTL) for code-level insights
   -> Send Telegram report
+
+Baseline Mechanism (Python, manual trigger)
+  -> freeze: set [baseline] frozen=true in cryonix.toml
+  -> Take start snapshot (trades, win rate, PnL, per-pattern) → baselines/{id}/start.json
+  -> AI Brain + Evolution Engine check frozen flag and skip runs
+  -> Calibration keeps running (read-only)
+  -> Trading continues normally (only mutations paused)
+  -> unfreeze: take end snapshot (trades since freeze) → baselines/{id}/end.json
+  -> compare: baseline period vs same-duration post-baseline window
 ```
 
 ## Database Schema (20 tables)
@@ -243,3 +262,4 @@ CMC_API_KEY=...                      # CoinMarketCap Free tier API key (engine)
 - **Calibration history**: Daily snapshots persisted to `calibration_history` table (ON CONFLICT upsert).
 - **Telegram commands**: `/status`, `/positions`, `/trades`, `/pnl`, `/signals`, `/risk`, `/audit`, `/gainers`, `/evolve`, `/cost`, `/journal`, `/help`
 - **Analytics page**: `/analytics` — trade journal, config version comparison, pattern performance
+- **Baseline mode**: `[baseline]` section in cryonix.toml controls freeze state. When `frozen = true`, AI Brain and Evolution Engine exit early (cron still fires but scripts return immediately). Calibration is unaffected (read-only). Snapshots stored in `baselines/` (gitignored). Three systems mutate params (Evolution 2h, AI Brain 6h, Calibration 6h) — freeze isolates their impact.
