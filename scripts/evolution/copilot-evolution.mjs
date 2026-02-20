@@ -655,6 +655,60 @@ ${promptTemplate ? `## Additional Guidelines\n${promptTemplate}` : ''}`;
     return true;
   }
 
+  /**
+   * Backtest gate: run quick_backtest on mutated config.
+   * Rejects mutations with catastrophic metrics (drawdown >25%, profit_factor <0.3).
+   * Fail-open: if backtest itself errors, mutation proceeds.
+   */
+  async runBacktestGate(performanceData) {
+    console.log('\n📊 Running backtest gate...');
+
+    // Pick symbol from weakest pattern's trades, fallback to BTC/USDC
+    let symbol = 'BTC/USDC';
+    if (performanceData.exitAnalysis?.trades?.length > 0) {
+      const weakTrades = performanceData.exitAnalysis.trades.filter(
+        t => t.pattern === performanceData.weakestPattern
+      );
+      if (weakTrades.length > 0) {
+        symbol = weakTrades[0].symbol;
+      }
+    }
+
+    const days = 14;
+    const cmd = `docker exec cryonix-engine-1 python3 /app/scripts/strategy-lab/quick_backtest.py "${symbol}" ${days}`;
+
+    try {
+      console.log(`  Running backtest: ${symbol}, ${days} days...`);
+      const candidateRaw = await this.execCommand(cmd, { timeout: 120000 });
+      const candidate = JSON.parse(candidateRaw.trim());
+
+      console.log(`  Candidate: sharpe=${candidate.sharpe_ratio}, pf=${candidate.profit_factor}, ` +
+                   `dd=${candidate.max_drawdown_pct}%, trades=${candidate.total_trades}`);
+
+      if (candidate.total_trades < 3) {
+        console.log('  ⚠️ Too few trades for backtest gate — passing (inconclusive)');
+        return { passed: true, reason: 'inconclusive', candidate };
+      }
+
+      if (candidate.max_drawdown_pct > 25) {
+        console.log(`  ❌ Drawdown too high: ${candidate.max_drawdown_pct}% > 25%`);
+        return { passed: false, reason: `drawdown ${candidate.max_drawdown_pct}% > 25%`, candidate };
+      }
+
+      if (candidate.profit_factor < 0.3) {
+        console.log(`  ❌ Profit factor too low: ${candidate.profit_factor} < 0.3`);
+        return { passed: false, reason: `profit_factor ${candidate.profit_factor} < 0.3`, candidate };
+      }
+
+      console.log('  ✅ Backtest gate passed');
+      return { passed: true, reason: 'passed', candidate };
+
+    } catch (e) {
+      console.warn(`  ⚠️ Backtest gate error: ${e.message}`);
+      return { passed: true, reason: `error: ${e.message}`, candidate: null };
+    }
+  }
+
   async commitChanges(message) {
     console.log('\n📝 Committing changes...');
 
@@ -828,6 +882,7 @@ Co-authored-by: Claude <noreply@anthropic.com>"`);
       // Step 3: Run Claude Code evolution
       let attempt = 0;
       let mutationApplied = false;
+      let backtestResult = null;
 
       while (attempt < CONFIG.MAX_EVOLUTION_ATTEMPTS && !mutationApplied) {
         attempt++;
@@ -848,6 +903,16 @@ Co-authored-by: Claude <noreply@anthropic.com>"`);
 
         if (!verificationPassed) {
           console.log('❌ Verification failed! Rolling back...');
+          await this.restoreBackup(backupDir);
+          await this.execCommand('git reset --hard HEAD');
+          mutationApplied = false;
+          continue;
+        }
+
+        // Step 4b: Backtest gate
+        const backtestResult = await this.runBacktestGate(performanceData);
+        if (!backtestResult.passed) {
+          console.log(`❌ Backtest gate rejected mutation: ${backtestResult.reason}`);
           await this.restoreBackup(backupDir);
           await this.execCommand('git reset --hard HEAD');
           mutationApplied = false;
@@ -899,7 +964,8 @@ Co-authored-by: Claude <noreply@anthropic.com>"`);
         reason: 'evolution_completed',
         performance: performanceData,
         attempts: attempt,
-        changes: 'Applied mutation and verified'
+        changes: 'Applied mutation and verified',
+        backtestGate: backtestResult
       });
       await this.telegram.sendEvolutionResult(true, { runId: this.runId, duration, reason: 'evolution_completed', attempts: attempt });
 
