@@ -17,15 +17,40 @@ import json
 import os
 import sys
 
+import tomlkit
+
 # Ensure backtest.py's directory is importable
 sys.path.insert(0, os.path.dirname(__file__))
 
 from backtest import BacktestConfig, DataFetcher, Backtester, MetricsCalculator
 
+# Locate cryonix.toml — Docker (/app/) or host (../../)
+_TOML_PATHS = [
+    os.path.join(os.path.dirname(__file__), '..', '..', 'cryonix.toml'),  # host
+    '/app/cryonix.toml',                                                   # Docker
+]
+
+
+def _load_toml_defaults() -> dict:
+    """Read cryonix.toml and map relevant params to BacktestConfig fields."""
+    for path in _TOML_PATHS:
+        if os.path.isfile(path):
+            with open(path) as f:
+                toml = tomlkit.parse(f.read())
+            return {
+                'min_confidence': toml.get('risk', {}).get('min_confidence', 0.65),
+                'trailing_stop_pct': toml.get('exits', {}).get('trailing_stop_pct', 3.0) / 100,
+                'trailing_profit_threshold': toml.get('exits', {}).get('trailing_activation_pct', 1.5) / 100,
+                'position_size_pct': toml.get('capital', {}).get('max_position_size_pct', 0.25),
+                'max_positions': toml.get('limits', {}).get('max_open_positions', 3),
+            }
+    return {}
+
 
 def quick_backtest(symbol: str, days: int = 14, config_overrides: dict = None) -> dict:
     """
     Run a fast backtest using the QuantGuild engine.
+    Reads defaults from cryonix.toml, then applies any overrides.
 
     Args:
         symbol: Trading pair (e.g. "BTC/USDC")
@@ -48,8 +73,12 @@ def quick_backtest(symbol: str, days: int = 14, config_overrides: dict = None) -
             "expectancy": float,
         }
     """
-    # Build config with overrides
+    # Build config: TOML defaults -> then manual overrides
     cfg = BacktestConfig(symbol=symbol, days=days)
+    toml_defaults = _load_toml_defaults()
+    for key, value in toml_defaults.items():
+        if hasattr(cfg, key):
+            setattr(cfg, key, value)
     if config_overrides:
         for key, value in config_overrides.items():
             if hasattr(cfg, key):
