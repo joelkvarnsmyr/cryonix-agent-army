@@ -145,30 +145,13 @@ class MarketScoutTank(BaseTank):
             indicators = analysis['indicators']
             patterns = analysis.get('patterns', [])
 
-            # MOMENTUM_GAINER: inject pattern if symbol is a GainerScanner top mover
-            # with RSI + volume confirmation (QuantGuild stays pure, no Redis dependency)
+            # MOMENTUM_GAINER: inject as additional pattern (goes through consensus gate)
+            # No override — momentum alone won't produce a BUY signal (needs 2+ patterns)
             momentum = await self._detect_momentum_gainer(symbol, indicators)
             if momentum:
                 patterns.append(momentum)
-                # Re-evaluate signal if QuantGuild said HOLD but momentum says BUY
-                if signal['action'] == 'HOLD' and momentum['action'] == 'BUY':
-                    signal = {
-                        **signal,
-                        'action': 'BUY',
-                        'confidence': momentum['confidence'],
-                        'reason': momentum['reason'],
-                        'patterns': [momentum['pattern']],
-                        'entry_price': indicators.get('price', 0),
-                        'stop_loss': indicators.get('price', 0) * (1 - 2 * indicators.get('atr_percent', 2) / 100),
-                        'target_price': indicators.get('price', 0) * (1 + 4 * indicators.get('atr_percent', 2) / 100),
-                    }
-                elif signal['action'] == 'BUY':
-                    # Boost existing BUY signal with momentum confirmation
-                    signal['confidence'] = min(0.95, signal['confidence'] + 0.08)
-                    if 'MOMENTUM_GAINER' not in signal.get('reason', ''):
-                        signal['reason'] += f' + MOMENTUM_GAINER ({momentum["scanner_change"]:+.1f}% 1h)'
-                    if 'MOMENTUM_GAINER' not in (signal.get('patterns') or []):
-                        signal.setdefault('patterns', []).append('MOMENTUM_GAINER')
+                if 'MOMENTUM_GAINER' not in (signal.get('patterns') or []):
+                    signal.setdefault('patterns', []).append('MOMENTUM_GAINER')
 
             # Log detected patterns
             if patterns:

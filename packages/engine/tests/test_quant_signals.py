@@ -1,5 +1,6 @@
 """Tests for QuantGuild signal quality improvements."""
 import numpy as np
+import pandas as pd
 from src.guilds.quant import QuantGuild
 
 
@@ -154,3 +155,19 @@ class TestRegimeGate:
         # Price < EMA21 = downtrend -> blocked
         filtered = q._filter_by_regime(patterns, 'trending', ema21=100, price=95)
         assert len(filtered) == 0
+
+
+class TestMomentumGainerFix:
+    """MOMENTUM_GAINER must go through consensus gate, not bypass it."""
+
+    def test_momentum_gainer_alone_does_not_produce_buy(self):
+        """If only MOMENTUM_GAINER fires, signal should be HOLD (consensus needs 2+)."""
+        q = QuantGuild()
+        patterns = [{'pattern': 'MOMENTUM_GAINER', 'action': 'BUY', 'confidence': 0.80}]
+        indicators = {
+            'price': 100, 'atr': 2.0, 'bb_mid': 100, 'volume_ratio': 2.0,
+            'market_regime': 'trending', 'ema21': 98, 'adx': 30,
+            'plus_di': 25, 'minus_di': 15,
+        }
+        signal = q._generate_signal(patterns, indicators, pd.DataFrame({'close': [100]}))
+        assert signal['action'] == 'HOLD'
