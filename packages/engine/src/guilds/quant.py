@@ -57,8 +57,11 @@ class QuantGuild:
         # Calculate all indicators
         indicators = self._calculate_indicators(df)
 
+        # Calculate HTF indicators for pattern confirmation
+        htf_indicators = self._calculate_htf_indicators(multi_tf_data)
+
         # Run pattern detectors
-        patterns = self._detect_patterns(df, indicators)
+        patterns = self._detect_patterns(df, indicators, htf_indicators=htf_indicators)
 
         # Deep value crash detection (multi-timeframe)
         deep_value = self._detect_deep_value(df, indicators, multi_tf_data)
@@ -141,43 +144,43 @@ class QuantGuild:
             ),
         }
 
-    def _detect_patterns(self, df: pd.DataFrame, indicators: Dict) -> List[Dict]:
+    def _detect_patterns(self, df: pd.DataFrame, indicators: Dict, htf_indicators: Optional[Dict] = None) -> List[Dict]:
         """Run all pattern detectors"""
         patterns = []
 
         # 1. Bollinger Squeeze
-        squeeze = self._detect_bollinger_squeeze(df, indicators)
+        squeeze = self._detect_bollinger_squeeze(df, indicators, htf_indicators=htf_indicators)
         if squeeze:
             patterns.append(squeeze)
 
         # 2. RSI Extremes
-        rsi_signal = self._detect_rsi_extreme(indicators)
+        rsi_signal = self._detect_rsi_extreme(indicators, htf_indicators=htf_indicators)
         if rsi_signal:
             patterns.append(rsi_signal)
 
         # 3. Volume Spike
-        vol_signal = self._detect_volume_spike(df, indicators)
+        vol_signal = self._detect_volume_spike(df, indicators, htf_indicators=htf_indicators)
         if vol_signal:
             patterns.append(vol_signal)
 
         # 4. MACD Crossover
-        macd_signal = self._detect_macd_crossover(df, indicators)
+        macd_signal = self._detect_macd_crossover(df, indicators, htf_indicators=htf_indicators)
         if macd_signal:
             patterns.append(macd_signal)
 
         # 5. Mean Reversion / Dip Buy
-        dip_signal = self._detect_dip_buy(df, indicators)
+        dip_signal = self._detect_dip_buy(df, indicators, htf_indicators=htf_indicators)
         if dip_signal:
             patterns.append(dip_signal)
 
         # 6. EMA Crossover (9/21)
-        ema_signal = self._detect_ema_crossover(df)
+        ema_signal = self._detect_ema_crossover(df, htf_indicators=htf_indicators)
         if ema_signal:
             patterns.append(ema_signal)
 
         return patterns
 
-    def _detect_bollinger_squeeze(self, df: pd.DataFrame, indicators: Dict) -> Optional[Dict]:
+    def _detect_bollinger_squeeze(self, df: pd.DataFrame, indicators: Dict, htf_indicators: Optional[Dict] = None) -> Optional[Dict]:
         """
         Bollinger Squeeze: When bands narrow significantly, expect breakout.
         """
@@ -188,6 +191,11 @@ class QuantGuild:
 
         # Squeeze detected when width is in bottom N%
         if bb_width_pct < get_toml('indicators', 'bollinger_squeeze_pct', 20):
+            # Multi-TF confirmation: 1h BB width also squeezed
+            if htf_indicators and htf_indicators.get('1h'):
+                if htf_indicators['1h'].get('bb_width_percentile', 50) >= 30:
+                    return None  # 1h not in squeeze
+
             # Determine direction based on price position
             position = (price - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
 
@@ -213,17 +221,22 @@ class QuantGuild:
 
         return None
 
-    def _detect_rsi_extreme(self, indicators: Dict) -> Optional[Dict]:
+    def _detect_rsi_extreme(self, indicators: Dict, htf_indicators: Optional[Dict] = None) -> Optional[Dict]:
         """
-        RSI Extremes: Oversold (<35) or Overbought (>70)
+        RSI Extremes: Oversold (<30) or Overbought (>70)
         Widened BUY zone for micro-budget spot trading
         """
         rsi = indicators['rsi']
 
-        rsi_oversold = get_toml('indicators', 'rsi_oversold', 35)
+        rsi_oversold = get_toml('indicators', 'rsi_oversold', 30)
         rsi_overbought = get_toml('indicators', 'rsi_overbought', 70)
 
         if rsi < rsi_oversold:
+            # Multi-TF confirmation: 1h RSI must also be < 40
+            if htf_indicators and htf_indicators.get('1h'):
+                if htf_indicators['1h'].get('rsi', 50) >= 40:
+                    return None  # 1h RSI not confirming oversold
+
             confidence = 0.75 + (rsi_oversold - rsi) / 80
             return {
                 "pattern": "RSI_OVERSOLD",
@@ -232,6 +245,11 @@ class QuantGuild:
                 "reason": f"RSI oversold at {rsi:.1f}",
             }
         elif rsi > rsi_overbought:
+            # Multi-TF confirmation: 1h RSI must also be > 60
+            if htf_indicators and htf_indicators.get('1h'):
+                if htf_indicators['1h'].get('rsi', 50) <= 60:
+                    return None
+
             confidence = 0.70 + (rsi - rsi_overbought) / 100
             return {
                 "pattern": "RSI_OVERBOUGHT",
@@ -242,13 +260,18 @@ class QuantGuild:
 
         return None
 
-    def _detect_volume_spike(self, df: pd.DataFrame, indicators: Dict) -> Optional[Dict]:
+    def _detect_volume_spike(self, df: pd.DataFrame, indicators: Dict, htf_indicators: Optional[Dict] = None) -> Optional[Dict]:
         """
         Volume Spike: Current volume > 2x average
         """
         vol_ratio = indicators['volume_ratio']
 
         if vol_ratio > get_toml('indicators', 'volume_spike_threshold', 2.0):
+            # Multi-TF confirmation: 1h volume also elevated
+            if htf_indicators and htf_indicators.get('1h'):
+                if htf_indicators['1h'].get('volume_ratio', 1.0) < 1.5:
+                    return None
+
             # Check if price is moving up or down with the volume
             price_change = (df['close'].iloc[-1] - df['close'].iloc[-2]) / df['close'].iloc[-2]
 
@@ -269,7 +292,7 @@ class QuantGuild:
 
         return None
 
-    def _detect_macd_crossover(self, df: pd.DataFrame, indicators: Dict) -> Optional[Dict]:
+    def _detect_macd_crossover(self, df: pd.DataFrame, indicators: Dict, htf_indicators: Optional[Dict] = None) -> Optional[Dict]:
         """
         MACD Crossover: Signal line cross
         """
@@ -289,24 +312,34 @@ class QuantGuild:
 
         # Bullish crossover
         if prev_hist < 0 and curr_hist > 0:
+            # Multi-TF: 1h MACD histogram must also be positive
+            if htf_indicators and htf_indicators.get('1h'):
+                if htf_indicators['1h'].get('macd_hist', 0) < 0:
+                    return None
+
             return {
                 "pattern": "MACD_BULLISH_CROSS",
                 "action": "BUY",
-                "confidence": 0.68,  # Lowered: MACD alone is weak signal
+                "confidence": 0.62,  # Lowered: MACD alone is weak signal
                 "reason": "MACD bullish crossover",
             }
         # Bearish crossover
         elif prev_hist > 0 and curr_hist < 0:
+            # Multi-TF: 1h MACD histogram must also be negative
+            if htf_indicators and htf_indicators.get('1h'):
+                if htf_indicators['1h'].get('macd_hist', 0) > 0:
+                    return None
+
             return {
                 "pattern": "MACD_BEARISH_CROSS",
                 "action": "SELL",
-                "confidence": 0.68,  # Lowered: MACD alone is weak signal
+                "confidence": 0.62,  # Lowered: MACD alone is weak signal
                 "reason": "MACD bearish crossover",
             }
 
         return None
 
-    def _detect_dip_buy(self, df: pd.DataFrame, indicators: Dict) -> Optional[Dict]:
+    def _detect_dip_buy(self, df: pd.DataFrame, indicators: Dict, htf_indicators: Optional[Dict] = None) -> Optional[Dict]:
         """
         Mean Reversion: Price dropped significantly from recent high,
         now showing signs of recovery. Good for spot buying on dips.
@@ -328,6 +361,11 @@ class QuantGuild:
             rsi = indicators.get('rsi', 50)
             dip_max_rsi = get_toml('patterns', 'dip_buy_max_rsi', 50)
             if rsi < dip_max_rsi:
+                # Multi-TF: 4h RSI must not be overbought
+                if htf_indicators and htf_indicators.get('4h'):
+                    if htf_indicators['4h'].get('rsi', 50) >= 45:
+                        return None
+
                 confidence = 0.70 + drawdown * 2  # More drawdown = more confidence
                 return {
                     "pattern": "DIP_BUY",
@@ -338,7 +376,7 @@ class QuantGuild:
 
         return None
 
-    def _detect_ema_crossover(self, df: pd.DataFrame) -> Optional[Dict]:
+    def _detect_ema_crossover(self, df: pd.DataFrame, htf_indicators: Optional[Dict] = None) -> Optional[Dict]:
         """
         EMA 9/21 Crossover: Fast EMA crosses above slow EMA = bullish
         """
@@ -351,18 +389,30 @@ class QuantGuild:
 
         # Bullish crossover
         if prev_diff < 0 and curr_diff > 0:
+            # Multi-TF: 1h EMA9 must already be > EMA21 (trend aligned)
+            if htf_indicators and htf_indicators.get('1h'):
+                htf = htf_indicators['1h']
+                if htf.get('ema9', 0) <= htf.get('ema21', 0):
+                    return None
+
             return {
                 "pattern": "EMA_BULLISH_CROSS",
                 "action": "BUY",
-                "confidence": 0.55,  # Heavily penalized: 0% WR across 6 trades (solo + combos). Needs 3+ confirming patterns to pass min_confidence.
+                "confidence": 0.60,  # Raised from 0.55: HTF confirmation improves quality
                 "reason": "EMA 9/21 bullish crossover",
             }
         # Bearish crossover
         elif prev_diff > 0 and curr_diff < 0:
+            # Multi-TF: 1h EMA9 must already be < EMA21 (trend aligned)
+            if htf_indicators and htf_indicators.get('1h'):
+                htf = htf_indicators['1h']
+                if htf.get('ema9', 0) >= htf.get('ema21', 0):
+                    return None
+
             return {
                 "pattern": "EMA_BEARISH_CROSS",
                 "action": "SELL",
-                "confidence": 0.55,  # Penalized symmetrically with bullish cross
+                "confidence": 0.60,  # Raised from 0.55: HTF confirmation improves quality
                 "reason": "EMA 9/21 bearish crossover",
             }
 
@@ -848,6 +898,40 @@ class QuantGuild:
             return {'allowed': True, 'confidence_adj': -0.15, 'reason': f'HTF partial conflict: {bullish_count} bullish TF'}
 
         return {'allowed': True, 'confidence_adj': 0, 'reason': 'HTF neutral'}
+
+    def _calculate_htf_indicators(self, multi_tf_data: Optional[Dict[str, List[list]]]) -> Dict[str, Dict]:
+        """Calculate indicators on higher timeframes for pattern confirmation."""
+        result = {}
+        if not multi_tf_data:
+            return result
+
+        for tf_name in ['1h', '4h']:
+            data = multi_tf_data.get(tf_name)
+            if not data or len(data) < 30:
+                continue
+
+            df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            close = df['close']
+            volume = df['volume']
+
+            rsi = self._calculate_rsi(close, 14)
+            bb_mid, bb_upper, bb_lower, bb_width = self._calculate_bollinger(close, 20, 2)
+            macd, macd_signal, macd_hist = self._calculate_macd(close, 12, 26, 9)
+            vol_sma = volume.rolling(20).mean()
+            ema9 = close.ewm(span=9).mean()
+            ema21 = close.ewm(span=21).mean()
+
+            result[tf_name] = {
+                'rsi': round(float(rsi.iloc[-1]), 2) if not pd.isna(rsi.iloc[-1]) else 50,
+                'macd_hist': round(float(macd_hist.iloc[-1]), 6) if not pd.isna(macd_hist.iloc[-1]) else 0,
+                'bb_width_percentile': self._percentile(bb_width, bb_width.iloc[-1]),
+                'volume_ratio': round(float(volume.iloc[-1] / vol_sma.iloc[-1]), 2) if vol_sma.iloc[-1] > 0 else 1,
+                'ema9': float(ema9.iloc[-1]),
+                'ema21': float(ema21.iloc[-1]),
+                'price': float(close.iloc[-1]),
+            }
+
+        return result
 
     def _get_higher_tf_trend(self, multi_tf_data: Optional[Dict[str, List[list]]]) -> Optional[Dict]:
         """Determine the higher-timeframe trend bias from 1h and 4h data"""

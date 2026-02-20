@@ -285,13 +285,13 @@ native_sl_limit_offset = 0.005
 
 # RSI (Relative Strength Index) — momentum oscillator.
 # rsi_period: lookback window. 14 is the standard. Lower = more sensitive.
-# rsi_oversold: below this generates a BUY signal. Standard is 30,
-#   we use 35 for crypto (higher baseline volatility).
+# rsi_oversold: below this generates a BUY signal. Tightened to 30
+#   with multi-TF confirmation (1h RSI < 40) reducing false positives.
 # rsi_overbought: above this generates a SELL signal.
-# When to change: widen the range (30/75) for fewer signals,
-# narrow (40/65) for more signals.
+# When to change: widen the range (25/75) for fewer signals,
+# narrow (35/65) for more signals.
 rsi_period = 14
-rsi_oversold = 35
+rsi_oversold = 30
 rsi_overbought = 70
 
 # Bollinger Bands — volatility + mean reversion indicator.

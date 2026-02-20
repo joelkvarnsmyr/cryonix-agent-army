@@ -67,3 +67,40 @@ class TestHTFGate:
         result = q._passes_htf_gate('BUY', None)
         assert result['allowed'] is True
         assert result['confidence_adj'] == 0
+
+
+class TestMultiTFConfirmation:
+    """Patterns must be confirmed on higher timeframes."""
+
+    def test_rsi_oversold_rejected_without_1h_confirmation(self):
+        """RSI < 30 on 15m but 1h RSI = 55 -> pattern should NOT fire."""
+        q = QuantGuild()
+        indicators = {'rsi': 28, 'price': 100}
+        htf_indicators = {'1h': {'rsi': 55}}
+        result = q._detect_rsi_extreme(indicators, htf_indicators=htf_indicators)
+        assert result is None
+
+    def test_rsi_oversold_confirmed_with_1h(self):
+        """RSI < 30 on 15m AND 1h RSI < 40 -> pattern fires."""
+        q = QuantGuild()
+        indicators = {'rsi': 28}
+        htf_indicators = {'1h': {'rsi': 35}}
+        result = q._detect_rsi_extreme(indicators, htf_indicators=htf_indicators)
+        assert result is not None
+        assert result['action'] == 'BUY'
+
+    def test_rsi_threshold_is_30_not_35(self):
+        """RSI oversold threshold should be 30 (was 35)."""
+        q = QuantGuild()
+        indicators = {'rsi': 32}
+        htf_indicators = {'1h': {'rsi': 30}}
+        result = q._detect_rsi_extreme(indicators, htf_indicators=htf_indicators)
+        assert result is None  # 32 > 30, no trigger
+
+    def test_rsi_without_htf_data_still_works(self):
+        """RSI oversold should still work without HTF data (backwards compat)."""
+        q = QuantGuild()
+        indicators = {'rsi': 25}
+        result = q._detect_rsi_extreme(indicators)
+        assert result is not None
+        assert result['action'] == 'BUY'
