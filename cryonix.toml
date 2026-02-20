@@ -397,7 +397,7 @@ single_pattern_penalty = 0.65
 # 2 patterns: +10%, 3+ patterns: +15%.
 # These stack with the base pattern confidence.
 # When to change: lower if too many low-quality signals pass.
-two_pattern_boost = 0.10
+two_pattern_boost = 0.08
 three_pattern_boost = 0.15
 
 # Penalty applied to trend-following signals (MACD, EMA crossover)
