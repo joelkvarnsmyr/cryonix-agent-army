@@ -101,12 +101,20 @@ def _empty_result(symbol: str, days: int) -> dict:
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print('Usage: quick_backtest.py SYMBOL [DAYS] [CONFIG_JSON]')
+        print('Usage: quick_backtest.py SYMBOL [DAYS] [CONFIG_JSON]', file=sys.stderr)
         sys.exit(1)
 
     sym = sys.argv[1]
     d = int(sys.argv[2]) if len(sys.argv) > 2 else 14
     overrides = json.loads(sys.argv[3]) if len(sys.argv) > 3 else None
 
-    result = quick_backtest(sym, d, overrides)
+    # Redirect stdout to stderr during backtest so progress messages
+    # don't corrupt the JSON output that callers parse
+    real_stdout = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        result = quick_backtest(sym, d, overrides)
+    finally:
+        sys.stdout = real_stdout
+
     print(json.dumps(result))

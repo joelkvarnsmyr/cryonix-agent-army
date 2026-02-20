@@ -48,6 +48,9 @@ env/
 *.sw?
 *.local
 
+# Baseline snapshots
+baselines/
+
 # Worktrees
 .worktrees/
 

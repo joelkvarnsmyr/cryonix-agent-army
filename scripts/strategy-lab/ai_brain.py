@@ -456,6 +456,13 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Collect data + call Grok but do not apply actions')
     args = parser.parse_args()
 
+    # Baseline freeze check
+    cfg, _ = load_toml_config()
+    if cfg.get('baseline', {}).get('frozen', False):
+        baseline_id = cfg.get('baseline', {}).get('baseline_id', '?')
+        print(f'[AI BRAIN] FROZEN — baseline {baseline_id} active. Skipping run.')
+        return
+
     run_id = f'brain_{datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")}'
     print(f'[AI BRAIN] Starting run {run_id} (acute={args.acute}, dry_run={args.dry_run})')
 

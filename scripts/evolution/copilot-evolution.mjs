@@ -792,6 +792,16 @@ Co-authored-by: Claude <noreply@anthropic.com>"`);
 
     try {
       await this.initialize();
+
+      // Baseline freeze check
+      const tomlRaw = await readFile(join(CONFIG.PROJECT_ROOT, 'cryonix.toml'), 'utf-8');
+      if (/^frozen\s*=\s*true/m.test(tomlRaw)) {
+        const idMatch = tomlRaw.match(/^baseline_id\s*=\s*"([^"]*)"/m);
+        console.log(`\n🧊 FROZEN — baseline ${idMatch?.[1] || '?'} active. Skipping evolution.`);
+        await this.logEvolutionResult(true, { reason: 'frozen_baseline', performance: null });
+        return;
+      }
+
       await this.telegram.sendEvolutionStart(this.runId);
 
       // Step 1: Analyze performance
