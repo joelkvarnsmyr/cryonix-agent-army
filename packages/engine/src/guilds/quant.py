@@ -67,7 +67,9 @@ class QuantGuild:
 
         # Generate final signal (with multi-TF trend filter)
         htf_trend = self._get_higher_tf_trend(multi_tf_data)
+        self._current_multi_tf = multi_tf_data
         signal = self._generate_signal(patterns, indicators, df, htf_trend)
+        self._current_multi_tf = None
 
         return {
             "status": "success",
@@ -601,6 +603,23 @@ class QuantGuild:
         buy_signals = [p for p in patterns if p['action'] == 'BUY']
         sell_signals = [p for p in patterns if p['action'] == 'SELL']
 
+        # ── HTF hard veto: block counter-trend trades ──
+        dominant_action = 'BUY' if len(buy_signals) >= len(sell_signals) else 'SELL'
+        if buy_signals or sell_signals:
+            htf_gate = self._passes_htf_gate(dominant_action, getattr(self, '_current_multi_tf', None))
+            if not htf_gate['allowed']:
+                return {
+                    "action": "HOLD",
+                    "confidence": 0.3,
+                    "reason": f"{htf_gate['reason']} — {len(buy_signals)} buy / {len(sell_signals)} sell patterns blocked",
+                    "patterns": [p['pattern'] for p in patterns],
+                    "entry_price": price,
+                    "stop_loss": rp(price * 0.98),
+                    "target_price": rp(price * 1.02),
+                    "consensus_score": 0,
+                    "filtered_by": "htf_gate",
+                }
+
         # ── Consensus gate: require 2+ confirming patterns ──
         # Single-pattern signals (e.g. RSI_OVERSOLD alone) have 25% win rate.
         # Combo signals (e.g. BOLLINGER + RSI) have 50%+ win rate.
@@ -782,6 +801,53 @@ class QuantGuild:
                 }
 
     # === Helper Methods ===
+
+    def _passes_htf_gate(self, action: str, multi_tf_data: Optional[Dict[str, List[list]]] = None) -> Dict[str, Any]:
+        """
+        Higher-timeframe hard veto.
+        Block BUY if BOTH 1h and 4h are bearish (EMA9 < EMA21 AND price < EMA21).
+        Block SELL if BOTH 1h and 4h are bullish.
+        Single TF opposing: allow with -15% penalty. Both confirming: +10% boost.
+        """
+        if not multi_tf_data:
+            return {'allowed': True, 'confidence_adj': 0, 'reason': 'no HTF data'}
+
+        bullish_count = 0
+        bearish_count = 0
+        tf_count = 0
+
+        for tf_name in ['1h', '4h']:
+            data = multi_tf_data.get(tf_name)
+            if not data or len(data) < 21:
+                continue
+            tf_count += 1
+            df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            ema9 = df['close'].ewm(span=9).mean().iloc[-1]
+            ema21 = df['close'].ewm(span=21).mean().iloc[-1]
+            price = df['close'].iloc[-1]
+
+            if price > ema21 and ema9 > ema21:
+                bullish_count += 1
+            elif price < ema21 and ema9 < ema21:
+                bearish_count += 1
+
+        if tf_count == 0:
+            return {'allowed': True, 'confidence_adj': 0, 'reason': 'no HTF data'}
+
+        if action == 'BUY' and bearish_count == 2:
+            return {'allowed': False, 'confidence_adj': 0, 'reason': 'HTF hard veto: 1h+4h bearish'}
+        if action == 'SELL' and bullish_count == 2:
+            return {'allowed': False, 'confidence_adj': 0, 'reason': 'HTF hard veto: 1h+4h bullish'}
+        if action == 'BUY' and bullish_count == 2:
+            return {'allowed': True, 'confidence_adj': 0.10, 'reason': 'HTF confirms: 1h+4h bullish'}
+        if action == 'SELL' and bearish_count == 2:
+            return {'allowed': True, 'confidence_adj': 0.10, 'reason': 'HTF confirms: 1h+4h bearish'}
+        if action == 'BUY' and bearish_count >= 1:
+            return {'allowed': True, 'confidence_adj': -0.15, 'reason': f'HTF partial conflict: {bearish_count} bearish TF'}
+        if action == 'SELL' and bullish_count >= 1:
+            return {'allowed': True, 'confidence_adj': -0.15, 'reason': f'HTF partial conflict: {bullish_count} bullish TF'}
+
+        return {'allowed': True, 'confidence_adj': 0, 'reason': 'HTF neutral'}
 
     def _get_higher_tf_trend(self, multi_tf_data: Optional[Dict[str, List[list]]]) -> Optional[Dict]:
         """Determine the higher-timeframe trend bias from 1h and 4h data"""
