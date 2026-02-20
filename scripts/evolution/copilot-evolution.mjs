@@ -849,9 +849,10 @@ Co-authored-by: Claude <noreply@anthropic.com>"`);
     try {
       await this.initialize();
 
-      // Baseline freeze check
+      // Baseline freeze check — lock file survives git pulls, TOML as fallback
+      const lockFile = join(CONFIG.PROJECT_ROOT, '.baseline-frozen');
       const tomlRaw = await readFile(join(CONFIG.PROJECT_ROOT, 'cryonix.toml'), 'utf-8');
-      if (/^frozen\s*=\s*true/m.test(tomlRaw)) {
+      if (fs.existsSync(lockFile) || /^frozen\s*=\s*true/m.test(tomlRaw)) {
         const idMatch = tomlRaw.match(/^baseline_id\s*=\s*"([^"]*)"/m);
         console.log(`\n🧊 FROZEN — baseline ${idMatch?.[1] || '?'} active. Skipping evolution.`);
         await this.logEvolutionResult(true, { reason: 'frozen_baseline', performance: null });

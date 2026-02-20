@@ -27,6 +27,7 @@ from db import get_pg, get_redis
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 TOML_PATH = os.path.join(PROJECT_ROOT, 'cryonix.toml')
+LOCK_FILE = os.path.join(PROJECT_ROOT, '.baseline-frozen')
 BASELINES_DIR = os.path.join(PROJECT_ROOT, 'baselines')
 
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_EVOLUTION_BOT_TOKEN', '')
@@ -194,6 +195,10 @@ def cmd_freeze(pg):
     doc['baseline']['baseline_id'] = baseline_id
     save_toml(doc)
 
+    # Create lock file (survives git pulls)
+    with open(LOCK_FILE, 'w') as f:
+        f.write(baseline_id)
+
     overall = snapshot['overall']
     print(f'[BASELINE] FROZEN — {baseline_id}')
     print(f'  Start snapshot: {overall["trade_count"]} trades, '
@@ -252,6 +257,10 @@ def cmd_unfreeze(pg):
     # Update cryonix.toml
     doc['baseline']['frozen'] = False
     save_toml(doc)
+
+    # Remove lock file
+    if os.path.exists(LOCK_FILE):
+        os.remove(LOCK_FILE)
 
     overall = snapshot['overall']
     print(f'[BASELINE] UNFROZEN — {baseline_id}')

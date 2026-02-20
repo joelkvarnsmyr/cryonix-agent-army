@@ -457,9 +457,10 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Collect data + call Grok but do not apply actions')
     args = parser.parse_args()
 
-    # Baseline freeze check
+    # Baseline freeze check — lock file survives git pulls, TOML as fallback
+    lock_file = os.path.join(os.path.dirname(__file__), '..', '..', '.baseline-frozen')
     cfg, _ = load_toml_config()
-    if cfg.get('baseline', {}).get('frozen', False):
+    if os.path.exists(lock_file) or cfg.get('baseline', {}).get('frozen', False):
         baseline_id = cfg.get('baseline', {}).get('baseline_id', '?')
         print(f'[AI BRAIN] FROZEN — baseline {baseline_id} active. Skipping run.')
         return

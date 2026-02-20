@@ -88,6 +88,12 @@ Remote: \`${REMOTE:0:7}\`"
     exit 1
   fi
 
+  # Restore baseline freeze if lock file exists (survives git pulls)
+  if [ -f "$DEPLOY_DIR/.baseline-frozen" ]; then
+    sed -i 's/^frozen = false/frozen = true/' cryonix.toml
+    echo "  Restored baseline freeze flag in cryonix.toml"
+  fi
+
   # Rebuild containers
   docker compose -f "$COMPOSE_FILE" up -d --build 2>&1
 

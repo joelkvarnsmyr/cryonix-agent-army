@@ -30,7 +30,7 @@
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 [baseline]
-frozen = false
+frozen = true
 frozen_at = ""
 frozen_by = ""
 baseline_id = ""
