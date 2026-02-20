@@ -300,12 +300,14 @@ class Backtester:
 
     WINDOW = 100  # candles passed to quant.analyze()
 
-    def __init__(self, config: BacktestConfig):
+    def __init__(self, config: BacktestConfig, signal_filter=None):
         self.config = config
         self.quant = QuantGuild()
         self.pm = PositionManager(config)
         self.equity_curve: List[EquityPoint] = []
         self.signals_generated = 0
+        self.signals_filtered = 0
+        self.signal_filter = signal_filter  # Optional callable(signal, result) -> bool
 
     def run(self, data: Dict[str, List[list]]) -> Tuple[List[Trade], List[EquityPoint]]:
         primary = data[self.config.timeframe]
@@ -363,6 +365,10 @@ class Backtester:
             if (action == 'BUY'
                     and confidence >= self.config.min_confidence
                     and self.pm.can_open(self.config.symbol)):
+                # Optional AI filter (e.g. Grok validation)
+                if self.signal_filter and not self.signal_filter(signal, result):
+                    self.signals_filtered += 1
+                    continue
                 self.signals_generated += 1
                 equity = self.config.capital + realized_pnl + self.pm.unrealized_pnl(c)
                 self.pm.open_position(signal, candle_time, i, equity)
