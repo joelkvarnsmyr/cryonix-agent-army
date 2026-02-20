@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 from db import get_pg, get_redis
+from quick_backtest import quick_backtest
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 TOML_PATH = os.path.join(PROJECT_ROOT, 'cryonix.toml')
@@ -483,6 +484,27 @@ def main():
             print('[AI BRAIN] No trades in period, skipping analysis')
             telegram_send(f'🧠 <b>AI Brain</b> ({run_id})\n\nNo trades in last {period}h. Skipping.')
             return
+
+        # Step 1b: Add backtest context (advisory, errors don't block)
+        backtest_symbols = ['BTC/USDC', 'ETH/USDC', 'SOL/USDC']
+        backtest_baseline = {}
+        for sym in backtest_symbols:
+            try:
+                bt = quick_backtest(sym, days=14)
+                backtest_baseline[sym] = {
+                    'sharpe': bt['sharpe_ratio'],
+                    'profit_factor': bt['profit_factor'],
+                    'win_rate': bt['win_rate'],
+                    'total_return_pct': bt['total_return_pct'],
+                    'max_drawdown_pct': bt['max_drawdown_pct'],
+                    'total_trades': bt['total_trades'],
+                }
+                print(f'[AI BRAIN] Backtest {sym}: sharpe={bt["sharpe_ratio"]}, '
+                      f'pf={bt["profit_factor"]}, trades={bt["total_trades"]}')
+            except Exception as e:
+                print(f'[AI BRAIN] Backtest {sym} failed: {e}')
+        if backtest_baseline:
+            context['backtest_baseline'] = backtest_baseline
 
         # Step 2: Call Grok
         print('[AI BRAIN] Calling Grok for analysis...')
