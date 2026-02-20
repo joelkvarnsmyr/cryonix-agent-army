@@ -30,6 +30,11 @@ class QuantGuild:
     - Generate trading signals with confidence scores
     """
 
+    # Pattern classification for regime filtering
+    MEAN_REVERSION_PATTERNS = {'RSI_OVERSOLD', 'RSI_OVERBOUGHT', 'BOLLINGER_SQUEEZE'}
+    TREND_FOLLOWING_PATTERNS = {'EMA_BULLISH_CROSS', 'EMA_BEARISH_CROSS', 'MACD_BULLISH_CROSS', 'MACD_BEARISH_CROSS', 'MOMENTUM_GAINER'}
+    REGIME_AGNOSTIC_PATTERNS = {'DEEP_VALUE_CRASH', 'VOLUME_SPIKE_UP', 'VOLUME_SPIKE_DOWN'}
+
     def __init__(self):
         self.min_candles = get_toml('indicators', 'min_candles', 50)
         self.deep_value_threshold = get_toml('patterns', 'deep_value_threshold', 0.08)
@@ -670,6 +675,28 @@ class QuantGuild:
                     "filtered_by": "htf_gate",
                 }
 
+        # ── Regime gate: filter patterns by market type ──
+        regime = indicators.get('market_regime', 'unknown')
+        ema21 = indicators.get('ema21', price)
+        patterns = self._filter_by_regime(patterns, regime, ema21=ema21, price=price)
+
+        if not patterns:
+            return {
+                "action": "HOLD",
+                "confidence": 0.3,
+                "reason": f"All patterns filtered by {regime} regime gate",
+                "patterns": [],
+                "entry_price": price,
+                "stop_loss": rp(price * 0.98),
+                "target_price": rp(price * 1.02),
+                "consensus_score": 0,
+                "filtered_by": "regime_gate",
+            }
+
+        # Re-split after regime filtering
+        buy_signals = [p for p in patterns if p['action'] == 'BUY']
+        sell_signals = [p for p in patterns if p['action'] == 'SELL']
+
         # ── Consensus gate: require 2+ confirming patterns ──
         # Single-pattern signals (e.g. RSI_OVERSOLD alone) have 25% win rate.
         # Combo signals (e.g. BOLLINGER + RSI) have 50%+ win rate.
@@ -851,6 +878,41 @@ class QuantGuild:
                 }
 
     # === Helper Methods ===
+
+    def _filter_by_regime(self, patterns: List[Dict], regime: str, ema21: float = 0, price: float = 0) -> List[Dict]:
+        """Filter patterns by market regime. Returns only patterns appropriate for current regime."""
+        if not patterns:
+            return []
+
+        filtered = []
+        for p in patterns:
+            name = p['pattern']
+
+            # Regime-agnostic patterns always pass
+            if name in self.REGIME_AGNOSTIC_PATTERNS:
+                filtered.append(p)
+                continue
+
+            if regime == 'trending':
+                if name in self.MEAN_REVERSION_PATTERNS:
+                    continue
+                if name == 'DIP_BUY':
+                    if price <= ema21:
+                        continue  # Block dip buying in downtrend
+                filtered.append(p)
+
+            elif regime == 'ranging':
+                if name in self.TREND_FOLLOWING_PATTERNS:
+                    continue
+                filtered.append(p)
+
+            elif regime == 'volatile':
+                continue  # Block everything except regime-agnostic (handled above)
+
+            else:
+                filtered.append(p)
+
+        return filtered
 
     def _passes_htf_gate(self, action: str, multi_tf_data: Optional[Dict[str, List[list]]] = None) -> Dict[str, Any]:
         """

@@ -104,3 +104,53 @@ class TestMultiTFConfirmation:
         result = q._detect_rsi_extreme(indicators)
         assert result is not None
         assert result['action'] == 'BUY'
+
+
+class TestRegimeGate:
+    """Regime-gated pattern selection: right patterns for right market conditions."""
+
+    def test_rsi_blocked_in_trending(self):
+        q = QuantGuild()
+        patterns = [{'pattern': 'RSI_OVERSOLD', 'action': 'BUY', 'confidence': 0.80}]
+        filtered = q._filter_by_regime(patterns, 'trending', ema21=100, price=95)
+        assert len(filtered) == 0
+
+    def test_ema_cross_blocked_in_ranging(self):
+        q = QuantGuild()
+        patterns = [{'pattern': 'EMA_BULLISH_CROSS', 'action': 'BUY', 'confidence': 0.65}]
+        filtered = q._filter_by_regime(patterns, 'ranging', ema21=100, price=102)
+        assert len(filtered) == 0
+
+    def test_rsi_allowed_in_ranging(self):
+        q = QuantGuild()
+        patterns = [{'pattern': 'RSI_OVERSOLD', 'action': 'BUY', 'confidence': 0.80}]
+        filtered = q._filter_by_regime(patterns, 'ranging', ema21=100, price=95)
+        assert len(filtered) == 1
+
+    def test_ema_cross_allowed_in_trending(self):
+        q = QuantGuild()
+        patterns = [{'pattern': 'EMA_BULLISH_CROSS', 'action': 'BUY', 'confidence': 0.65}]
+        filtered = q._filter_by_regime(patterns, 'trending', ema21=100, price=102)
+        assert len(filtered) == 1
+
+    def test_volatile_blocks_everything_except_deep_value_and_volume(self):
+        q = QuantGuild()
+        patterns = [
+            {'pattern': 'RSI_OVERSOLD', 'action': 'BUY', 'confidence': 0.80},
+            {'pattern': 'VOLUME_SPIKE_UP', 'action': 'BUY', 'confidence': 0.75},
+            {'pattern': 'DEEP_VALUE_CRASH', 'action': 'BUY', 'confidence': 0.82},
+        ]
+        filtered = q._filter_by_regime(patterns, 'volatile', ema21=100, price=95)
+        assert len(filtered) == 2
+        names = [p['pattern'] for p in filtered]
+        assert 'RSI_OVERSOLD' not in names
+
+    def test_dip_buy_in_trending_only_if_uptrend(self):
+        q = QuantGuild()
+        patterns = [{'pattern': 'DIP_BUY', 'action': 'BUY', 'confidence': 0.78}]
+        # Price > EMA21 = uptrend -> allowed
+        filtered = q._filter_by_regime(patterns, 'trending', ema21=100, price=102)
+        assert len(filtered) == 1
+        # Price < EMA21 = downtrend -> blocked
+        filtered = q._filter_by_regime(patterns, 'trending', ema21=100, price=95)
+        assert len(filtered) == 0
