@@ -680,7 +680,9 @@ ${promptTemplate ? `## Additional Guidelines\n${promptTemplate}` : ''}`;
     try {
       console.log(`  Running backtest: ${symbol}, ${days} days...`);
       const candidateRaw = await this.execCommand(cmd, { timeout: 120000 });
-      const candidate = JSON.parse(candidateRaw.trim());
+      // Last line is JSON; earlier lines may contain import-time prints (e.g. [CONFIG])
+      const jsonLine = candidateRaw.trim().split('\n').pop();
+      const candidate = JSON.parse(jsonLine);
 
       console.log(`  Candidate: sharpe=${candidate.sharpe_ratio}, pf=${candidate.profit_factor}, ` +
                    `dd=${candidate.max_drawdown_pct}%, trades=${candidate.total_trades}`);
