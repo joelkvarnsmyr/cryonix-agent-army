@@ -18,6 +18,7 @@ export interface TradeExecution {
     entryPrice?: string;
     exitPrice?: string;
     pnl?: string;
+    fees?: string;
     confidence?: string;
     pattern?: string;
     reasoning?: string;
@@ -72,6 +73,7 @@ export async function logTrade(trade: TradeExecution): Promise<Trade> {
             entryPrice: trade.entryPrice,
             exitPrice: trade.exitPrice,
             pnl: trade.pnl,
+            fees: trade.fees,
             confidence: trade.confidence,
             pattern: trade.pattern,
             reasoning: trade.reasoning,

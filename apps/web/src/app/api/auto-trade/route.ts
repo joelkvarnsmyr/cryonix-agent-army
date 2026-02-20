@@ -173,6 +173,7 @@ interface OpenPosition {
   isGridPosition?: boolean; // Track whether position came from grid strategy
   pnlPct?: number;         // Live P&L % (updated every monitoring cycle)
   currentPrice?: number;   // Last known price (updated every monitoring cycle)
+  entryFee?: number;       // Fee paid on entry order (for total fee tracking)
 }
 
 // ============================================================================
@@ -473,6 +474,12 @@ async function reconcilePositions(): Promise<void> {
         if (removed) {
           const estimatedPnl = (pos.stopLoss - pos.entryPrice) * pos.quantity;
           await addDailyPnl(estimatedPnl);
+
+          // Per-symbol loss cooldown: prevent re-buying a losing symbol too soon
+          if (estimatedPnl < 0) {
+            await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', 7200);
+          }
+
           await logTrade({
             symbol: pos.symbol,
             side: 'SELL',
@@ -480,6 +487,7 @@ async function reconcilePositions(): Promise<void> {
             entryPrice: String(pos.entryPrice),
             exitPrice: String(pos.stopLoss),
             pnl: String(estimatedPnl),
+            fees: String(pos.entryFee || 0),
             confidence: String(pos.confidence),
             pattern: pos.pattern,
             reasoning: `Phantom position reconciled: Binance balance ${actualQty} vs Redis ${pos.quantity}`,
@@ -530,6 +538,12 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             await removePosition(pos.symbol);
             await addDailyPnl(realizedPnl);
 
+            // Per-symbol loss cooldown: prevent re-buying a losing symbol too soon
+            if (realizedPnl < 0) {
+              await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', 7200);
+            }
+
+            const nativeSlFees = (slOrder.fee?.cost || 0) + (pos.entryFee || 0);
             await logTrade({
               symbol: pos.symbol,
               side: pos.side === 'SELL' ? 'BUY' : 'SELL',
@@ -537,6 +551,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
               entryPrice: String(pos.entryPrice),
               exitPrice: String(fillPrice),
               pnl: String(realizedPnl),
+              fees: String(nativeSlFees),
               confidence: String(pos.confidence),
               pattern: pos.pattern,
               reasoning: `Native SL triggered on Binance (order ${pos.nativeSlOrderId} filled @ $${fillPrice})`,
@@ -710,10 +725,16 @@ async function monitorPositions(): Promise<MonitorResult[]> {
           const realizedPnl = pos.side === 'SELL'
             ? (pos.entryPrice - closePrice) * pos.quantity
             : (closePrice - pos.entryPrice) * pos.quantity;
-          const fees = (closeOrder.fee?.cost || 0);
+          const exitFee = closeOrder.fee?.cost || 0;
+          const fees = exitFee + (pos.entryFee || 0);
 
           // Remove from open positions
           await removePosition(pos.symbol);
+
+          // Per-symbol loss cooldown: prevent re-buying a losing symbol too soon
+          if ((realizedPnl - fees) < 0) {
+            await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', 7200);
+          }
 
           // Update daily P&L (persisted to Redis)
           await addDailyPnl(realizedPnl - fees);
@@ -726,6 +747,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             entryPrice: String(pos.entryPrice),
             exitPrice: String(closePrice),
             pnl: String(realizedPnl - fees),
+            fees: String(fees),
             confidence: String(pos.confidence),
             pattern: pos.pattern,
             reasoning: exitReason,
@@ -797,6 +819,11 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             await removePosition(pos.symbol);
             await addDailyPnl(pnl);
 
+            // Per-symbol loss cooldown: prevent re-buying a losing symbol too soon
+            if (pnl < 0) {
+              await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', 7200);
+            }
+
             // Cancel native SL if present (position is gone, SL would be orphaned)
             if (pos.nativeSlOrderId) {
               try { await ex.cancelOrder(pos.nativeSlOrderId, pos.symbol); } catch { }
@@ -809,6 +836,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
               entryPrice: String(pos.entryPrice),
               exitPrice: String(currentPrice),
               pnl: String(pnl),
+              fees: String(pos.entryFee || 0),
               confidence: String(pos.confidence),
               pattern: pos.pattern,
               reasoning: `DUST write-off: value $${dustValue.toFixed(2)} below NOTIONAL`,
@@ -1034,6 +1062,19 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
 
   if (openPositions.some(p => p.symbol === signal.symbol)) {
     return { pass: false, reason: `Already in ${signal.symbol}` };
+  }
+
+  // Per-symbol loss cooldown: don't re-buy a symbol that just lost money
+  const lossCooldown = await redis.get(`cooldown:loss:${signal.symbol}`);
+  if (lossCooldown) {
+    const mins = Math.round((Date.now() - parseInt(lossCooldown as string)) / 60000);
+    return { pass: false, reason: `Loss cooldown: ${signal.symbol} lost ${mins}min ago` };
+  }
+
+  // Dedup: reject if an execution is already in progress for this symbol
+  const executing = await redis.get(`executing:${signal.symbol}`);
+  if (executing) {
+    return { pass: false, reason: `Execution in progress for ${signal.symbol}` };
   }
 
   // X sentiment alert check — reject if breaking negative news
@@ -1432,6 +1473,7 @@ async function executeBuy(signal: Signal): Promise<{
     const order = await ex.createMarketOrder(signal.symbol, 'buy', qty);
     const executedPrice = order.average || order.price || currentPrice;
     const executedQty = Number(order.filled) || qty;
+    const entryFee = order.fee?.cost || 0;
 
     // Place Binance-native stop-loss order as safety net
     // This protects against auto-trader container crashes
@@ -1471,6 +1513,7 @@ async function executeBuy(signal: Signal): Promise<{
       pattern: signal.patterns?.join(', ') || '',
       confidence: signal.confidence,
       isGridPosition: !!(signal as any).is_grid_buy,
+      entryFee,
     });
 
     // Sync to Postgres positions table
@@ -1488,7 +1531,7 @@ async function executeBuy(signal: Signal): Promise<{
 
     await incrementTradeCount();
 
-    console.log(`[AUTO-TRADE] Filled ${order.id} @ $${executedPrice}`);
+    console.log(`[AUTO-TRADE] Filled ${order.id} @ $${executedPrice} (fee: $${entryFee.toFixed(4)})`);
 
     return { success: true, orderId: order.id, executedPrice, quantity: executedQty };
   } catch (error) {
@@ -2080,10 +2123,29 @@ export async function POST() {
       const aiWeight = TOML?.ai.ai_weight ?? 0.5;
       signal.confidence = Math.round((signal.confidence * taWeight + aiResult.aiConfidence * aiWeight) * 10000) / 10000;
 
+      // Dedup lock: prevent duplicate executions for the same symbol
+      const dedupKey = `executing:${signal.symbol}`;
+      const acquired = await redis.set(dedupKey, '1', 'EX', 30, 'NX');
+      if (!acquired) {
+        await redis.lrem('trades:pending', 1, raw);
+        rejected++;
+        buyResults.push({
+          symbol: signal.symbol,
+          status: 'DEDUP_REJECTED',
+          reason: `Execution already in progress for ${signal.symbol}`,
+        });
+        continue;
+      }
+
       // Execute based on signal action
-      const execution = signal.action === 'SELL'
-        ? await executeMarginSell(signal)
-        : await executeBuy(signal);
+      let execution;
+      try {
+        execution = signal.action === 'SELL'
+          ? await executeMarginSell(signal)
+          : await executeBuy(signal);
+      } finally {
+        await redis.del(dedupKey);
+      }
       await redis.lrem('trades:pending', 1, raw);
 
       if (execution.success) {

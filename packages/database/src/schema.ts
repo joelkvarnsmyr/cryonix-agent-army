@@ -63,6 +63,7 @@ export const trades = pgTable('trades', {
   pattern: varchar('pattern', { length: 50 }),
   reasoning: text('reasoning'),
   status: varchar('status', { length: 20 }).default('PENDING'), // 'PENDING', 'FILLED', 'CLOSED'
+  fees: decimal('fees', { precision: 20, scale: 8 }),
   agentId: varchar('agent_id', { length: 50 }),
   configVersion: varchar('config_version', { length: 16 }),
 });

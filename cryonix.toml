@@ -83,7 +83,7 @@ default_leverage = 3
 # 0.25 = 25%. On a $40 account, max position = $10.
 # Increase for concentrated bets, decrease for diversification.
 # WARNING: above 0.30 a single bad trade can wipe significant capital.
-max_position_size_pct = 0.35
+max_position_size_pct = 0.25
 
 # Absolute minimum order value in USD. Orders below this are rejected.
 # Binance NOTIONAL minimum is ~$5. We use $7.50 to prevent "dust" —
