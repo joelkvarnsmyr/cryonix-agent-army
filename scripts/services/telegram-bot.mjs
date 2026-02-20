@@ -53,16 +53,15 @@ export class TelegramBot {
   /** Report evolution engine start */
   async sendEvolutionStart(runId) {
     return this.send(
-      `🚀 <b>Evolution Started</b>\n` +
-      `Run: <code>${runId}</code>\n` +
-      `Time: ${new Date().toISOString()}`
+      `🚀 Evolution startad: ${runId}\n` +
+      `${new Date().toISOString()}`
     );
   }
 
   /** Report performance analysis results */
   async sendPerformanceReport(data) {
     if (!data) {
-      return this.send('📊 <b>Evolution Analysis</b>\nNo trades in last 24h — skipping.');
+      return this.send('📊 Evolution: inga trades senaste 24h — skippar');
     }
 
     const patternLines = data.patterns.map(p => {
@@ -73,11 +72,9 @@ export class TelegramBot {
     }).join('\n');
 
     return this.send(
-      `📊 <b>Performance Report (24h)</b>\n\n` +
-      `Total P&L: <b>$${data.totalPnl.toFixed(2)}</b>\n` +
-      `Trades: ${data.totalTrades}\n` +
-      `Weakest: ${data.weakestPattern} ($${data.weakestPnl.toFixed(2)})\n` +
-      `Evolution needed: ${data.needsEvolution ? '⚡ YES' : '✅ NO'}\n\n` +
+      `📊 Performance 24h: P&L $${data.totalPnl >= 0 ? '+' : ''}${data.totalPnl.toFixed(2)}, ${data.totalTrades} trades\n` +
+      `Svagast: ${data.weakestPattern} ($${data.weakestPnl.toFixed(2)})\n` +
+      `Evolution: ${data.needsEvolution ? '⚡ behövs' : '✅ ej nödvändig'}\n\n` +
       patternLines
     );
   }
@@ -85,9 +82,7 @@ export class TelegramBot {
   /** Report Claude analysis start */
   async sendClaudeAnalysis(model, turns) {
     return this.send(
-      `🧠 <b>Claude Analysis</b>\n` +
-      `Model: ${model}\n` +
-      `Turns: ${turns}`
+      `🧠 Evolution: Claude analyserar (${model}, ${turns} steg)`
     );
   }
 
@@ -95,29 +90,26 @@ export class TelegramBot {
   async sendClaudeMutation(success, model) {
     const emoji = success ? '✅' : '❌';
     return this.send(
-      `🔧 <b>Claude Mutation</b> ${emoji}\n` +
-      `Model: ${model}\n` +
-      `Result: ${success ? 'Changes applied' : 'Failed'}`
+      `🔧 Mutation ${emoji}: ${success ? 'ändringar applicerade' : 'misslyckades'} (${model})`
     );
   }
 
   /** Report verification results */
   async sendVerificationResult(passed, failedCommand) {
     if (passed) {
-      return this.send('🧪 <b>Verification</b> ✅ All tests passed');
+      return this.send('🧪 Verifiering: ✅ alla tester godkända');
     }
     return this.send(
-      `🧪 <b>Verification</b> ❌ Failed\n` +
-      `Command: <code>${failedCommand}</code>`
+      `🧪 Verifiering: ❌ misslyckades\n` +
+      `Kommando: <code>${failedCommand}</code>`
     );
   }
 
   /** Report git commit + push */
   async sendGitReport(commitMsg, pushed) {
     return this.send(
-      `📝 <b>Git Commit</b>\n` +
-      `<code>${commitMsg}</code>\n` +
-      `Push: ${pushed ? '✅ Pushed to GitHub' : '⚠️ Local only'}`
+      `📝 Git: ${commitMsg}\n` +
+      `${pushed ? '✅ Pushad till GitHub' : '⚠️ Bara lokalt'}`
     );
   }
 
@@ -127,11 +119,8 @@ export class TelegramBot {
     const emoji = success ? '🎉' : '💥';
 
     return this.send(
-      `${emoji} <b>Evolution ${success ? 'Complete' : 'Failed'}</b>\n\n` +
-      `Run: <code>${details.runId || '?'}</code>\n` +
-      `Duration: ${duration}\n` +
-      `Reason: ${details.reason || '?'}\n` +
-      `Attempts: ${details.attempts || '?'}`
+      `${emoji} Evolution ${success ? 'klar' : 'misslyckades'}: ${details.reason || '?'}\n` +
+      `Run: <code>${details.runId || '?'}</code> · ${duration} · ${details.attempts || '?'} försök`
     );
   }
 }

@@ -411,7 +411,7 @@ async function cmdAudit() {
     const maxPos = getToml('limits', 'max_open_positions', 3);
     const maxTradesPerDay = getToml('limits', 'max_trades_per_day', 15);
 
-    return `━━━ 🔍 <b>SYSTEM AUDIT</b> ━━━━━━━━━\n` +
+    return `🔍 Audit: ${buySignals} signaler, ${totalTrades} trades, ${openPosCount} positioner\n` +
       `${new Date().toISOString().split('T')[0]} 14:00 UTC\n\n` +
       `🏥 ${healthStr}\n\n` +
       `📡 <b>Signals 24h</b>\n` +
@@ -424,7 +424,7 @@ async function cmdAudit() {
       `🔔 <b>Last BUY:</b> ${lastBuyStr}` +
       issueBlock;
   } catch (e) {
-    return `━━━ 🔍 <b>SYSTEM AUDIT</b> ━━━━━━━━━\n\nError: ${e.message}`;
+    return `🔍 Audit: fel — ${e.message}`;
   }
 }
 
@@ -581,9 +581,8 @@ async function pipelineHealthReport() {
     }
 
     const time = new Date().toUTCString().slice(17, 22);
-    return `━━━ <b>CRYONIX</b> ━━━━━━━━━━━━━━\n` +
-      `${time} UTC · ${regimeIcon} ${regime.charAt(0).toUpperCase() + regime.slice(1)}\n\n` +
-      `📡 Signals 15m: ${buys15m} BUY · Queue: ${pending}` +
+    return `📡 Pipeline ${time}: ${buys15m} signaler, ${pending} i kö\n` +
+      `${regimeIcon} ${regime.charAt(0).toUpperCase() + regime.slice(1)}` +
       portfolioBlock + posBlock + funnelBlock +
       `\nTrades 1h: ${trades1h} ($${pnl1h.toFixed(2)})` +
       topMover + alertBlock;
@@ -662,10 +661,8 @@ async function cmdCost() {
     const dailyAvg = totalCostAll / daysTracked;
     const monthlyEst = dailyAvg * 30;
 
-    return `💰 <b>AI Cost Tracker</b>\n` +
-      `━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    return `💰 AI-kostnad: $${totalCost24h.toFixed(4)} idag, ~$${monthlyEst.toFixed(2)}/mån\n\n` +
       modelLines.join('\n\n') + '\n\n' +
-      `━━━━━━━━━━━━━━━━━━━━━\n` +
       `<b>Totals:</b>\n` +
       `  24h: ${totalCalls24h} calls · <b>$${totalCost24h.toFixed(4)}</b>\n` +
       `  7d:  ${totalCalls7d} calls · <b>$${totalCost7d.toFixed(4)}</b>\n` +
@@ -803,8 +800,7 @@ async function checkTradeAlerts() {
     const pnlStr = latest.pnl ? `\n💵 P&L: $${parseFloat(latest.pnl).toFixed(2)}` : '';
 
     await sendMessage(
-      `━━━ ${icon} <b>TRADE</b> ━━━━━━━━━━━━━━\n` +
-      `${latest.side} <b>${latest.symbol}</b> @ $${price.toFixed(priceFmt)}\n` +
+      `${icon} ${latest.side} ${latest.symbol} @ $${price.toFixed(priceFmt)}\n` +
       `📊 ${latest.pattern || '?'} · ${conf} confidence` +
       slTpStr + pnlStr +
       `\n⏱ ${time} UTC · ${latest.status}`
@@ -822,13 +818,11 @@ async function checkHealthAlerts() {
       const down = h.services?.filter(s => s.status !== 'healthy')
         .map(s => `🔴 ${s.name}: ${s.status} (${s.latency || '?'}ms)`).join('\n') || '';
       await sendMessage(
-        `━━━ 🚨 <b>ALERT</b> ━━━━━━━━━━━━━━\n` +
-        `Status: <b>${status.toUpperCase()}</b>\n\n${down}`
+        `🚨 System nere: ${status.toUpperCase()}\n\n${down}`
       );
     } else if (status === 'healthy' && lastHealthStatus !== 'healthy' && lastHealthStatus !== null) {
       await sendMessage(
-        `━━━ ✅ <b>RECOVERED</b> ━━━━━━━━━━━━\n` +
-        `All systems healthy · Latency: ${h.totalLatency || '?'}ms`
+        `✅ System återställt — alla tjänster uppe (${h.totalLatency || '?'}ms)`
       );
     }
     lastHealthStatus = status;
@@ -891,16 +885,14 @@ async function sendMorningBrief() {
 
     const date = new Date().toISOString().split('T')[0];
     await sendMessage(
-      `━━━ ☀️ <b>MORNING BRIEF</b> ━━━━━━━━\n` +
-      `${date} · ${regimeIcon} ${regime.charAt(0).toUpperCase() + regime.slice(1)}\n\n` +
-      `🏥 ${healthLine}\n` +
-      `💰 Capital: <b>$${capital.toFixed(2)}</b> · Loss limit: -$${dailyLimit}\n\n` +
-      `${yIcon} <b>Last 24h</b>\n` +
-      `  P&L: $${yPnl.toFixed(2)} · ${yTrades} trades · ${yWinRate}% WR\n\n` +
+      `☀️ Morgon ${date}: $${capital.toFixed(2)} · 24h P&L $${yPnl >= 0 ? '+' : ''}${yPnl.toFixed(2)}\n` +
+      `${regimeIcon} ${regime.charAt(0).toUpperCase() + regime.slice(1)} · ${healthLine}\n\n` +
+      `💰 Loss limit: -$${dailyLimit}\n` +
+      `${yIcon} 24h: ${yTrades} trades · ${yWinRate}% WR\n\n` +
       posBlock
     );
   } catch (e) {
-    await sendMessage(`━━━ ☀️ <b>MORNING BRIEF</b> ━━━━━━━━\n\nError: ${e.message}`);
+    await sendMessage(`☀️ Morgon: fel — ${e.message}`);
   }
 }
 
@@ -969,10 +961,9 @@ async function sendDailySummary() {
 
     const date = new Date().toISOString().split('T')[0];
     await sendMessage(
-      `━━━ 🌙 <b>DAILY SUMMARY</b> ━━━━━━━━\n` +
+      `🌙 Dagssummering: P&L $${dPnl >= 0 ? '+' : ''}${dPnl.toFixed(2)} · ${dTrades} trades\n` +
       `${date} · ${regimeIcon} ${regime.charAt(0).toUpperCase() + regime.slice(1)}\n\n` +
-      `${pnlIcon} <b>Performance</b>\n` +
-      `  24h: <b>$${dPnl >= 0 ? '+' : ''}${dPnl.toFixed(2)}</b> · ${dTrades}/${maxTradesPerDay} trades · ${dWR}% WR\n` +
+      `${pnlIcon} <b>24h</b>: <b>$${dPnl >= 0 ? '+' : ''}${dPnl.toFixed(2)}</b> · ${dTrades}/${maxTradesPerDay} trades · ${dWR}% WR\n` +
       `  Best: $${parseFloat(d.best || 0).toFixed(2)} · Worst: $${parseFloat(d.worst || 0).toFixed(2)}\n` +
       `  7d: $${wPnl >= 0 ? '+' : ''}${wPnl.toFixed(2)} · ${wTrades} trades\n\n` +
       `💰 <b>Capital</b>: $${capital.toFixed(2)}\n` +
@@ -981,7 +972,7 @@ async function sendDailySummary() {
       tradesBlock
     );
   } catch (e) {
-    await sendMessage(`━━━ 🌙 <b>DAILY SUMMARY</b> ━━━━━━━━\n\nError: ${e.message}`);
+    await sendMessage(`🌙 Dagssummering: fel — ${e.message}`);
   }
 }
 

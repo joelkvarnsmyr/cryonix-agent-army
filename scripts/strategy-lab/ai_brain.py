@@ -483,7 +483,7 @@ def main():
 
         if trade_count == 0 and not args.acute:
             print('[AI BRAIN] No trades in period, skipping analysis')
-            telegram_send(f'🧠 <b>AI Brain</b> ({run_id})\n\nNo trades in last {period}h. Skipping.')
+            telegram_send(f'🧠 AI Brain: inga trades senaste {period}h — skippar ({run_id})')
             return
 
         # Step 1b: Add backtest context (advisory, errors don't block)
@@ -565,11 +565,12 @@ def main():
 
         # Step 5: Send Telegram report
         new_version = config_version(cfg_raw)
-        header = '🧠 <b>AI Brain Report</b>'
         if args.acute:
-            header = '🚨 <b>AI Brain ACUTE Report</b>'
+            header = f'🚨 AI Brain AKUT: {applied_count} ändringar applicerade'
+        else:
+            header = f'🧠 AI Brain: {applied_count} ändringar, {recommendation_count} rekommendationer'
 
-        tg_msg = f'{header} ({run_id})\n\n'
+        tg_msg = f'{header}\n\n'
         tg_msg += report + '\n\n'
 
         if applied_count > 0:
@@ -592,7 +593,7 @@ def main():
 
     except Exception as e:
         print(f'[AI BRAIN] ERROR: {e}')
-        telegram_send(f'🧠❌ <b>AI Brain Error</b>\n\n<code>{str(e)[:500]}</code>')
+        telegram_send(f'🧠❌ AI Brain kraschade: {str(e)[:500]}')
         raise
     finally:
         pg.close()
