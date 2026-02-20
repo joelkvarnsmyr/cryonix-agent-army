@@ -171,3 +171,42 @@ class TestMomentumGainerFix:
         }
         signal = q._generate_signal(patterns, indicators, pd.DataFrame({'close': [100]}))
         assert signal['action'] == 'HOLD'
+
+
+class TestIntegration:
+    """Full pipeline integration: signal goes through all gates."""
+
+    def test_full_pipeline_bearish_htf_blocks_buy(self, make_ohlcv):
+        """A BUY pattern in bearish HTF should be blocked entirely."""
+        q = QuantGuild()
+        ohlcv = make_ohlcv(n=100, base_price=100.0, trend='flat')
+        multi_tf = _make_htf_data(trend_1h='bearish', trend_4h='bearish')
+        result = q.analyze(ohlcv, 'TEST/USDC', multi_tf_data=multi_tf)
+        # Even if 15m patterns fire, HTF gate should block BUY
+        assert result['signal']['action'] != 'BUY' or \
+            result['signal'].get('is_deep_value', False), \
+            f"BUY signal passed HTF gate in bearish HTF: {result['signal']}"
+
+    def test_full_pipeline_ranging_blocks_trend_patterns(self, make_ohlcv, make_multi_tf):
+        """In ranging market, trend-following patterns should be filtered."""
+        q = QuantGuild()
+        ohlcv = make_ohlcv(n=100, base_price=100.0, trend='flat', volatility=0.005)
+        multi_tf = make_multi_tf(trend='flat')
+        result = q.analyze(ohlcv, 'TEST/USDC', multi_tf_data=multi_tf)
+        if result['signal']['action'] in ('BUY', 'SELL'):
+            patterns = result['signal'].get('patterns', [])
+            trend_patterns = {'EMA_BULLISH_CROSS', 'EMA_BEARISH_CROSS',
+                              'MACD_BULLISH_CROSS', 'MACD_BEARISH_CROSS'}
+            for p in patterns:
+                assert p not in trend_patterns, \
+                    f"Trend pattern {p} passed regime gate in ranging market"
+
+    def test_all_gates_produce_hold_on_noisy_data(self, make_ohlcv, make_multi_tf):
+        """Noisy flat data with bearish HTF should not produce signals."""
+        q = QuantGuild()
+        np.random.seed(42)
+        ohlcv = make_ohlcv(n=100, base_price=100.0, trend='flat', volatility=0.005)
+        multi_tf = _make_htf_data(trend_1h='bearish', trend_4h='bearish')
+        result = q.analyze(ohlcv, 'TEST/USDC', multi_tf_data=multi_tf)
+        # With bearish HTF + flat 15m, signal should be HOLD
+        assert result['signal']['action'] == 'HOLD'
