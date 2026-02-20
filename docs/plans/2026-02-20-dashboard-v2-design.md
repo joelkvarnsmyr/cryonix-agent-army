@@ -2,224 +2,211 @@
 
 **Date:** 2026-02-20
 **Status:** Approved
-**Problem:** The current dashboard was built for a 45-symbol, multi-strategy trading system with grid DCA, agent orchestration, and advanced analytics. The system now trades 2 symbols (INJ, ATOM), spot-only, no grid, baseline frozen. The dashboard is 80% dead weight.
+**Problem:** The dashboard was built for a 45-symbol, multi-strategy system with grid DCA, agent orchestration, and advanced analytics. The system now trades 2 symbols (INJ, ATOM) on a $40 spot-only account. The dashboard is 80% dead weight.
 
-## Context
+## Goal
 
-### What the system actually does now
+Replace the overbuilt 3-column, 17-component dashboard with a single-page, single-column layout. One file. ~200 lines. Honest about what the system actually is.
 
-- Trades **INJ/USDC and ATOM/USDC only** (symbol whitelist)
-- **Spot-only** mode (no shorting, no margin)
-- **Grid trading disabled** (grid_pool_pct = 0)
-- **Baseline frozen** (measuring signal quality overhaul impact)
-- ~4 trades per symbol per month after HTF veto + multi-TF filtering
-- Evolution + AI Brain paused during freeze
-- 8 Docker services running (postgres, redis, engine, web, auto-trader, ws-server, telegram-bot, telegram-scraper)
-
-### What the dashboard shows today
-
-- 17 active components across 5 rows in a 3-column grid
-- 24 dead/unused components still in codebase
-- 27 API routes (many for features not in use)
-- AgentFlow architecture diagram, EvolutionPanel, SignalPipeline, ConfigCard, PatternPerformance, AiImpactChart, CostsCard, ProcessViewer — all irrelevant for a quick status glance
-
-### What the user wants
-
-- **Quick status overview** — "Is it running? Do I have positions? Am I making money?" in 10 seconds
-- **Single page** — no analytics, no backtest tabs
-- **Two charts** — P&L over time + price candlesticks for INJ/ATOM
-- **Old dashboard preserved** at `/legacy` route
-
-## Design
-
-### Layout: 4 rows, full width
+## Layout
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ ROW 1: StatusBar (new component)                                │
-│ $41.23 (+$0.82) │ INJ $2.34 ▲ │ ATOM $8.71 ▼ │ Frozen 🧊     │
-│ 2 open │ 0 pending │ Health 4/4 │ Live │ 14:32 UTC             │
-└─────────────────────────────────────────────────────────────────┘
-
-┌────────────────────────────────┬────────────────────────────────┐
-│ ROW 2 LEFT: PriceChart         │ ROW 2 RIGHT: Positions + Trades│
-│ (reused, INJ/ATOM tabs only)  │ Open positions (reused)         │
-│ Candlestick + volume          │ ─────────────────────────       │
-│ 15m/1H/4H/1D timeframes      │ Last 5 trades (reused)          │
-│                                │                                │
-└────────────────────────────────┴────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│ ROW 3: P&L Chart (reused, full width)                           │
-│ Bar chart per trade + total P&L / best / worst stats            │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│ ROW 4: HealthGrid (reused, horizontal)                          │
-│ Redis ● 2ms │ Postgres ● 5ms │ Engine ● 12ms │ Binance ● 45ms  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────┐
+│  CRYONIX          🟢  22:35  │  Minimal header: logo + health dot + UTC clock
+├──────────────────────────────┤
+│                              │
+│       $40.22                 │  Balance card: big number, daily + 7d P&L
+│    +$0.10 today (+0.25%)     │  Freeze badge if baseline frozen
+│    +$1.20 / 7d              │
+│                              │
+├──────────────────────────────┤
+│                              │
+│   ───╱──╲───╱────           │  Equity curve: 30d line chart (Recharts)
+│                              │
+├──────────────────────────────┤
+│  INJ +0.8%    │  ATOM  —     │  Position cards: side by side
+│  $2.45→$2.47  │  no position │  Entry, current, SL, P&L per position
+│  SL $2.10     │              │
+├──────────────────────────────┤
+│  Recent trades (5)           │  Last 5 closed trades: symbol, P&L, time
+│  INJ +$0.12 · ATOM -$0.05   │
+├──────────────────────────────┤
+│  🟢 Redis  🟢 Postgres       │  Health: single row of status dots
+│  🟢 Engine 🟢 Binance        │
+└──────────────────────────────┘
 ```
 
-### Component inventory
+## Decisions
 
-| Component | Source | Changes |
-|-----------|--------|---------|
-| **StatusBar** | New | Compact top bar combining portfolio value, coin prices, freeze status, position count, health summary |
-| **PriceChart** | Reused from `price-chart.tsx` | Filter symbol selector to INJ/ATOM only (read from config whitelist) |
-| **PositionsCard** | Reused from `positions-card.tsx` | No changes needed |
-| **TradeActivity** | Reused from `trade-activity.tsx` | No changes needed |
-| **PnlChart** | Reused from `pnl-chart.tsx` | No changes, render full width |
-| **HealthGrid** | Reused from `health-grid.tsx` | Render as single horizontal row instead of 2x2 grid |
-| **DashboardLayout** | Reused from `dashboard-layout.tsx` | Update nav: remove Analytics/Backtest tabs, keep Terminal only |
+### Why single-column, not 2-column
+The system trades 4 times per month. A candlestick chart for that is a Bloomberg terminal for a savings account. The equity curve shows the trend — that's enough. Single column is mobile-first and honest about the data density.
 
-### New component: StatusBar
+### Why one file, not 7 components
+With 5 sections and ~200 lines, separate component files add folder complexity without benefit. Each section is 20-40 lines. If it grows beyond 300 lines, refactor then.
 
-Replaces SystemVitals, PortfolioCard, and AgentFlow in a single compact row.
+### Why reuse hooks, not raw fetch
+The existing hooks (usePortfolio, useAutoTrade, useSystemHealth) have error handling, caching, and refresh intervals already tested in production. Rewriting fetch+polling from scratch is unnecessary work.
 
-```typescript
-// Data sources (existing hooks, no new APIs)
-usePortfolio(15000)     // totalValue, dailyPnl
-useMultipleTickers()    // INJ, ATOM prices
-useAutoTrade(10000)     // positions count, pending signals, daily state
-useSystemHealth(30000)  // healthy service count
-```
+### Why keep /legacy
+The old dashboard moves to `/legacy/page.tsx` — costs nothing, provides a fallback. If the new dashboard breaks, `/legacy` works instantly. Delete it later when v2 is stable.
 
-Display as a horizontal bar with pipe-separated sections:
+### Why no candlestick chart
+You check prices on Telegram. You trade 4 times/month. The candlestick chart was the heaviest component (lightweight-charts library, 277 lines). The equity curve tells you if the system is making money — that's what matters.
 
-| Section | Data | Format |
-|---------|------|--------|
-| Portfolio | totalValue + dailyPnl | `$41.23 (+$0.82 +2.0%)` green/red |
-| Coin prices | INJ, ATOM current price + 24h% | `INJ $2.34 ▲1.2%` |
-| Freeze status | Check `.baseline-frozen` via auto-trade response or static | `Frozen` badge if frozen |
-| Positions | Open count / max | `2/2 open` |
-| Pending | Pending signal count | `0 pending` |
-| Health | Healthy / total | `4/4 healthy` with colored dot |
-| Mode | Testnet vs Live | `LIVE` or `TESTNET` badge |
-| Clock | UTC time | `14:32 UTC` |
+### Why no animations
+Framer Motion added visual polish to the old dashboard but serves no purpose on a status-glance page. Removing it simplifies the bundle and the code.
 
-### File changes
+## Implementation
 
-```
-apps/web/src/app/
-  page.tsx                          # REPLACE — new v2 layout (4 rows)
-  legacy/
-    page.tsx                        # NEW — old page.tsx content moved here
+### New file: `apps/web/src/app/page.tsx` (~200 lines)
 
-apps/web/src/components/dashboard/
-  status-bar.tsx                    # NEW — compact status bar component
-  dashboard-layout.tsx              # EDIT — update nav items (remove Analytics, Backtest, add Legacy)
-```
-
-### page.tsx (v2)
+All sections inline. Uses existing hooks for data. Recharts for the equity curve (already a dependency).
 
 ```tsx
 "use client";
 
-import dynamic from 'next/dynamic';
-import { DashboardLayout } from '@/components/dashboard/dashboard-layout';
-import { StatusBar } from '@/components/dashboard/status-bar';
-import { PositionsCard } from '@/components/dashboard/positions-card';
-import { HealthGrid } from '@/components/dashboard/health-grid';
-import { TradeActivity } from '@/components/dashboard/trade-activity';
-
-const PriceChart = dynamic(
-  () => import('@/components/dashboard/price-chart').then(mod => mod.PriceChart),
-  { loading: () => <div className="h-[300px] w-full bg-muted/5 animate-pulse rounded-xl" />, ssr: false }
-);
-const PnlChart = dynamic(
-  () => import('@/components/dashboard/pnl-chart').then(mod => mod.PnlChart),
-  { loading: () => <div className="h-[160px] w-full bg-muted/5 animate-pulse rounded-xl" />, ssr: false }
-);
+import { usePortfolio } from '@/hooks/use-portfolio';
+import { useAutoTrade } from '@/hooks/use-auto-trade';
+import { useSystemHealth } from '@/hooks/use-system-health';
+import { useEffect, useState } from 'react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function HomePage() {
+  // Data from existing hooks
+  const { data: portfolio } = usePortfolio(15000);
+  const { data: autoTrade } = useAutoTrade(10000);
+  const { data: health } = useSystemHealth(30000);
+
+  // Equity curve: fetch on mount + 60s refresh
+  const [equity, setEquity] = useState([]);
+  useEffect(() => {
+    const load = () => fetch('/api/chart-data?action=pnl')
+      .then(r => r.json()).then(setEquity).catch(() => {});
+    load();
+    const id = setInterval(load, 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Recent trades: fetch from journal
+  const [trades, setTrades] = useState([]);
+  useEffect(() => {
+    const load = () => fetch('/api/analytics/journal?days=7')
+      .then(r => r.json()).then(d => setTrades(d.trades?.slice(0, 5) || []))
+      .catch(() => {});
+    load();
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, []);
+
   return (
-    <DashboardLayout>
-      <div className="space-y-2.5">
-        {/* Row 1: Status bar */}
-        <StatusBar />
-
-        {/* Row 2: Chart + Positions/Trades */}
-        <div className="grid grid-cols-12 gap-2.5">
-          <div className="col-span-12 lg:col-span-7 min-w-0">
-            <PriceChart />
-          </div>
-          <div className="col-span-12 lg:col-span-5 space-y-2.5">
-            <PositionsCard />
-            <TradeActivity />
-          </div>
-        </div>
-
-        {/* Row 3: P&L */}
-        <PnlChart />
-
-        {/* Row 4: Health */}
-        <HealthGrid />
-      </div>
-    </DashboardLayout>
+    <div className="min-h-screen bg-background text-foreground p-4 max-w-2xl mx-auto space-y-4">
+      {/* Header */}
+      {/* Balance Card */}
+      {/* Equity Curve */}
+      {/* Position Cards */}
+      {/* Recent Trades */}
+      {/* Health Row */}
+    </div>
   );
 }
 ```
 
-### legacy/page.tsx
+### 5 inline sections
 
-Copy of current page.tsx with all 17 components. Accessible at `/legacy`. No other changes.
+**1. Header** (~10 lines)
+- Logo text "CRYONIX"
+- Health dot: green if all services healthy, amber if degraded, red if any down
+- UTC clock (simple `useState` + `setInterval`)
 
-### Navigation update (dashboard-layout.tsx)
+**2. Balance Card** (~30 lines)
+- `portfolio.totalValue` as large number with cyan glow
+- Daily P&L from `autoTrade.dailyState` (green/red)
+- 7-day P&L from journal data
+- "FROZEN" badge if `autoTrade.config?.baseline?.frozen`
 
+**3. Equity Curve** (~30 lines)
+- Recharts `LineChart` with `ResponsiveContainer`
+- Data from `/api/chart-data?action=pnl` (cumulative P&L over time)
+- Minimal styling: single cyan line, no grid, no legend
+- Height: 160px
+
+**4. Position Cards** (~40 lines)
+- 2-column grid: one card per whitelist symbol (INJ, ATOM)
+- If position open: symbol, entry price, current price, SL, unrealized P&L (green/red)
+- If no position: symbol + "No position" muted text
+- Data from `autoTrade.positions`
+
+**5. Recent Trades** (~30 lines)
+- List of last 5 closed trades
+- Per trade: symbol, side badge, P&L amount (green/red), relative time ("2h ago")
+- Data from `/api/analytics/journal?days=7`
+
+**6. Health Row** (~20 lines)
+- Horizontal row of service dots with labels
+- Redis, Postgres, Engine, Binance
+- Green/amber/red based on `health.services[].status`
+
+### Moved file: `apps/web/src/app/legacy/page.tsx`
+
+Current `page.tsx` content (all 17 components, 3-column layout) moved here unchanged. Accessible at `/legacy`.
+
+### Edit: `apps/web/src/components/dashboard/dashboard-layout.tsx`
+
+Update navigation:
 ```typescript
 // Before
-const navItems = [
-  { label: 'Terminal', href: '/' },
-  { label: 'Analytics', href: '/analytics' },
-  { label: 'Backtest', href: '/backtest' },
-];
+{ label: 'Terminal', href: '/' },
+{ label: 'Analytics', href: '/analytics' },
+{ label: 'Backtest', href: '/backtest' },
 
 // After
-const navItems = [
-  { label: 'Terminal', href: '/' },
-  { label: 'Legacy', href: '/legacy' },
-];
+{ label: 'Terminal', href: '/' },
+{ label: 'Legacy', href: '/legacy' },
 ```
 
-Analytics and Backtest pages stay in the codebase (not deleted) but are removed from navigation.
+Note: The new `page.tsx` does NOT use `DashboardLayout` — it has its own minimal header. But the legacy page still imports it, and navigating to `/legacy` still shows the old chrome.
 
-## What is NOT changing
+### No changes to:
 
-- **No API routes touched** — v2 consumes the same 5 endpoints
-- **No hooks changed** — useAutoTrade, usePortfolio, useSystemHealth, useMultipleTickers all stay
-- **No components deleted** — dead components stay in codebase, just unused
-- **Analytics/Backtest pages stay** — still accessible by URL, just not in nav
-- **Theme/styling unchanged** — same glass morphism, glow effects, dark mode
-- **No backend changes** — same Docker services, same data flow
+- API routes (all 27 stay, used by auto-trader/Telegram/engine)
+- Hooks (reused as-is)
+- Component files (stay in codebase, just not imported by new page.tsx)
+- Analytics/Backtest pages (still accessible by URL)
+- Backend services
+- Theme CSS (glass-morphism classes still available)
 
-## API surface (v2 only uses these)
+## Data flow
 
-| Endpoint | Refresh | Consumer |
-|----------|---------|----------|
-| `/api/portfolio` | 15s | StatusBar |
-| `/api/market?action=tickers` | 5s | StatusBar |
-| `/api/auto-trade` | 10s | StatusBar, PositionsCard, TradeActivity |
-| `/api/health` | 30s | StatusBar, HealthGrid, DashboardLayout |
-| `/api/chart-data?action=candles` | 60s | PriceChart |
-| `/api/chart-data?action=pnl` | 60s | PnlChart |
-| `ws://localhost:3004` | realtime | TradeActivity, DashboardLayout |
+```
+page.tsx
+  ├─ usePortfolio(15s)      → /api/portfolio      → Balance card
+  ├─ useAutoTrade(10s)       → /api/auto-trade     → Balance (daily P&L), Positions
+  ├─ useSystemHealth(30s)    → /api/health          → Header dot, Health row
+  ├─ fetch('/api/chart-data?action=pnl', 60s)      → Equity curve
+  └─ fetch('/api/analytics/journal?days=7', 30s)    → Recent trades
+```
 
-Total: 5 REST endpoints + 1 WebSocket. Down from 27 endpoints rendered on the old dashboard.
+5 endpoints total. No WebSocket needed (30s polling is fine for a status glance).
+
+## File summary
+
+| File | Action | Lines |
+|------|--------|-------|
+| `apps/web/src/app/page.tsx` | **Replace** | ~200 |
+| `apps/web/src/app/legacy/page.tsx` | **Create** (move old page.tsx) | ~115 |
+| `apps/web/src/components/dashboard/dashboard-layout.tsx` | **Edit** nav items | ~3 lines changed |
+
+Total: 1 new file, 1 moved file, 1 small edit. ~200 lines of new code.
 
 ## Verification
 
-1. `/` shows v2 dashboard with 4 rows, 7 components
-2. `/legacy` shows old dashboard with all 17 components
-3. StatusBar shows correct portfolio value, coin prices, position count
-4. PriceChart only shows INJ/ATOM in symbol selector
-5. PositionsCard shows open positions (or empty state)
-6. PnlChart renders trade P&L bars
-7. HealthGrid shows all 4 services
-8. No console errors, no broken API calls
-9. Mobile responsive (stacks to single column)
-
-## Migration path
-
-1. Build v2 alongside old dashboard (no risk)
-2. Test on `/` — if broken, old dashboard at `/legacy` as fallback
-3. Once stable, optionally delete `/legacy` and dead components in a future cleanup
+1. `/` shows new single-column dashboard with 6 sections
+2. `/legacy` shows old 17-component dashboard
+3. Balance card shows correct portfolio value and daily P&L
+4. Equity curve renders 30d P&L trend line
+5. Position cards show INJ + ATOM status (open or empty)
+6. Recent trades list shows last 5 closed trades
+7. Health row shows 4 service dots with correct status
+8. Mobile: stacks cleanly on small screens (already single-column)
+9. No console errors, no broken API calls
+10. Page loads in <1s (no heavyweight chart libraries)
