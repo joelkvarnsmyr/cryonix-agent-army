@@ -16,7 +16,7 @@ import { RISK_CONFIG, type RiskConfig } from '@cryonix/types';
 // ============================================================================
 
 export interface CryonixConfig {
-  trading: { mode: string; spot_only: boolean; margin_type: string; default_leverage: number };
+  trading: { mode: string; spot_only: boolean; margin_type: string; default_leverage: number; symbol_whitelist?: string[] };
   capital: {
     max_position_size_pct: number; min_order_value: number;
     signal_pool_pct: number; grid_pool_pct: number; reserve_pct: number;

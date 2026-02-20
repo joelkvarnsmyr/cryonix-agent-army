@@ -58,6 +58,12 @@ mode = "spot"
 # When to change: set to false when mode = "margin" to allow shorting.
 spot_only = true
 
+# Symbol whitelist — only these pairs will be traded.
+# Empty list = trade all scanned symbols (no filter).
+# Based on backtest: INJ + ATOM are the only consistently profitable symbols.
+# When to change: add symbols as capital grows or new patterns emerge.
+symbol_whitelist = ["INJ/USDC", "ATOM/USDC"]
+
 # Margin type — only relevant when mode = "margin".
 #   "cross"    — All margin shared across positions (lower liquidation risk).
 #   "isolated" — Each position has its own margin (limits loss per trade).
@@ -80,10 +86,11 @@ default_leverage = 3
 [capital]
 
 # Maximum percentage of total capital allowed in a single position.
-# 0.25 = 25%. On a $40 account, max position = $10.
-# Increase for concentrated bets, decrease for diversification.
-# WARNING: above 0.30 a single bad trade can wipe significant capital.
-max_position_size_pct = 0.25
+# 0.45 = 45%. On a $40 account, max position = $18.
+# Concentrated on 2 symbols (INJ + ATOM) with proven edge.
+# Backtest: +5.9% combined return/month at this level.
+# WARNING: reduce to 0.25 if adding more symbols to whitelist.
+max_position_size_pct = 0.45
 
 # Absolute minimum order value in USD. Orders below this are rejected.
 # Binance NOTIONAL minimum is ~$5. We use $7.50 to prevent "dust" —
@@ -128,13 +135,13 @@ deep_value_min_confidence = 0.80
 [limits]
 
 # Total concurrent open positions across all strategies.
-# $41 capital / $8.50 per position ≈ 4.9 → 5 slots.
-# Increase as account grows: 8 for $100+, 12 for $500+.
-max_open_positions = 5
+# $40 capital focused on 2 best symbols (INJ + ATOM).
+# Increase as account grows: 5 for $100+, 8 for $200+.
+max_open_positions = 2
 
 # Sub-limits per strategy type. Must sum to <= max_open_positions.
-max_signal_positions = 4
-max_grid_positions = 1
+max_signal_positions = 2
+max_grid_positions = 0
 
 # Maximum trades executed per calendar day (UTC).
 # Prevents overtrading in choppy markets. Resets at midnight UTC.

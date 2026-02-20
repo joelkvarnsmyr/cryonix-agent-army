@@ -1005,6 +1005,12 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
   await syncDailyState();
   resetDailyStateIfNeeded();
 
+  // Symbol whitelist filter
+  const whitelist = TOML?.trading?.symbol_whitelist;
+  if (whitelist && whitelist.length > 0 && !whitelist.includes(signal.symbol)) {
+    return { pass: false, reason: `Symbol ${signal.symbol} not in whitelist` };
+  }
+
   if (signal.confidence < CONFIG.MIN_CONFIDENCE) {
     return { pass: false, reason: `Confidence ${(signal.confidence * 100).toFixed(1)}% < ${CONFIG.MIN_CONFIDENCE * 100}% min` };
   }
