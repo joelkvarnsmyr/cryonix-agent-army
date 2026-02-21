@@ -32,6 +32,14 @@ interface JournalTrade {
   closed_at: string;
 }
 
+interface ConfigTimelineEntry {
+  version: string | null;
+  changeType: string;
+  source: string | null;
+  reasoning: string | null;
+  deployedAt: string | null;
+}
+
 interface JournalData {
   trades: JournalTrade[];
   summary: {
@@ -49,6 +57,7 @@ interface JournalData {
     pnl: number;
     win_rate: number;
   }>;
+  config_timeline: ConfigTimelineEntry[];
   source: string;
   days: number;
 }
@@ -173,37 +182,54 @@ export default function AnalyticsPage() {
               </div>
             )}
 
-            {/* Config Version Comparison */}
-            {data.config_comparison.length > 0 && (
+            {/* Config Version Timeline */}
+            {data.config_timeline && data.config_timeline.length > 0 && (
               <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
                 <CardHeader className="pb-3 pt-4 px-4">
                   <CardTitle className="text-sm font-semibold tracking-tight">Config Versions</CardTitle>
                 </CardHeader>
                 <CardContent className="px-4 pb-4 pt-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-border/40 hover:bg-transparent">
-                        <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70">Version</TableHead>
-                        <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70 text-right">Trades</TableHead>
-                        <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70 text-right">P&L</TableHead>
-                        <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70 text-right">Win Rate</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.config_comparison.map(c => (
-                        <TableRow key={c.version} className="border-border/20">
-                          <TableCell className="py-2 font-mono text-xs">{c.version}</TableCell>
-                          <TableCell className="py-2 text-right text-xs">{c.trades}</TableCell>
-                          <TableCell className={`py-2 text-right font-mono text-xs ${c.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            ${c.pnl.toFixed(2)}
-                          </TableCell>
-                          <TableCell className={`py-2 text-right font-mono text-xs ${c.win_rate >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {c.win_rate}%
-                          </TableCell>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="border-border/40 hover:bg-transparent">
+                          <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70">Version</TableHead>
+                          <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70">Deployed</TableHead>
+                          <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70">Type</TableHead>
+                          <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70 text-right">Trades</TableHead>
+                          <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70 text-right">P&L</TableHead>
+                          <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70 text-right">Win Rate</TableHead>
+                          <TableHead className="h-8 text-[10px] uppercase tracking-widest text-muted-foreground/70">Reasoning</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {data.config_timeline.map((t, i) => {
+                          const perf = data.config_comparison.find(c => c.version === t.version);
+                          return (
+                            <TableRow key={i} className="border-border/20">
+                              <TableCell className="py-2 font-mono text-xs">{t.version || '-'}</TableCell>
+                              <TableCell className="py-2 text-xs text-muted-foreground whitespace-nowrap">
+                                {t.deployedAt ? new Date(t.deployedAt).toLocaleString('sv-SE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                              </TableCell>
+                              <TableCell className="py-2">
+                                <ConfigTypeBadge type={t.changeType} />
+                              </TableCell>
+                              <TableCell className="py-2 text-right text-xs">{perf?.trades ?? '-'}</TableCell>
+                              <TableCell className={`py-2 text-right font-mono text-xs ${perf ? (perf.pnl >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-muted-foreground'}`}>
+                                {perf ? `$${perf.pnl.toFixed(2)}` : '-'}
+                              </TableCell>
+                              <TableCell className={`py-2 text-right font-mono text-xs ${perf ? (perf.win_rate >= 50 ? 'text-emerald-400' : 'text-red-400') : 'text-muted-foreground'}`}>
+                                {perf ? `${perf.win_rate}%` : '-'}
+                              </TableCell>
+                              <TableCell className="py-2 text-xs text-muted-foreground max-w-[300px] truncate" title={t.reasoning || ''}>
+                                {t.reasoning || '-'}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -285,6 +311,22 @@ function SummaryCard({ label, value, color }: { label: string; value: string; co
         <p className={`text-xl font-bold mt-1 tabular-nums ${color || 'text-card-foreground'}`}>{value}</p>
       </CardContent>
     </Card>
+  );
+}
+
+function ConfigTypeBadge({ type }: { type: string }) {
+  const styles: Record<string, string> = {
+    evolution: 'text-purple-400 border-purple-400/30 bg-purple-950/20',
+    ai_brain: 'text-cyan-400 border-cyan-400/30 bg-cyan-950/20',
+    manual: 'text-amber-400 border-amber-400/30 bg-amber-950/20',
+    feature: 'text-blue-400 border-blue-400/30 bg-blue-950/20',
+    initial: 'text-zinc-400 border-zinc-400/30 bg-zinc-950/20',
+    documentation: 'text-zinc-400 border-zinc-400/30 bg-zinc-950/20',
+  };
+  return (
+    <Badge variant="outline" className={`text-[10px] font-mono px-1.5 py-0 ${styles[type] || 'border-border/40 text-muted-foreground bg-muted/30'}`}>
+      {type}
+    </Badge>
   );
 }
 

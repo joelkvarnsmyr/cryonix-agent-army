@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@cryonix/database';
-import { positionHistory, trades } from '@cryonix/database';
+import { positionHistory, trades, configChanges } from '@cryonix/database';
 import { desc, gte, eq, and } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +12,17 @@ export async function GET(request: Request) {
     const patternFilter = url.searchParams.get('pattern');
     const configFilter = url.searchParams.get('config_version');
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    // Fetch config version timeline from config_changes
+    const configTimeline = await db.select({
+      version: configChanges.configVersion,
+      changeType: configChanges.changeType,
+      source: configChanges.source,
+      reasoning: configChanges.reasoning,
+      deployedAt: configChanges.createdAt,
+    }).from(configChanges)
+      .orderBy(desc(configChanges.createdAt))
+      .limit(50);
 
     // Primary: position_history (has holdingPeriod, closeReason, fees)
     const conditions: any[] = [gte(positionHistory.closedAt, cutoff)];
@@ -50,6 +61,7 @@ export async function GET(request: Request) {
         trades: filtered,
         summary: computeSummary(filtered),
         config_comparison: computeConfigComparison(filtered),
+        config_timeline: configTimeline,
         source: 'position_history',
         days,
       });
@@ -88,6 +100,7 @@ export async function GET(request: Request) {
       trades: filtered,
       summary: computeSummary(filtered),
       config_comparison: computeConfigComparison(filtered),
+      config_timeline: configTimeline,
       source: 'trades',
       days,
     });
