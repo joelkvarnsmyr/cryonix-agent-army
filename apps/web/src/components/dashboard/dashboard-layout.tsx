@@ -54,8 +54,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const navItems = [
     { href: '/', label: 'Terminal', icon: Activity },
-    { href: '/analytics', label: 'Analytics', icon: LineChart },
-    { href: '/backtest', label: 'Backtest', icon: BarChart3 },
+    { href: '/legacy', label: 'Legacy', icon: BarChart3 },
   ];
 
   const services = health?.services || [];

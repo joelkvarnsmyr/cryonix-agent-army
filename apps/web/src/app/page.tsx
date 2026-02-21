@@ -1,114 +1,205 @@
 "use client";
 
-import dynamic from 'next/dynamic';
-import { DashboardLayout } from '@/components/dashboard/dashboard-layout';
-import { PortfolioCard } from '@/components/dashboard/portfolio-card';
-import { PositionsCard } from '@/components/dashboard/positions-card';
-import { SignalPipeline } from '@/components/dashboard/signal-pipeline';
-import { AgentFlow } from '@/components/dashboard/agent-flow';
-import { HealthGrid } from '@/components/dashboard/health-grid';
-import { ConfigCard } from '@/components/dashboard/config-card';
-import { TradeActivity } from '@/components/dashboard/trade-activity';
-import { ProcessViewer } from '@/components/dashboard/process-viewer';
-import { SystemVitals } from '@/components/dashboard/system-vitals';
-import { CostsCard } from '@/components/dashboard/costs-card';
-import { StaggerContainer, FadeUpItem } from '@/components/dashboard/motion-wrappers';
+import { usePortfolio } from '@/hooks/useMarketData';
+import { useAutoTrade } from '@/hooks/useAutoTrade';
+import { useSystemHealth } from '@/hooks/useSystemHealth';
+import { useEffect, useState } from 'react';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
-// Lazy load heavy chart components
-const PriceChart = dynamic(() => import('@/components/dashboard/price-chart').then(mod => mod.PriceChart), {
-  loading: () => <div className="h-[300px] w-full bg-muted/5 animate-pulse rounded-xl" />,
-  ssr: false
-});
-const EquityCurve = dynamic(() => import('@/components/dashboard/equity-curve').then(mod => mod.EquityCurve), {
-  loading: () => <div className="h-[160px] w-full bg-muted/5 animate-pulse rounded-xl" />,
-  ssr: false
-});
-const PnlChart = dynamic(() => import('@/components/dashboard/pnl-chart').then(mod => mod.PnlChart), {
-  loading: () => <div className="h-[160px] w-full bg-muted/5 animate-pulse rounded-xl" />,
-  ssr: false
-});
-const PatternPerformance = dynamic(() => import('@/components/dashboard/pattern-performance').then(mod => mod.PatternPerformance), {
-  loading: () => <div className="h-[160px] w-full bg-muted/5 animate-pulse rounded-xl" />,
-  ssr: false
-});
-const AiImpactChart = dynamic(() => import('@/components/dashboard/ai-impact-chart').then(mod => mod.AiImpactChart), {
-  loading: () => <div className="h-[160px] w-full bg-muted/5 animate-pulse rounded-xl" />,
-  ssr: false
-});
-const EvolutionPanel = dynamic(() => import('@/components/dashboard/evolution-panel').then(mod => mod.EvolutionPanel), {
-  loading: () => <div className="h-[200px] w-full bg-muted/5 animate-pulse rounded-xl" />,
-  ssr: false
-});
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
 
 export default function HomePage() {
+  const { portfolio } = usePortfolio(15000);
+  const { data: autoTrade } = useAutoTrade(10000);
+  const { health } = useSystemHealth(30000);
+
+  const [clock, setClock] = useState('');
+  useEffect(() => {
+    const tick = () => setClock(new Date().toISOString().slice(11, 16));
+    tick();
+    const id = setInterval(tick, 10000);
+    return () => clearInterval(id);
+  }, []);
+
+  const [equity, setEquity] = useState<{ time: string; cumulative: number }[]>([]);
+  useEffect(() => {
+    const load = () => fetch('/api/chart-data?action=pnl')
+      .then(r => r.json())
+      .then(d => setEquity(d.equity || []))
+      .catch(() => {});
+    load();
+    const id = setInterval(load, 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  const [trades, setTrades] = useState<Array<{
+    symbol: string; pnl: number; pnl_percent: number; closed_at: string; pattern: string | null;
+  }>>([]);
+  const [weekPnl, setWeekPnl] = useState(0);
+  useEffect(() => {
+    const load = () => fetch('/api/analytics/journal?days=7')
+      .then(r => r.json())
+      .then(d => {
+        setTrades((d.trades || []).slice(0, 5));
+        setWeekPnl(d.summary?.total_pnl || 0);
+      })
+      .catch(() => {});
+    load();
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const positions = autoTrade?.positions || [];
+  const dailyPnl = autoTrade?.dailyState?.dailyPnl || 0;
+  const totalValue = portfolio?.totalValue || 0;
+  const dailyPnlPct = totalValue > 0 ? (dailyPnl / totalValue) * 100 : 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const frozen = (autoTrade?.toml as any)?.baseline?.frozen === true;
+  const healthyCount = health?.summary?.healthy || 0;
+  const totalServices = health?.summary?.total || 4;
+  const allHealthy = health?.status === 'healthy';
+
   return (
-    <DashboardLayout>
-      <StaggerContainer className="space-y-2 3xl:space-y-1.5">
-        {/* Row 1: System Vitals — always visible */}
-        <FadeUpItem>
-          <SystemVitals />
-        </FadeUpItem>
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="max-w-2xl mx-auto p-4 space-y-4">
 
-        {/* Row 2: System Architecture — hidden on ultrawide to reclaim vertical space */}
-        <FadeUpItem className="3xl:hidden">
-          <AgentFlow />
-        </FadeUpItem>
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-sm font-bold tracking-wider text-muted-foreground">CRYONIX</span>
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full ${allHealthy ? 'bg-emerald-400 animate-pulse' : health?.status === 'degraded' ? 'bg-amber-400' : 'bg-red-400'}`} />
+              {healthyCount}/{totalServices}
+            </span>
+            <span className="font-mono">{clock} UTC</span>
+          </div>
+        </div>
 
-        {/* Row 3: Main Grid — 3-col standard, wider center on ultrawide */}
-        <FadeUpItem>
-          <div className="grid grid-cols-12 gap-2.5 3xl:gap-1.5">
-            {/* Left Column: Portfolio + Evolution */}
-            <div className="col-span-12 lg:col-span-3 3xl:col-span-2 space-y-2.5 3xl:space-y-1.5">
-              <PortfolioCard />
-              <EvolutionPanel />
+        {/* Balance */}
+        <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-6 text-center">
+          <div className="text-3xl font-bold tracking-tight text-glow-cyan">
+            ${totalValue.toFixed(2)}
+          </div>
+          <div className="mt-1 flex items-center justify-center gap-3 text-sm">
+            <span className={dailyPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+              {dailyPnl >= 0 ? '+' : ''}{dailyPnl.toFixed(2)} today ({dailyPnlPct >= 0 ? '+' : ''}{dailyPnlPct.toFixed(1)}%)
+            </span>
+            <span className="text-muted-foreground">|</span>
+            <span className={weekPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+              {weekPnl >= 0 ? '+' : ''}{weekPnl.toFixed(2)} / 7d
+            </span>
+          </div>
+          {frozen && (
+            <div className="mt-2 inline-block rounded-full bg-cyan-500/10 border border-cyan-500/20 px-3 py-0.5 text-xs text-cyan-400">
+              FROZEN
             </div>
+          )}
+        </div>
 
-            {/* Center Column: Price Chart + sub-analytics */}
-            <div className="col-span-12 lg:col-span-6 3xl:col-span-7 space-y-2.5 3xl:space-y-1.5 min-w-0">
-              <PriceChart />
-              <div className="grid grid-cols-2 gap-2.5 3xl:gap-1.5 min-w-0">
-                <div className="min-w-0 isolate overflow-hidden"><EquityCurve /></div>
-                <div className="min-w-0 isolate overflow-hidden"><PatternPerformance /></div>
+        {/* Equity Curve */}
+        {equity.length > 1 && (
+          <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
+            <div className="text-xs text-muted-foreground mb-2">Equity (30d)</div>
+            <ResponsiveContainer width="100%" height={140}>
+              <AreaChart data={equity}>
+                <defs>
+                  <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="hsl(191, 100%, 50%)" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="hsl(191, 100%, 50%)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="time" hide />
+                <YAxis hide domain={['dataMin', 'dataMax']} />
+                <Tooltip
+                  contentStyle={{ background: 'hsl(220, 55%, 7%)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }}
+                  labelFormatter={(v) => new Date(v as string).toLocaleDateString()}
+                  formatter={(v: number) => [`$${v.toFixed(4)}`, 'P&L']}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="cumulative"
+                  stroke="hsl(191, 100%, 50%)"
+                  strokeWidth={2}
+                  fill="url(#eqGrad)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Positions */}
+        <div className="grid grid-cols-2 gap-3">
+          {['INJ', 'ATOM'].map(symbol => {
+            const pos = positions.find((p: { symbol: string }) => p.symbol.startsWith(symbol));
+            return (
+              <div key={symbol} className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
+                <div className="text-xs text-muted-foreground mb-1">{symbol}/USDC</div>
+                {pos ? (
+                  <>
+                    <div className={`text-lg font-semibold ${pos.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {pos.pnl >= 0 ? '+' : ''}{pos.pnlPct.toFixed(1)}%
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                      <div>${pos.entryPrice.toFixed(4)} &rarr; ${pos.currentPrice.toFixed(4)}</div>
+                      <div>SL ${pos.stopLoss.toFixed(4)}</div>
+                      <div className={pos.pnl >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}>
+                        {pos.pnl >= 0 ? '+' : ''}${pos.pnl.toFixed(4)}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-sm text-muted-foreground/50 mt-1">No position</div>
+                )}
               </div>
-            </div>
+            );
+          })}
+        </div>
 
-            {/* Right Column: Signal Pipeline + Positions + Config */}
-            <div className="col-span-12 lg:col-span-3 space-y-2.5 3xl:space-y-1.5">
-              <SignalPipeline />
-              <PositionsCard />
-              <ConfigCard />
+        {/* Recent Trades */}
+        <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
+          <div className="text-xs text-muted-foreground mb-2">Recent trades</div>
+          {trades.length === 0 ? (
+            <div className="text-sm text-muted-foreground/50">No trades in last 7 days</div>
+          ) : (
+            <div className="space-y-1.5">
+              {trades.map((t, i) => (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-muted-foreground w-16">{t.symbol.replace('/USDC', '')}</span>
+                    {t.pattern && <span className="text-xs text-muted-foreground/60">{t.pattern}</span>}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className={t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                      {t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(4)}
+                    </span>
+                    <span className="text-xs text-muted-foreground w-14 text-right">{timeAgo(t.closed_at)}</span>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
-        </FadeUpItem>
+          )}
+        </div>
 
-        {/* Row 4: Analytics — PnL + AI Impact + AI Costs */}
-        <FadeUpItem>
-          <div className="grid grid-cols-12 gap-2.5 3xl:gap-1.5">
-            <div className="col-span-12 lg:col-span-5 min-w-0">
-              <PnlChart />
-            </div>
-            <div className="col-span-12 lg:col-span-4 min-w-0">
-              <AiImpactChart />
-            </div>
-            <div className="col-span-12 lg:col-span-3 min-w-0">
-              <CostsCard />
-            </div>
-          </div>
-        </FadeUpItem>
+        {/* Health */}
+        <div className="flex items-center justify-center gap-4 py-2 text-xs text-muted-foreground">
+          {(health?.services || []).map((s: { name: string; status: string; latency?: number }) => (
+            <span key={s.name} className="flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                s.status === 'healthy' ? 'bg-emerald-400' : s.status === 'degraded' ? 'bg-amber-400' : 'bg-red-400'
+              }`} />
+              {s.name}
+            </span>
+          ))}
+        </div>
 
-        {/* Row 5: Process Log + Activity + Health */}
-        <FadeUpItem>
-          <div className="grid grid-cols-12 gap-2.5 3xl:gap-1.5">
-            <div className="col-span-12 lg:col-span-8">
-              <ProcessViewer />
-            </div>
-            <div className="col-span-12 lg:col-span-4 space-y-2.5 3xl:space-y-1.5">
-              <TradeActivity />
-              <HealthGrid />
-            </div>
-          </div>
-        </FadeUpItem>
-      </StaggerContainer>
-    </DashboardLayout>
+      </div>
+    </div>
   );
 }
