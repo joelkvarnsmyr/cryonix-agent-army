@@ -30,7 +30,7 @@
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 [baseline]
-frozen = true
+frozen = false
 frozen_at = ""
 frozen_by = ""
 baseline_id = ""
@@ -346,7 +346,7 @@ adx_trending_threshold = 25
 #   for consensus boosting. 1.2 = 20% above average.
 # When to change: raise spike to 2.5-3.0 for fewer false signals.
 volume_sma_period = 20
-volume_spike_threshold = 2.0
+volume_spike_threshold = 999.0  # Effectively disabled — backtest shows negative edge on INJ/ATOM
 volume_confirmation = 1.2
 
 # Minimum candles required before the engine will analyze a symbol.
