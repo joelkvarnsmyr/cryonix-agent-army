@@ -58,11 +58,16 @@ mode = "spot"
 # When to change: set to false when mode = "margin" to allow shorting.
 spot_only = true
 
-# Symbol whitelist — only these pairs will be traded.
-# Empty list = trade all scanned symbols (no filter).
-# Based on backtest: INJ + ATOM are the only consistently profitable symbols.
-# When to change: add symbols as capital grows or new patterns emerge.
-symbol_whitelist = ["INJ/USDC", "ATOM/USDC"]
+# Symbol whitelist — only these pairs will be scanned and traded.
+# Empty list = scan all 45 default symbols (no filter).
+# Selected for: structural recovery from dips, top ~100 market cap,
+# real ecosystems, sufficient liquidity. No meme coins.
+# When to change: add/remove based on market cap shifts or new narratives.
+symbol_whitelist = [
+    "BTC/USDC", "ETH/USDC", "SOL/USDC", "XRP/USDC", "AVAX/USDC",
+    "LINK/USDC", "ADA/USDC", "DOT/USDC", "NEAR/USDC", "SUI/USDC",
+    "ATOM/USDC", "INJ/USDC", "ARB/USDC", "UNI/USDC", "RENDER/USDC",
+]
 
 # Margin type — only relevant when mode = "margin".
 #   "cross"    — All margin shared across positions (lower liquidation risk).

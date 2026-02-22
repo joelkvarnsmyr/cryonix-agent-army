@@ -22,30 +22,19 @@ class MarketScoutTank(BaseTank):
     - Push high-confidence signals to approval queue
     """
 
+    # Fallback symbols if whitelist is empty in cryonix.toml
+    DEFAULT_SYMBOLS = [
+        "BTC/USDC", "ETH/USDC", "SOL/USDC", "XRP/USDC", "AVAX/USDC",
+        "LINK/USDC", "ADA/USDC", "DOT/USDC", "NEAR/USDC", "SUI/USDC",
+        "ATOM/USDC", "INJ/USDC", "ARB/USDC", "UNI/USDC", "RENDER/USDC",
+    ]
+
     def __init__(self):
-        # Monitor 45 liquid USDC pairs across tiers
-        super().__init__(
-            name="MarketScout",
-            symbols=[
-                # Tier 1: Core (ultra-liquid, $5 min)
-                "BTC/USDC", "ETH/USDC", "SOL/USDC", "BNB/USDC", "XRP/USDC",
-                # Tier 2: Major alts ($5 min)
-                "AVAX/USDC", "ADA/USDC", "LINK/USDC", "DOT/USDC", "POL/USDC",
-                "NEAR/USDC", "ARB/USDC", "OP/USDC", "SUI/USDC", "ATOM/USDC",
-                # Tier 3: AI & DeFi ($5 min)
-                "FET/USDC", "RENDER/USDC", "INJ/USDC", "TIA/USDC", "SEI/USDC",
-                "JUP/USDC", "WLD/USDC", "ICP/USDC", "APT/USDC", "FIL/USDC",
-                # Tier 4: Mid-cap movers ($5 min)
-                "AAVE/USDC", "UNI/USDC", "LDO/USDC", "TAO/USDC", "CRV/USDC",
-                "DYDX/USDC", "STX/USDC", "IMX/USDC", "ALGO/USDC",
-                # Tier 5: Meme & micro-cap ($1 min — high volatility, diversification)
-                "DOGE/USDC", "SHIB/USDC", "PEPE/USDC", "BONK/USDC", "FLOKI/USDC",
-                "WIF/USDC", "1000SATS/USDC", "ANIME/USDC",
-                # Tier 6: Emerging narratives
-                "AIXBT/USDC", "ARKM/USDC", "PYTH/USDC", "JTO/USDC",
-                "STRK/USDC", "MANTA/USDC",
-            ]
-        )
+        # Read scan list from cryonix.toml symbol_whitelist
+        whitelist = get_toml('trading', 'symbol_whitelist', [])
+        symbols = whitelist if whitelist else self.DEFAULT_SYMBOLS
+        super().__init__(name="MarketScout", symbols=symbols)
+        print(f"[MarketScout] Scanning {len(symbols)} symbols from {'TOML whitelist' if whitelist else 'default list'}")
         self.timeframe = get_toml('engine', 'timeframe', '15m')
         self.candle_limit = get_toml('engine', 'candle_limit', 100)
 
