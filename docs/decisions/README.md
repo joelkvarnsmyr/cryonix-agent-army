@@ -9,6 +9,8 @@ Status: `Active` | `Superseded` | `Deferred` | `Reverted`
 
 | ADR | Date | Status | Summary |
 |-----|------|--------|---------|
+| [025](025-trending-exception-adx.md) | 2026-02-25 | Active | Allow trend signals through dip focus when ADX > 30 + HTF aligned |
+| [024](024-x-sentiment-refinement.md) | 2026-02-25 | Active | X sentiment from defensive-only to active confidence boosts |
 | [014](014-telegram-scraper-ai-parser.md) | 2026-02-25 | Active | AI fallback parser + sentiment detection + channel upgrade |
 | [013](013-self-calibration-cron.md) | 2026-02-25 | Active | Schedule self_calibrate.py every 6h to measure filter effectiveness |
 | [012](012-telegram-bot-redesign.md) | 2026-02-25 | Active | Event-driven alerts instead of 100+ daily spam messages |

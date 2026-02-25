@@ -12,12 +12,10 @@ Enable `dip_focus_mode` in `cryonix.toml`:
 - Block pure trend-following signals (MACD+EMA without dip context)
 - Single toggle to revert: `dip_focus_mode = false`
 
-### Update 2026-02-25: ADX Trend Exception
-Commit `02d7518` added an exception: trend signals (MACD+EMA without value pattern) are allowed through when ADX > 30, indicating a strong directional trend. This prevents over-filtering during genuine breakouts while still blocking weak trend signals in ranging markets.
+**See also:** [ADR-025](025-trending-exception-adx.md) — ADX > 30 exception added same day to prevent idle capital in strong trends.
 
 ## Consequences (How)
 - Fewer trades but higher quality — accepts missing profitable MACD+EMA trades as trade-off
 - Expected: 24 trades/month with +1.6% return (vs previous -10%/month)
 - No trades for 5 days post-activation (market was overbought) — working as designed
 - Filter applied in auto-trade route after weak solo filter, before EV model
-- ADX exception prevents missed opportunities in strong trends
