@@ -88,7 +88,7 @@ class BaseTank:
         if SPOT_ONLY and signal.get("action") == "SELL":
             return {"decision": "HOLD", "status": "spot_only_skip"}
 
-        # Cooldown: max 1 signal per symbol per 15 min
+        # Cooldown: max 1 signal per symbol per cooldown period (cryonix.toml)
         symbol = state.get("symbol", "")
         cooldown_key = f"{symbol}:{signal.get('action','')}"
         now = time.time()
