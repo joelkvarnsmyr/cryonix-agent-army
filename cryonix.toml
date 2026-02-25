@@ -529,6 +529,17 @@ calibration_min_trades = 3
 # raise to 7200 (2h) if sentiment changes too frequently.
 expiration_seconds = 3600
 
+# X Sentiment confidence adjustments — bullish buzz boosts, bearish penalizes.
+# Applied AFTER TA+AI confidence blending.
+# bullish_boost: added when X score >= 2 (Bullish).
+# strong_bullish_boost: added when X score >= 3 (Extreme Bullish).
+# bearish_penalty: subtracted when X score <= -2 (Bearish).
+# When to change: raise boosts if X sentiment proves predictive,
+# lower them if it introduces too much noise.
+bullish_boost = 0.05
+strong_bullish_boost = 0.08
+bearish_penalty = 0.05
+
 # Keywords that trigger an automatic BUY rejection when found in
 # X/Twitter alerts for a coin. Any match = signal blocked.
 # When to change: add industry-specific terms as new threats emerge.

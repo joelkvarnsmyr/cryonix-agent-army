@@ -29,10 +29,11 @@ from db import get_redis
 
 from openai import OpenAI
 
-WATCHLIST = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'LINK', 'NEAR', 'SUI', 'ARB', 'OP']
+WATCHLIST = ['BTC', 'ETH', 'SOL', 'XRP', 'AVAX', 'LINK', 'ADA', 'DOT', 'NEAR', 'SUI', 'ATOM', 'INJ', 'ARB', 'UNI', 'RENDER']
 
 CACHE_TTL = 900       # 15 min for x-sentiment:latest
 SYMBOL_TTL = 3600     # 1h for individual sentiment:{SYMBOL}
+CONTEXT_TTL = 3600    # 1h for sentiment:context:{SYMBOL} (score + narrative)
 ALERT_TTL = 1800      # 30 min for sentiment:alert:{SYMBOL}
 
 SYSTEM_PROMPT = (
@@ -115,10 +116,18 @@ def write_to_redis(r, sentiment_data: dict, model: str, tokens: int):
     # Main key: x-sentiment:latest (900s TTL)
     r.set('x-sentiment:latest', json.dumps(enriched), ex=CACHE_TTL)
 
-    # Individual sentiment scores (used by auto-trade)
+    # Individual sentiment scores + context (used by auto-trade)
     for symbol, info in sentiment_data.items():
         if isinstance(info, dict) and info.get('score') is not None:
             r.setex(f'sentiment:{symbol}', SYMBOL_TTL, str(info['score']))
+
+            # Rich context for Grok AI validation prompt
+            context = {
+                'score': info['score'],
+                'volume': info.get('volume', 'unknown'),
+                'narrative': info.get('narrative', ''),
+            }
+            r.setex(f'sentiment:context:{symbol}', CONTEXT_TTL, json.dumps(context))
 
             # Alert flag for high-priority events
             if info.get('alert'):

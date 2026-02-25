@@ -1214,9 +1214,10 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
     // Fetch sentiment score from Redis
     const baseAsset = signal.symbol.split('/')[0];
     const sentimentKey = `sentiment:${baseAsset}`;
-    const [sentimentRaw, sentimentAlert, evData] = await Promise.all([
+    const [sentimentRaw, sentimentAlert, sentimentContextRaw, evData] = await Promise.all([
       redis.get(sentimentKey),
       redis.get(`sentiment:alert:${baseAsset}`),
+      redis.get(`sentiment:context:${baseAsset}`),
       getPatternCalibration(),
     ]);
     const sentimentScore = parseInt(sentimentRaw || '0');
@@ -1225,6 +1226,15 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
     if (sentimentScore < 0) sentimentLabel = 'Negative';
     if (sentimentScore >= 2) sentimentLabel = 'Bullish';
     if (sentimentScore <= -2) sentimentLabel = 'Bearish';
+
+    // Parse X narrative context for richer AI prompt
+    let xNarrative = '';
+    try {
+      if (sentimentContextRaw) {
+        const ctx = JSON.parse(sentimentContextRaw as string);
+        xNarrative = ctx.narrative || '';
+      }
+    } catch { /* ignore parse errors */ }
 
     // Calculate EV for this signal's patterns
     const evResult = await calculateExpectedValue(signal, evData);
@@ -1295,6 +1305,7 @@ Volume: ${signal.indicators?.volume_ratio ?? '?'}x avg | Trend aligned: ${signal
 Regime: ${signal.indicators?.market_regime ?? '?'} | HTF trend: ${signal.indicators?.htf_trend ?? '?'}
 
 Market: $${ticker.last?.toFixed(4)} now | 24h: ${ticker.percentage?.toFixed(2)}% | Sentiment: ${sentimentLabel} (${sentimentScore})${alertCtx}
+${xNarrative ? `X buzz: ${xNarrative}` : ''}
 ${evCtx}
 Portfolio: $${totalCapital.toFixed(2)} capital, $${availableCash.toFixed(2)} free, ${openPositions.length}/${CONFIG.MAX_OPEN_POSITIONS} positions [${positionList}]
 Today: ${dailyState.tradesExecuted}/${CONFIG.MAX_TRADES_PER_DAY} trades | P&L: $${dailyState.dailyPnl.toFixed(2)}
@@ -1323,7 +1334,8 @@ JSON: {"approve":bool,"confidence":0-100,"reasoning":"2-3 sentences with specifi
     }
 
     // Enable xAI live search for real-time X/news context
-    requestBody.search = { mode: 'auto' };
+    // 'on' = always search X (not 'auto' which sometimes skips)
+    requestBody.search = { mode: 'on' };
 
     const response = await ai.chat.completions.create(requestBody as any);
 
@@ -2167,6 +2179,28 @@ export async function POST() {
       const taWeight = weightSum > 0 ? rawTaWeight / weightSum : 0.5;
       const aiWeight = weightSum > 0 ? rawAiWeight / weightSum : 0.5;
       signal.confidence = Math.round((signal.confidence * taWeight + aiResult.aiConfidence * aiWeight) * 10000) / 10000;
+
+      // X Sentiment confidence adjustment — bullish X buzz boosts, bearish penalizes
+      if (signal.action === 'BUY') {
+        try {
+          const baseAsset = signal.symbol.split('/')[0];
+          const xScore = parseInt((await redis.get(`sentiment:${baseAsset}`)) || '0');
+          const bullishBoost = TOML?.sentiment?.bullish_boost ?? 0.05;
+          const strongBullishBoost = TOML?.sentiment?.strong_bullish_boost ?? 0.08;
+          const bearishPenalty = TOML?.sentiment?.bearish_penalty ?? 0.05;
+
+          if (xScore >= 3) {
+            signal.confidence += strongBullishBoost;
+            console.log(`[SENTIMENT] ${signal.symbol}: +${(strongBullishBoost * 100).toFixed(0)}% boost (X score ${xScore}, strong bullish)`);
+          } else if (xScore >= 2) {
+            signal.confidence += bullishBoost;
+            console.log(`[SENTIMENT] ${signal.symbol}: +${(bullishBoost * 100).toFixed(0)}% boost (X score ${xScore}, bullish)`);
+          } else if (xScore <= -2) {
+            signal.confidence -= bearishPenalty;
+            console.log(`[SENTIMENT] ${signal.symbol}: -${(bearishPenalty * 100).toFixed(0)}% penalty (X score ${xScore}, bearish)`);
+          }
+        } catch { /* sentiment unavailable — no adjustment */ }
+      }
 
       // Dedup lock: prevent duplicate executions for the same symbol
       const dedupKey = `executing:${signal.symbol}`;
