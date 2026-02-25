@@ -53,6 +53,7 @@ export interface CryonixConfig {
     dip_buy_drawdown: number; dip_buy_lookback: number; dip_buy_max_rsi: number;
     deep_value_threshold: number; deep_value_support_lookback_days: number;
     deep_value_rug_pull_velocity: number;
+    dip_focus_mode: boolean; value_patterns: string[];
   };
   consensus: {
     single_pattern_penalty: number; two_pattern_boost: number;
@@ -77,7 +78,7 @@ export interface CryonixConfig {
     capital_cache_ms: number; calibration_cache_ms: number; regime_ttl_seconds: number;
     reconcile_interval_ms: number; instance_lock_ttl_seconds: number; position_lock_ttl_seconds: number;
   };
-  engine: { timeframe: string; candle_limit: number; news_scan_interval_seconds: number };
+  engine: { timeframe: string; candle_limit: number; signal_cooldown_seconds: number; news_scan_interval_seconds: number };
   grid: { level_trigger_tolerance: number };
   reconciliation: {
     phantom_threshold: number; mismatch_warning_low: number;
