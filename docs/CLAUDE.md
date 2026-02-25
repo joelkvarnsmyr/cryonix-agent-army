@@ -5,7 +5,9 @@
 - `ARCHITECTURE.md` — System architecture and data flow
 - `ROADMAP.md` — 5-phase growth plan with KPIs
 - `testing-guide.md` — Vitest setup and patterns
-- `plans/` — Design docs and implementation plans (dated YYYY-MM-DD)
+- `decisions/` — Architecture Decision Records (ADR) — strategic choices with Why/What/How
+- `plans/` — Implementation plans and design docs (dated YYYY-MM-DD)
+- `reports/` — Backtest results, audit reports, and evidence data
 
 ## Stale/historical docs (use with caution)
 - `agent-coordination.md` — Describes completed multi-agent build sprint
