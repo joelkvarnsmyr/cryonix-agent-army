@@ -71,6 +71,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   # ============================================================
   # Next.js Web App (Dashboard + API)
@@ -177,7 +183,7 @@ services:
       - NODE_ENV=production
       - TELEGRAM_INTERACTIVE_BOT_TOKEN=${TELEGRAM_INTERACTIVE_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/cryonix
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/cryonix
       - KV_URL=redis://redis:6379
       - NEXTJS_API_URL=http://web:3000
     networks:
@@ -203,7 +209,7 @@ services:
       - TELEGRAM_SESSION=${TELEGRAM_SESSION}
       - TELEGRAM_CHANNELS=${TELEGRAM_CHANNELS:-CoinCodeCap,FatPigSignals,RavenTradingPro}
       - KV_URL=redis://redis:6379
-      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
       - CONFIDENCE_BOOST_ENABLED=false
     networks:
       - cryonix-net

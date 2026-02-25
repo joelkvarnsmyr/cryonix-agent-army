@@ -321,7 +321,7 @@ function resetDailyStateIfNeeded() {
 
 const POSITIONS_KEY = 'positions:open';
 const POSITION_LOCK_KEY = 'positions:lock';
-const LOCK_TTL = TOML?.timing.position_lock_ttl_seconds ?? 5;
+const LOCK_TTL = TOML?.timing.position_lock_ttl_seconds ?? 30;
 
 async function acquirePositionLock(): Promise<boolean> {
   const result = await redis.set(POSITION_LOCK_KEY, Date.now().toString(), 'EX', LOCK_TTL, 'NX');
@@ -1192,7 +1192,7 @@ interface AIValidation {
 
 async function getAIValidation(signal: Signal): Promise<AIValidation> {
   const ai = getGrok();
-  if (!ai) return { approved: true, aiConfidence: signal.confidence, reasoning: 'AI validation disabled' };
+  if (!ai) return { approved: false, aiConfidence: 0, reasoning: 'AI validation unavailable (fail-closed: no API key or client)' };
 
   try {
     const ex = getExchange();
@@ -1231,8 +1231,9 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
       `${p.symbol} $${(p.entryPrice * p.quantity).toFixed(2)}`
     ).join(', ') || 'none';
 
-    const rr = signal.stop_loss > 0
-      ? ((signal.target_price - signal.entry_price) / (signal.entry_price - signal.stop_loss)).toFixed(2)
+    const slDiff = signal.entry_price - signal.stop_loss;
+    const rr = signal.stop_loss > 0 && Math.abs(slDiff) > 0.0000001
+      ? ((signal.target_price - signal.entry_price) / slDiff).toFixed(2)
       : 'N/A';
 
     // Use specialized prompt for deep value crash signals
@@ -1871,7 +1872,19 @@ export async function POST() {
     await redis.set('config:risk', JSON.stringify(CONFIG), 'EX', TOML?.timing.regime_ttl_seconds ?? 3600);
 
     // STEP 1: Monitor existing positions (check SL/TP/trailing)
-    const monitorResults = await monitorPositions();
+    // Acquire position lock for entire monitor cycle to prevent race conditions
+    // on trailing stop updates and position saves
+    let monitorLockAcquired = false;
+    for (let i = 0; i < 5; i++) {
+      if (await acquirePositionLock()) { monitorLockAcquired = true; break; }
+      await new Promise(r => setTimeout(r, 500 * (i + 1)));
+    }
+    let monitorResults: MonitorResult[];
+    try {
+      monitorResults = await monitorPositions();
+    } finally {
+      if (monitorLockAcquired) await releasePositionLock();
+    }
     const sells = monitorResults.filter(r => r.action !== 'HOLD' && r.action !== 'ERROR');
 
     // ACUTE TRIGGER: Track consecutive SL losses for AI Brain

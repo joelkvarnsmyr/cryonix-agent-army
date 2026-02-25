@@ -707,7 +707,7 @@ ${promptTemplate ? `## Additional Guidelines\n${promptTemplate}` : ''}`;
 
     } catch (e) {
       console.warn(`  ⚠️ Backtest gate error: ${e.message}`);
-      return { passed: true, reason: `error: ${e.message}`, candidate: null };
+      return { passed: false, reason: `error (fail-closed): ${e.message}`, candidate: null };
     }
   }
 

@@ -1,4 +1,4 @@
-import { pgTable, text, serial, decimal, timestamp, boolean, jsonb, varchar, integer, doublePrecision } from 'drizzle-orm/pg-core';
+import { pgTable, text, serial, decimal, timestamp, boolean, jsonb, varchar, integer, doublePrecision, index, uniqueIndex } from 'drizzle-orm/pg-core';
 
 // ============================================================================
 // USERS TABLE
@@ -66,7 +66,11 @@ export const trades = pgTable('trades', {
   fees: decimal('fees', { precision: 20, scale: 8 }),
   agentId: varchar('agent_id', { length: 50 }),
   configVersion: varchar('config_version', { length: 16 }),
-});
+}, (table) => [
+  index('trades_timestamp_idx').on(table.timestamp),
+  index('trades_symbol_idx').on(table.symbol),
+  index('trades_config_version_idx').on(table.configVersion),
+]);
 
 // ============================================================================
 // SIGNALS TABLE
@@ -87,7 +91,10 @@ export const signals = pgTable('signals', {
   metadata: jsonb('metadata'), // Pattern-specific data
   agentId: varchar('agent_id', { length: 50 }),
   executed: boolean('executed').default(false),
-});
+}, (table) => [
+  index('signals_timestamp_idx').on(table.timestamp),
+  index('signals_symbol_idx').on(table.symbol),
+]);
 
 // ============================================================================
 // MARKET DATA TABLE (Time-series optimized)
@@ -103,7 +110,9 @@ export const marketData = pgTable('market_data', {
   close: decimal('close', { precision: 20, scale: 8 }).notNull(),
   volume: decimal('volume', { precision: 30, scale: 8 }).notNull(),
   timeframe: varchar('timeframe', { length: 10 }).notNull(), // '1m', '5m', '15m', '1h', '4h', '1d'
-});
+}, (table) => [
+  index('market_data_symbol_tf_ts_idx').on(table.symbol, table.timeframe, table.timestamp),
+]);
 
 // ============================================================================
 // AGENT ACTIONS LOG TABLE
@@ -245,7 +254,9 @@ export const calibrationHistory = pgTable('calibration_history', {
   patterns: jsonb('patterns'),
   overall: jsonb('overall'),
   createdAt: timestamp('created_at').defaultNow(),
-});
+}, (table) => [
+  uniqueIndex('calibration_history_date_type_idx').on(table.snapshotDate, table.runType),
+]);
 
 // === AI Brain: Autopilot Action Log ===
 
@@ -289,7 +300,10 @@ export const positionHistory = pgTable('position_history', {
   pattern: varchar('pattern', { length: 50 }),
   metadata: jsonb('metadata'), // Additional position data
   agentId: varchar('agent_id', { length: 50 }),
-});
+}, (table) => [
+  index('position_history_closed_at_idx').on(table.closedAt),
+  index('position_history_symbol_idx').on(table.symbol),
+]);
 
 // ============================================================================
 // TELEGRAM SIGNALS TABLE — Log every parsed signal from Telegram channels

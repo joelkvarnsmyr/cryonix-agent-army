@@ -9,7 +9,7 @@ import os
 import re
 import time
 from bs4 import BeautifulSoup
-from redis import Redis
+import redis.asyncio as aioredis
 from typing import Dict, List, Set
 
 try:
@@ -72,7 +72,7 @@ class NewsScoutTank(BaseTank):
 
     def __init__(self, kv_url: str):
         super().__init__(name="NewsScout", symbols=[])
-        self.redis_client = Redis.from_url(kv_url, decode_responses=True)
+        self.redis_client = aioredis.from_url(kv_url, decode_responses=True)
         self.last_run_time = 0
         self.run_interval = get_toml('engine', 'news_scan_interval_seconds', 900)
 
@@ -188,10 +188,10 @@ Return JSON only: {{"BTC": 1, "ETH": -2, ...}} — only include symbols with non
             pipeline = self.redis_client.pipeline()
             for symbol, score in sentiment_scores.items():
                 redis_key = f"sentiment:{symbol}"
-                pipeline.setex(redis_key, SENTIMENT_EXPIRATION_SECONDS, score)
+                pipeline.setex(redis_key, SENTIMENT_EXPIRATION_SECONDS, str(score))
                 if score != 0:
                     print(f"[{self.name}] Stored sentiment for {symbol}: {score}")
-            pipeline.execute()
+            await pipeline.execute()
             print(f"[{self.name}] Sentiment scores updated in Redis.")
         except Exception as e:
             print(f"[{self.name}] Error storing sentiment in Redis: {e}")
