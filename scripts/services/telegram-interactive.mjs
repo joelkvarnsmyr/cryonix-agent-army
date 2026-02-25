@@ -766,16 +766,25 @@ async function handleCommand(text, chatId) {
   }
 }
 
-// ─── Scheduled Reports ───────────────────────────────────
+// ─── Trade Alerts (rich, event-driven) ───────────────────
 let lastTradeId = null;
+let lastClosedId = null;
 let lastHealthStatus = 'healthy';
 
 async function checkTradeAlerts() {
   try {
+    // Check for NEW trades (BUY executed)
     const r = await query(`
-      SELECT id, symbol, side, entry_price, exit_price, pnl, pattern,
-             confidence, stop_loss, take_profit, status, timestamp
-      FROM trades ORDER BY id DESC LIMIT 1
+      SELECT t.id, t.symbol, t.side, t.entry_price, t.exit_price, t.pnl, t.pattern,
+             t.confidence, t.stop_loss, t.take_profit, t.status, t.timestamp, t.reasoning,
+             t.config_version,
+             v.reasoning as ai_reasoning, v.adjusted_confidence, v.consensus_level,
+             v.usage->>'model' as ai_model
+      FROM trades t
+      LEFT JOIN validation_history v ON v.symbol = t.symbol
+        AND v.action = t.side AND v.timestamp > t.timestamp - INTERVAL '2 minutes'
+        AND v.timestamp < t.timestamp + INTERVAL '2 minutes'
+      ORDER BY t.id DESC LIMIT 1
     `);
     if (r.rows.length === 0) return;
 
@@ -784,26 +793,124 @@ async function checkTradeAlerts() {
     if (latest.id <= lastTradeId) return;
 
     lastTradeId = latest.id;
-    const icon = latest.side === 'BUY' ? '🟩' : '🟥';
     const price = parseFloat(latest.entry_price);
     const priceFmt = price < 1 ? 6 : price < 100 ? 4 : 2;
     const conf = latest.confidence ? `${(parseFloat(latest.confidence) * 100).toFixed(0)}%` : '?';
-    const time = new Date(latest.timestamp).toUTCString().slice(17, 22);
 
-    let slTpStr = '';
-    if (latest.stop_loss || latest.take_profit) {
-      const sl = latest.stop_loss ? `SL: $${parseFloat(latest.stop_loss).toFixed(priceFmt)}` : '';
-      const tp = latest.take_profit ? `TP: $${parseFloat(latest.take_profit).toFixed(priceFmt)}` : '';
-      slTpStr = `\n📐 ${[sl, tp].filter(Boolean).join(' · ')}`;
+    // Rich trade message with WHY
+    const patterns = (latest.pattern || '?').split(',').map(p => p.trim());
+    const patternIcons = {
+      'DIP_BUY': '🎯 Dip Buy', 'DEEP_VALUE_CRASH': '💎 Deep Value',
+      'BOLLINGER_SQUEEZE': '🔧 Bollinger', 'RSI_OVERSOLD': '📉 RSI Oversold',
+      'MACD_BULLISH_CROSS': '📈 MACD Cross', 'EMA_BULLISH_CROSS': '📊 EMA Cross',
+    };
+    const patternStr = patterns.map(p => patternIcons[p] || p).join(' + ');
+
+    // SL/TP with R:R
+    let riskStr = '';
+    if (latest.stop_loss && latest.take_profit) {
+      const sl = parseFloat(latest.stop_loss);
+      const tp = parseFloat(latest.take_profit);
+      const risk = Math.abs(price - sl);
+      const reward = Math.abs(tp - price);
+      const rr = risk > 0 ? (reward / risk).toFixed(1) : '?';
+      const slPct = ((sl - price) / price * 100).toFixed(1);
+      const tpPct = ((tp - price) / price * 100).toFixed(1);
+      riskStr = `\n📐 SL: $${sl.toFixed(priceFmt)} (${slPct}%) · TP: $${tp.toFixed(priceFmt)} (+${tpPct}%) · R:R ${rr}`;
     }
 
-    const pnlStr = latest.pnl ? `\n💵 P&L: $${parseFloat(latest.pnl).toFixed(2)}` : '';
+    // AI reasoning (truncated)
+    let aiStr = '';
+    if (latest.ai_reasoning) {
+      const reason = latest.ai_reasoning.length > 120
+        ? latest.ai_reasoning.substring(0, 120) + '...'
+        : latest.ai_reasoning;
+      const consensus = latest.consensus_level || '?';
+      aiStr = `\n🤖 AI (${consensus}): <i>${reason}</i>`;
+    }
+
+    // Capital context
+    let capitalStr = '';
+    try {
+      const rd = await connectRedis();
+      const riskRaw = await rd.get('risk:portfolio_state');
+      if (riskRaw) {
+        const rs = JSON.parse(riskRaw);
+        const posRaw = await rd.get('positions:open');
+        const positions = posRaw ? JSON.parse(posRaw) : [];
+        const maxPos = getToml('limits', 'max_open_positions', 3);
+        capitalStr = `\n💰 ${positions.length}/${maxPos} positioner · $${parseFloat(rs.total_capital || 0).toFixed(2)} kapital`;
+      }
+    } catch {}
 
     await sendMessage(
-      `${icon} ${latest.side} ${latest.symbol} @ $${price.toFixed(priceFmt)}\n` +
-      `📊 ${latest.pattern || '?'} · ${conf} confidence` +
-      slTpStr + pnlStr +
-      `\n⏱ ${time} UTC · ${latest.status}`
+      `🟩 <b>KÖP ${latest.symbol}</b> @ $${price.toFixed(priceFmt)}\n\n` +
+      `<b>Varför:</b> ${patternStr}\n` +
+      `Confidence: <b>${conf}</b> (blended TA+AI)` +
+      riskStr + aiStr + capitalStr +
+      `\n\n⏱ ${new Date(latest.timestamp).toLocaleString('sv-SE', { timeZone: 'UTC' })}`
+    );
+
+    // Check for CLOSED positions
+    await checkClosedPositions();
+  } catch { /* silent */ }
+}
+
+async function checkClosedPositions() {
+  try {
+    const r = await query(`
+      SELECT id, symbol, pattern, pnl, close_reason, entry_price, exit_price,
+             EXTRACT(EPOCH FROM (closed_at - opened_at))/3600 as holding_hours,
+             closed_at, metadata->>'configVersion' as config_version
+      FROM position_history
+      ORDER BY id DESC LIMIT 1
+    `);
+    if (r.rows.length === 0) return;
+
+    const latest = r.rows[0];
+    if (lastClosedId === null) { lastClosedId = latest.id; return; }
+    if (latest.id <= lastClosedId) return;
+
+    lastClosedId = latest.id;
+    const pnl = parseFloat(latest.pnl || 0);
+    const entry = parseFloat(latest.entry_price || 0);
+    const exit = parseFloat(latest.exit_price || 0);
+    const priceFmt = entry < 1 ? 6 : entry < 100 ? 4 : 2;
+    const holdH = parseFloat(latest.holding_hours || 0);
+    const pnlPct = entry > 0 ? ((exit - entry) / entry * 100).toFixed(2) : '?';
+    const icon = pnl > 0 ? '🟢' : pnl < 0 ? '🔴' : '⚪';
+    const resultText = pnl > 0 ? 'VINST' : pnl < 0 ? 'FÖRLUST' : 'BREAKEVEN';
+
+    const reasonMap = {
+      'STOP_LOSS': '📉 Stop Loss', 'TAKE_PROFIT': '🎯 Take Profit',
+      'TRAILING_STOP': '📈 Trailing Stop', 'STAGNATION': '⏳ Stagnation timeout',
+      'NATIVE_SL': '🛡️ Binance SL', 'MANUAL': '✋ Manuell', 'DUST': '🧹 Dust',
+    };
+    const closeReason = reasonMap[latest.close_reason] || latest.close_reason || '?';
+
+    // Running P&L context
+    let runningStr = '';
+    try {
+      const weekly = await query(`
+        SELECT COUNT(*) as trades, SUM(pnl) as total_pnl,
+               SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins
+        FROM position_history WHERE closed_at > NOW() - INTERVAL '7 days'
+      `);
+      const w = weekly.rows[0];
+      const wTrades = parseInt(w.trades || 0);
+      const wPnl = parseFloat(w.total_pnl || 0);
+      const wWR = wTrades > 0 ? ((parseInt(w.wins || 0) / wTrades) * 100).toFixed(0) : '-';
+      runningStr = `\n📊 Vecka: ${wTrades} trades · ${wWR}% WR · $${wPnl >= 0 ? '+' : ''}${wPnl.toFixed(2)}`;
+    } catch {}
+
+    await sendMessage(
+      `${icon} <b>${resultText}: ${latest.symbol}</b>\n\n` +
+      `Entry: $${entry.toFixed(priceFmt)} → Exit: $${exit.toFixed(priceFmt)} (${pnlPct}%)\n` +
+      `<b>P&L: $${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</b>\n\n` +
+      `Stängd: ${closeReason}\n` +
+      `Hålltid: ${holdH < 1 ? `${(holdH * 60).toFixed(0)}min` : `${holdH.toFixed(1)}h`}\n` +
+      `Mönster: ${latest.pattern || '?'}` +
+      runningStr
     );
   } catch { /* silent */ }
 }
@@ -981,7 +1088,6 @@ function startScheduledReports() {
   // Check every minute if it's time for a scheduled report
   let lastMorning = null;
   let lastEvening = null;
-  let lastAudit = null;
 
   setInterval(() => {
     const now = new Date();
@@ -989,41 +1095,27 @@ function startScheduledReports() {
     const utcMinute = now.getUTCMinutes();
     const today = now.toISOString().split('T')[0];
 
-    // Morning brief at 08:00 UTC
+    // Morning brief at 08:00 UTC (09:00 CET)
     if (utcHour === 8 && utcMinute === 0 && lastMorning !== today) {
       lastMorning = today;
       sendMorningBrief().catch(console.error);
     }
 
-    // System audit at 14:00 UTC
-    if (utcHour === 14 && utcMinute === 0 && lastAudit !== today) {
-      lastAudit = today;
-      cmdAudit().then(r => sendMessage(r)).catch(console.error);
-    }
-
-    // Daily summary at 22:00 UTC
+    // Daily summary at 22:00 UTC (23:00 CET)
     if (utcHour === 22 && utcMinute === 0 && lastEvening !== today) {
       lastEvening = today;
       sendDailySummary().catch(console.error);
     }
   }, 60000);
 
-  // Trade alerts every 15s
+  // Trade alerts: check for new trades + closed positions every 15s
   setInterval(() => checkTradeAlerts().catch(() => {}), TRADE_POLL);
 
-  // Health alerts every 5min
+  // Health alerts: only on status CHANGE (healthy→down or down→healthy)
   setInterval(() => checkHealthAlerts().catch(() => {}), HEALTH_INTERVAL);
 
-  // Pipeline health report
-  const PIPELINE_INTERVAL = getToml('timing', 'pipeline_report_interval_ms', 900000);
-  setInterval(async () => {
-    try {
-      const report = await pipelineHealthReport();
-      if (report) await sendMessage(report);
-    } catch {}
-  }, PIPELINE_INTERVAL);
-
-  console.log('📅 Scheduled reports: 08:00 (morning), 22:00 (daily), 15min pipeline, trade alerts, health checks');
+  // Pipeline spam removed — trades and closes are the real events
+  console.log('📅 Reports: 08:00 morning, 22:00 summary, trade+close alerts, health on change');
 }
 
 // ─── Reconnection helpers ─────────────────────────────────
