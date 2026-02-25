@@ -68,6 +68,7 @@ class DataFetcher:
     """Fetches multi-timeframe OHLCV data via CCXT (public, no API key)."""
 
     TF_CONFIG = {
+        '5m':  {'ms': 5 * 60 * 1000,   'extra': 200},
         '15m': {'ms': 15 * 60 * 1000,  'extra': 100},
         '1h':  {'ms': 60 * 60 * 1000,  'extra': 48},
         '4h':  {'ms': 4 * 60 * 60 * 1000, 'extra': 24},
@@ -80,10 +81,16 @@ class DataFetcher:
         self.primary_tf = primary_tf
         self.exchange = ccxt.binance({'enableRateLimit': True})
 
+    # Higher timeframes always fetched for QuantGuild HTF context
+    HTF_ALWAYS = {'1h', '4h', '1d'}
+
     def fetch_all(self) -> Dict[str, List[list]]:
         """Fetch primary + higher timeframes. Returns {tf: [[ts,o,h,l,c,v], ...]}."""
         data = {}
-        for tf, cfg in self.TF_CONFIG.items():
+        # Fetch primary TF + always-needed higher TFs
+        tfs_to_fetch = {self.primary_tf} | self.HTF_ALWAYS
+        for tf in tfs_to_fetch:
+            cfg = self.TF_CONFIG[tf]
             candles_per_day = (24 * 60 * 60 * 1000) // cfg['ms']
             needed = self.days * candles_per_day + cfg['extra']
             print(f'  Fetching {tf}: ~{needed} candles ... ', end='', flush=True)

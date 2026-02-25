@@ -2,6 +2,7 @@ from typing import Dict, TypedDict, Annotated, Any
 from langgraph.graph import StateGraph, END
 from src.core.risk_gate import risk_gate
 from src.core.state_sync import state_manager
+from src.core.config import get_toml
 import asyncio
 import httpx
 import os
@@ -12,9 +13,9 @@ import time
 NEXTJS_API_URL = os.getenv("NEXTJS_API_URL", "http://host.docker.internal:3000")
 SPOT_ONLY = os.getenv("SPOT_ONLY", "true").lower() == "true"
 
-# Signal cooldown: max 1 signal per symbol per 15 min
+# Signal cooldown: configurable via cryonix.toml [engine] signal_cooldown_seconds
 _signal_cooldown: Dict[str, float] = {}
-COOLDOWN_SECONDS = 900  # 15 minutes
+COOLDOWN_SECONDS = get_toml('engine', 'signal_cooldown_seconds', 900)
 
 class TankState(TypedDict, total=False):
     """Tank state - using total=False to make all fields optional for incremental updates"""
