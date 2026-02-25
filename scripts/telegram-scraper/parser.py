@@ -62,8 +62,13 @@ def normalize_symbol(raw: str) -> Optional[str]:
 
 
 def _extract_price(text: str) -> Optional[float]:
-    """Extract a single price from text like '$88.50' or '88.50'."""
-    m = re.search(r'\$?([\d,]+\.?\d*)', text)
+    """Extract a single price from text like '$88.50' or '88.50'.
+    If text contains a colon, extract from after the colon to avoid
+    matching numbers in labels like 'TP1:' or 'Target 2:'."""
+    # Use text after colon if present (avoids matching label numbers)
+    colon_idx = text.find(':')
+    search_text = text[colon_idx + 1:] if colon_idx >= 0 else text
+    m = re.search(r'\$?([\d,]+\.?\d*)', search_text)
     if m:
         return float(m.group(1).replace(',', ''))
     return None
@@ -94,18 +99,23 @@ def parse_cornix_format(text: str) -> Optional[ParsedSignal]:
     symbol = None
 
     # Find action + symbol in first few lines
+    skip_words = {'BUY', 'SELL', 'LONG', 'SHORT', 'ENTRY', 'TARGET', 'STOP', 'LOSS', 'TAKE', 'PROFIT'}
     for line in lines[:4]:
         line_clean = re.sub(r'[^\w\s/$@.\-]', '', line).strip()
         if re.search(r'\b(BUY|LONG)\b', line_clean, re.I):
             action = 'BUY'
         elif re.search(r'\b(SELL|SHORT)\b', line_clean, re.I):
             action = 'SELL'
-        # Find symbol
-        sym_match = re.search(r'([A-Z]{2,10})(?:/(?:USDT|USDC|USD|BUSD))?', line_clean)
-        if sym_match and not symbol:
-            sym = normalize_symbol(sym_match.group(1))
-            if sym:
-                symbol = sym
+        # Find symbol (skip action keywords)
+        if not symbol:
+            for sym_match in re.finditer(r'([A-Z]{2,10})(?:/(?:USDT|USDC|USD|BUSD))?', line_clean):
+                candidate = sym_match.group(1)
+                if candidate in skip_words:
+                    continue
+                sym = normalize_symbol(candidate)
+                if sym:
+                    symbol = sym
+                    break
 
     if not action or not symbol:
         return None
@@ -202,6 +212,75 @@ def parse_simple_format(text: str) -> Optional[ParsedSignal]:
     )
 
 
+def parse_sentiment_format(text: str) -> Optional[ParsedSignal]:
+    """
+    Parse sentiment/analysis-style messages common in free channels.
+    Handles formats like:
+    - "$ETH breakout the triangle. Looks bullish here."
+    - "**$BTC** Price swept equal lows, bouncing back"
+    - "$DEXE 🔥 Pumped 11.84%"
+    """
+    BULLISH_KEYWORDS = {
+        'bullish', 'breakout', 'bounce', 'bouncing', 'pump', 'pumped', 'pumping',
+        'rally', 'moon', 'accumulate', 'accumulation', 'oversold',
+        'bullrun', 'reversal', 'recovery', 'uptrend', 'ascending',
+    }
+    BEARISH_KEYWORDS = {
+        'bearish', 'breakdown', 'dump', 'dumped', 'dumping', 'crash',
+        'falling', 'overbought', 'decline', 'descending',
+        'rejection', 'selloff', 'downtrend',
+    }
+    BULLISH_EMOJIS = {'\U0001f525', '\U0001f680', '\U0001f4c8', '\U0001f49a', '\u2705', '\U0001f7e2', '\U0001f7e9', '\U0001f4aa', '\U0001f91d'}
+    BEARISH_EMOJIS = {'\U0001f4c9', '\U0001f534', '\U0001f7e5', '\u274c', '\u26a0\ufe0f', '\U0001f494'}
+
+    # Extract symbol from $SYMBOL or **$SYMBOL** format
+    symbol = None
+    sym_match = re.search(r'\*{0,2}\$([A-Za-z]{2,10})\*{0,2}', text)
+    if sym_match:
+        sym = normalize_symbol(sym_match.group(1))
+        if sym:
+            symbol = sym
+
+    # Also try #SYMBOL/USDT format
+    if not symbol:
+        sym_match = re.search(r'#([A-Za-z]{2,10})/(?:USDT|USDC|USD)', text, re.I)
+        if sym_match:
+            sym = normalize_symbol(sym_match.group(1))
+            if sym:
+                symbol = sym
+
+    if not symbol:
+        return None
+
+    # Detect sentiment
+    text_lower = text.lower()
+    words = set(re.findall(r'[a-z]+', text_lower))
+
+    bullish_score = len(words & BULLISH_KEYWORDS)
+    bearish_score = len(words & BEARISH_KEYWORDS)
+
+    # Count emoji sentiment
+    for e in BULLISH_EMOJIS:
+        if e in text:
+            bullish_score += 1
+    for e in BEARISH_EMOJIS:
+        if e in text:
+            bearish_score += 1
+
+    # Need at least 1 indicator and clear direction
+    if bullish_score == 0 and bearish_score == 0:
+        return None
+    if bullish_score == bearish_score:
+        return None
+
+    action = 'BUY' if bullish_score > bearish_score else 'SELL'
+
+    return ParsedSignal(
+        symbol=symbol, action=action,
+        entry=None, sl=None, tp1=None,
+    )
+
+
 def parse_emoji_format(text: str) -> Optional[ParsedSignal]:
     """
     Parse emoji-driven signals where green = buy, red = sell.
@@ -268,8 +347,15 @@ def parse_signal(text: str) -> Optional[ParsedSignal]:
     # Skip obvious non-signals
     text_lower = text.lower()
     skip_keywords = ['welcome', 'join', 'subscribe', 'disclaimer', 'not financial advice',
-                     'follow us', 'admin', 'pinned', 'giveaway', 'airdrop']
+                     'follow us', 'admin', 'pinned', 'giveaway', 'airdrop',
+                     'vip plan', 'vip pricing']
     if any(kw in text_lower for kw in skip_keywords):
+        return None
+
+    # Skip Cornix TP/SL hit notifications (not new signals)
+    if re.search(r'take.profit\s+target\s+\d+\s*[✅✓]', text_lower):
+        return None
+    if re.search(r'stop.loss\s+triggered', text_lower):
         return None
 
     # Try parsers in order: most structured first
@@ -278,6 +364,10 @@ def parse_signal(text: str) -> Optional[ParsedSignal]:
         return result
 
     result = parse_simple_format(text)
+    if result:
+        return result
+
+    result = parse_sentiment_format(text)
     if result:
         return result
 

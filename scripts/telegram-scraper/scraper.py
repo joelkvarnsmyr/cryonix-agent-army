@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -24,9 +25,14 @@ from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
-from parser import parse_signal
+from parser import parse_signal, ParsedSignal, normalize_symbol
 
 load_dotenv()
+
+# ─── Grok AI Config ──────────────────────────────────────────────
+XAI_API_KEY = os.getenv('XAI_API_KEY', '')
+GROK_API_URL = 'https://api.x.ai/v1/chat/completions'
+AI_PARSE_ENABLED = bool(XAI_API_KEY)
 
 # ─── Logging ────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -54,6 +60,92 @@ CONFIDENCE_DELTAS = {
 MAX_CONFIDENCE_DELTA = 0.12
 SIGNAL_TTL_SECONDS = 30 * 60  # 30 minutes
 DEDUP_TTL_SECONDS = 30 * 60   # 30 minutes
+
+# ─── AI Parser (Grok fallback) ───────────────────────────────────
+_ai_parse_cache: dict[str, float] = {}  # rate limiting: channel -> last call timestamp
+AI_RATE_LIMIT_SECONDS = 10  # min seconds between AI calls per channel
+
+
+async def ai_parse_signal(text: str, channel_name: str) -> 'ParsedSignal | None':
+    """Use Grok API to interpret free-text trading messages."""
+    if not AI_PARSE_ENABLED:
+        return None
+
+    # Rate limit per channel
+    import time
+    now = time.time()
+    last_call = _ai_parse_cache.get(channel_name, 0)
+    if now - last_call < AI_RATE_LIMIT_SECONDS:
+        return None
+    _ai_parse_cache[channel_name] = now
+
+    try:
+        import httpx
+        prompt = (
+            'Analyze this crypto trading message. Extract ONLY if it contains a clear '
+            'trading sentiment or signal about a specific cryptocurrency.\n\n'
+            'Return JSON with these fields:\n'
+            '- symbol: ticker symbol (e.g. "BTC", "ETH", "SOL"). Must be a real crypto.\n'
+            '- action: "BUY" if bullish/long, "SELL" if bearish/short, "NONE" if neutral/unclear\n'
+            '- entry: entry price if mentioned (number or null)\n'
+            '- sl: stop loss price if mentioned (number or null)\n'
+            '- tp1: first take profit if mentioned (number or null)\n'
+            '- confidence: 1-100 how confident the message is a trading signal\n\n'
+            'If the message is NOT about trading (ads, news, general chat), return: '
+            '{"action": "NONE"}\n\n'
+            f'Message:\n{text[:500]}'
+        )
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                GROK_API_URL,
+                headers={
+                    'Authorization': f'Bearer {XAI_API_KEY}',
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'model': 'grok-3-mini-fast',
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'temperature': 0,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = data['choices'][0]['message']['content']
+
+            # Extract JSON from response
+            json_match = re.search(r'\{[^}]+\}', content)
+            if not json_match:
+                return None
+            result = json.loads(json_match.group())
+
+            action = result.get('action', 'NONE').upper()
+            if action == 'NONE':
+                return None
+
+            symbol_raw = result.get('symbol', '')
+            symbol = normalize_symbol(symbol_raw)
+            if not symbol:
+                return None
+
+            confidence = result.get('confidence', 0)
+            if confidence < 30:
+                return None
+
+            log.info(f'[AI-PARSE] {channel_name}: {symbol} {action} (conf={confidence})')
+
+            return ParsedSignal(
+                symbol=symbol,
+                action=action,
+                entry=result.get('entry'),
+                sl=result.get('sl'),
+                tp1=result.get('tp1'),
+            )
+
+    except Exception as e:
+        log.warning(f'[AI-PARSE] Failed: {e}')
+        return None
+
 
 # ─── Redis ──────────────────────────────────────────────────────────
 _redis: redis_lib.Redis | None = None
@@ -306,10 +398,22 @@ channel_map: dict[int, str] = {}
 
 
 async def resolve_channels(client: TelegramClient):
-    """Resolve channel usernames to IDs and build mapping."""
+    """Resolve channel usernames to IDs, auto-join if needed, and build mapping."""
+    from telethon.tl.functions.channels import JoinChannelRequest
+
     for username in TELEGRAM_CHANNELS:
         try:
             entity = await client.get_entity(username)
+
+            # Auto-join if not a member (required for real-time events)
+            is_member = hasattr(entity, 'left') and not entity.left
+            if not is_member:
+                try:
+                    await client(JoinChannelRequest(entity))
+                    log.info(f'Auto-joined channel: {username}')
+                except Exception as je:
+                    log.warning(f'Could not auto-join {username}: {je} — will still try to monitor')
+
             channel_map[entity.id] = username
             log.info(f'Resolved channel: {username} -> {entity.id}')
         except Exception as e:
@@ -332,15 +436,22 @@ async def handle_message(event):
         if not text or len(text) < 5:
             return
 
-        # Try to parse as signal
+        log.debug(f'[{channel_name}] Message: {text[:100]}...')
+
+        # Try regex parsers first (fast, free)
         signal = parse_signal(text)
 
+        # If regex failed, try AI parser as fallback
+        if signal is None and AI_PARSE_ENABLED:
+            signal = await ai_parse_signal(text, channel_name)
+
         if signal is None:
-            # Not a signal — only log if message looks potentially signal-like
-            signal_hints = ['buy', 'sell', 'long', 'short', 'entry', 'tp', 'sl', 'target']
+            # Not a signal — log if message looks potentially signal-like
+            signal_hints = ['buy', 'sell', 'long', 'short', 'entry', 'tp', 'sl', 'target',
+                            'bullish', 'bearish', 'breakout', 'pump', 'dump']
             if any(hint in text.lower() for hint in signal_hints):
                 save_unparsed_to_postgres(str(chat_id), channel_name, text)
-                log.debug(f'[{channel_name}] Unparsed potential signal: {text[:80]}...')
+                log.info(f'[{channel_name}] Unparsed: {text[:80]}...')
             return
 
         log.info(f'[{channel_name}] Parsed: {signal.action} {signal.symbol} '
@@ -375,6 +486,7 @@ async def quality_refresh_loop():
 async def main():
     log.info('Starting Telegram Signal Scraper')
     log.info(f'Channels: {TELEGRAM_CHANNELS}')
+    log.info(f'AI parser: {"ENABLED (Grok)" if AI_PARSE_ENABLED else "DISABLED (no XAI_API_KEY)"}')
     log.info(f'Confidence boost: {"ENABLED" if CONFIDENCE_BOOST_ENABLED else "DISABLED (log only)"}')
     log.info(f'Redis: {KV_URL}')
 
