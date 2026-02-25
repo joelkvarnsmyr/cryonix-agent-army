@@ -84,6 +84,7 @@ function getExchange(): Exchange {
     apiKey: process.env.BINANCE_API_KEY,
     secret: process.env.BINANCE_API_SECRET,
     enableRateLimit: true,
+    timeout: 10000, // 10s timeout on all Binance API calls
     options: {
       defaultType,
       defaultMarginMode: CONFIG.TRADING_MODE === 'margin' ? CONFIG.MARGIN_TYPE : undefined,
@@ -571,7 +572,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
                 takeProfit: String(pos.takeProfit),
                 pnl: String(realizedPnl),
                 pnlPercent: String(pnlPct),
-                fees: '0',
+                fees: String(nativeSlFees),
                 holdingPeriod: Math.round((Date.now() - new Date(pos.openedAt || Date.now()).getTime()) / 1000),
                 openedAt: new Date(pos.openedAt || Date.now()),
                 closedAt: new Date(),
@@ -1773,7 +1774,17 @@ async function checkGridTriggers(): Promise<GridResult[]> {
             break;
           }
 
-          // Create grid signal - bypasses AI validation (LLM already set the range)
+          // Basic safety checks before grid execution (skip full AI but check spread + X alerts)
+          try {
+            const baseAsset = symbol.split('/')[0];
+            const xAlert = await redis.get(`sentiment:alert:${baseAsset}`);
+            if (xAlert) {
+              results.push({ symbol, status: 'SKIPPED', level: i, error: `X alert active: ${xAlert}` });
+              continue;
+            }
+          } catch {}
+
+          // Create grid signal (LLM already set the range, but spread/alerts checked above)
           const gridSignal: Signal = {
             symbol,
             action: 'BUY',
@@ -1927,7 +1938,7 @@ export async function POST() {
     // STEP 3: Process new BUY signals (top by confidence to save AI tokens)
     const rawList = await redis.lrange('trades:pending', 0, 49);
     const parsed: { signal: Signal; raw: string }[] = [];
-    const SIGNAL_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutes — stale signals are irrelevant
+    const SIGNAL_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes — stale signals are irrelevant (scanner runs every 10s)
     for (const raw of rawList) {
       try {
         const signal = JSON.parse(raw);
@@ -2137,9 +2148,12 @@ export async function POST() {
       if (aiResult.adjustedSL) signal.stop_loss = aiResult.adjustedSL;
       if (aiResult.adjustedTP) signal.target_price = aiResult.adjustedTP;
 
-      // Blend TA + AI confidence, rounded to avoid floating-point artifacts
-      const taWeight = TOML?.ai.ta_weight ?? 0.5;
-      const aiWeight = TOML?.ai.ai_weight ?? 0.5;
+      // Blend TA + AI confidence, normalized to ensure weights sum to 1.0
+      const rawTaWeight = TOML?.ai.ta_weight ?? 0.5;
+      const rawAiWeight = TOML?.ai.ai_weight ?? 0.5;
+      const weightSum = rawTaWeight + rawAiWeight;
+      const taWeight = weightSum > 0 ? rawTaWeight / weightSum : 0.5;
+      const aiWeight = weightSum > 0 ? rawAiWeight / weightSum : 0.5;
       signal.confidence = Math.round((signal.confidence * taWeight + aiResult.aiConfidence * aiWeight) * 10000) / 10000;
 
       // Dedup lock: prevent duplicate executions for the same symbol

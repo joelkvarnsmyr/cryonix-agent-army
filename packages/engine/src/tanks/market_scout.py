@@ -141,6 +141,9 @@ class MarketScoutTank(BaseTank):
                 patterns.append(momentum)
                 if 'MOMENTUM_GAINER' not in (signal.get('patterns') or []):
                     signal.setdefault('patterns', []).append('MOMENTUM_GAINER')
+                # Apply momentum confidence boost to signal (max of existing vs momentum)
+                if momentum['confidence'] > signal.get('confidence', 0):
+                    signal['confidence'] = max(signal['confidence'], momentum['confidence'])
 
             # Log detected patterns
             if patterns:

@@ -61,8 +61,9 @@ class GainerScanner:
                 prev_4h = ohlcv[-5][4] if len(ohlcv) >= 5 else price
                 change_4h = ((price - prev_4h) / prev_4h * 100) if prev_4h > 0 else 0
 
-                # 24h change
-                prev_24h = ohlcv[0][4] if len(ohlcv) >= 24 else ohlcv[0][4]
+                # 24h change (use candle at -24 if available, else oldest)
+                idx_24h = -25 if len(ohlcv) >= 25 else 0
+                prev_24h = ohlcv[idx_24h][4]
                 change_24h = ((price - prev_24h) / prev_24h * 100) if prev_24h > 0 else 0
 
                 # Volume surge: current vs 20-bar average

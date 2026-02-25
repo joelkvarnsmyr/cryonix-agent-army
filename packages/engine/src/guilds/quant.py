@@ -315,6 +315,10 @@ class QuantGuild:
         prev_hist = (macd_line.iloc[-2] - signal_line.iloc[-2])
         curr_hist = hist
 
+        # Guard: skip if either value is NaN (insufficient data for MACD)
+        if pd.isna(prev_hist) or pd.isna(curr_hist):
+            return None
+
         # Bullish crossover
         if prev_hist < 0 and curr_hist > 0:
             # Multi-TF: 1h MACD histogram must also be positive
