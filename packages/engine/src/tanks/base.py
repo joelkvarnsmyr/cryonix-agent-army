@@ -235,13 +235,23 @@ class BaseTank:
         while True:
             await state_manager.set_agent_status(self.name, "active", {"message": "Starting cycle"})
             for symbol in self.symbols:
-                initial_state = {"symbol": symbol, "status": "starting"}
-                async for output in self.runnable.astream(initial_state):
-                    # Report status at each step
-                    step_status = output.get("status", "processing")
+                try:
+                    initial_state = {"symbol": symbol, "status": "starting"}
+                    async for output in self.runnable.astream(initial_state):
+                        if output is None:
+                            continue
+                        # Report status at each step
+                        step_status = output.get("status", "processing")
+                        await state_manager.set_agent_status(self.name, "active", {
+                            "symbol": symbol,
+                            "step": step_status,
+                            "data": output
+                        })
+                except Exception as e:
+                    print(f"[{self.name}] Error processing {symbol}, skipping: {e}")
                     await state_manager.set_agent_status(self.name, "active", {
                         "symbol": symbol,
-                        "step": step_status,
-                        "data": output
+                        "step": "error",
+                        "data": {"error": str(e)}
                     })
             await asyncio.sleep(10)  # Rate limit
