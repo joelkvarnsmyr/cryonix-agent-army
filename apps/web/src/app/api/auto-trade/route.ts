@@ -1162,6 +1162,18 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     return { pass: false, reason: `Weak solo pattern: ${patterns[0]} (requires 2+ confirming patterns)` };
   }
 
+  // === DIP FOCUS MODE: require at least one value pattern ===
+  // Backtest: DIP_BUY+DV = 80-100% WR, MACD+EMA alone = 0-25% WR.
+  // When enabled, rejects trend-only signals (MACD+EMA without a dip/value pattern).
+  const dipFocusMode = TOML?.patterns?.dip_focus_mode ?? false;
+  if (dipFocusMode) {
+    const valuePatterns: string[] = TOML?.patterns?.value_patterns ?? ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'];
+    const hasValuePattern = patterns.some((p: string) => valuePatterns.includes(p));
+    if (!hasValuePattern) {
+      return { pass: false, reason: `Dip focus: no value pattern (has: ${patterns.join(', ')})` };
+    }
+  }
+
   // === EV-MODEL: Expected Value filter based on historical pattern performance ===
   const ev = await calculateExpectedValue(signal);
   if (ev !== null && ev.ev < 0) {
@@ -2168,6 +2180,31 @@ export async function POST() {
           reason: `Execution already in progress for ${signal.symbol}`,
         });
         continue;
+      }
+
+      // Re-verify capital budget right before execution to prevent over-allocation
+      // (positions may have been opened since initial budget check in passesRiskChecks)
+      if (signal.action === 'BUY') {
+        try {
+          const freshBudget = await getCapitalBudget();
+          const isGrid = signal.patterns?.includes('GRID_BUY');
+          const remaining = isGrid ? freshBudget.gridRemaining : freshBudget.signalRemaining;
+          const minOrder = TOML?.capital?.min_order_value ?? CONFIG.MIN_ORDER_VALUE;
+          if (remaining < minOrder) {
+            await redis.lrem('trades:pending', 1, raw);
+            await redis.del(dedupKey);
+            rejected++;
+            buyResults.push({
+              symbol: signal.symbol,
+              status: 'BUDGET_EXHAUSTED',
+              reason: `${isGrid ? 'Grid' : 'Signal'} budget remaining $${remaining.toFixed(2)} < min $${minOrder}`,
+            });
+            continue;
+          }
+        } catch (budgetErr) {
+          console.error('[BUDGET-CHECK] Re-verification failed:', budgetErr);
+          // Proceed — don't block trading on budget check errors
+        }
       }
 
       // Execute based on signal action

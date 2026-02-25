@@ -73,8 +73,17 @@ _pg_conn = None
 def get_pg():
     global _pg_conn
     if _pg_conn is None or _pg_conn.closed:
-        _pg_conn = psycopg2.connect(POSTGRES_URL)
-        _pg_conn.autocommit = True
+        for attempt in range(1, 4):
+            try:
+                _pg_conn = psycopg2.connect(POSTGRES_URL)
+                _pg_conn.autocommit = True
+                return _pg_conn
+            except Exception as e:
+                if attempt == 3:
+                    raise
+                log.warning(f'Postgres connect attempt {attempt}/3 failed: {e} — retrying in {attempt * 2}s')
+                import time
+                time.sleep(attempt * 2)
     return _pg_conn
 
 
@@ -125,7 +134,13 @@ def ensure_tables():
 def save_signal_to_postgres(channel_id: str, channel_name: str, signal, raw_message: str):
     """Insert parsed signal into telegram_signals table."""
     try:
-        conn = get_pg()
+        global _pg_conn
+        try:
+            conn = get_pg()
+        except Exception:
+            # Force reconnect on stale connection
+            _pg_conn = None
+            conn = get_pg()
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO telegram_signals
@@ -372,12 +387,18 @@ async def main():
         log.error(f'Redis connection failed: {e}')
         sys.exit(1)
 
-    try:
-        ensure_tables()
-        log.info('Postgres connected')
-    except Exception as e:
-        log.error(f'Postgres connection failed: {e}')
-        sys.exit(1)
+    for pg_attempt in range(1, 6):
+        try:
+            ensure_tables()
+            log.info('Postgres connected')
+            break
+        except Exception as e:
+            if pg_attempt == 5:
+                log.error(f'Postgres connection failed after 5 attempts: {e}')
+                sys.exit(1)
+            wait = pg_attempt * 5
+            log.warning(f'Postgres attempt {pg_attempt}/5 failed: {e} — retrying in {wait}s')
+            await asyncio.sleep(wait)
 
     # Initialize Telegram client
     client = TelegramClient(

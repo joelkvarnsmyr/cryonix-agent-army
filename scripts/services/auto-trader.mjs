@@ -13,6 +13,7 @@ const HEALTH_CHECK_INTERVAL = getToml('timing', 'health_check_interval_ms', 300_
 let isRunning = true;
 let cycleCount = 0;
 let totalExecuted = 0;
+let consecutiveErrors = 0;
 
 async function processSignals() {
   try {
@@ -27,6 +28,7 @@ async function processSignals() {
 
     const data = await res.json();
     cycleCount++;
+    consecutiveErrors = 0; // Reset on success
 
     // Log sells (exits)
     if (data.sells > 0) {
@@ -54,7 +56,8 @@ async function processSignals() {
       }
     }
   } catch (error) {
-    console.error(`[CYCLE ${cycleCount}] Error: ${error.message || error}`);
+    consecutiveErrors++;
+    console.error(`[CYCLE ${cycleCount}] Error (streak ${consecutiveErrors}): ${error.message || error}`);
   }
 }
 
@@ -97,24 +100,33 @@ async function main() {
   await healthCheck();
   await processSignals();
 
-  const pollTimer = setInterval(() => {
-    if (isRunning) processSignals();
-  }, POLL_INTERVAL);
+  // Adaptive polling loop: backs off on consecutive errors, resets on success
+  async function pollLoop() {
+    while (isRunning) {
+      const backoff = consecutiveErrors > 0
+        ? Math.min(POLL_INTERVAL * Math.pow(2, consecutiveErrors - 1), 300000)
+        : POLL_INTERVAL;
+      if (consecutiveErrors > 0) {
+        console.log(`[BACKOFF] Next cycle in ${backoff / 1000}s (${consecutiveErrors} consecutive errors)`);
+      }
+      await new Promise(r => setTimeout(r, backoff));
+      if (isRunning) await processSignals();
+    }
+  }
 
   const healthTimer = setInterval(healthCheck, HEALTH_CHECK_INTERVAL);
+  pollLoop(); // Non-blocking — runs in background
 
   process.on('SIGINT', () => {
     console.log('\nShutting down auto-trader...');
     console.log(`Total cycles: ${cycleCount}, Executed: ${totalExecuted}`);
     isRunning = false;
-    clearInterval(pollTimer);
     clearInterval(healthTimer);
     process.exit(0);
   });
 
   process.on('SIGTERM', () => {
     isRunning = false;
-    clearInterval(pollTimer);
     clearInterval(healthTimer);
     process.exit(0);
   });

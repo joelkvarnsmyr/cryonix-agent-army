@@ -1026,6 +1026,21 @@ function startScheduledReports() {
   console.log('📅 Scheduled reports: 08:00 (morning), 22:00 (daily), 15min pipeline, trade alerts, health checks');
 }
 
+// ─── Reconnection helpers ─────────────────────────────────
+async function reconnectDB() {
+  try { if (db) await db.end().catch(() => {}); } catch {}
+  db = null;
+  await connectDB();
+  console.log('✅ Postgres reconnected');
+}
+
+async function reconnectRedis() {
+  try { if (redis) await redis.quit().catch(() => {}); } catch {}
+  redis = null;
+  await connectRedis();
+  console.log('✅ Redis reconnected');
+}
+
 // ─── Main polling loop ───────────────────────────────────
 async function main() {
   console.log('🤖 Starting Cryonix Interactive Telegram Bot...');
@@ -1039,19 +1054,27 @@ async function main() {
     process.exit(1);
   }
 
-  // Connect to services
-  try {
-    await connectDB();
-    console.log('✅ Postgres connected');
-  } catch (e) {
-    console.warn('⚠️  Postgres not available:', e.message);
+  // Connect to services with retry
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await connectDB();
+      console.log('✅ Postgres connected');
+      break;
+    } catch (e) {
+      if (attempt === 5) console.warn('⚠️  Postgres not available after 5 attempts:', e.message);
+      else await new Promise(r => setTimeout(r, attempt * 2000));
+    }
   }
 
-  try {
-    await connectRedis();
-    console.log('✅ Redis connected');
-  } catch (e) {
-    console.warn('⚠️  Redis not available:', e.message);
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await connectRedis();
+      console.log('✅ Redis connected');
+      break;
+    } catch (e) {
+      if (attempt === 5) console.warn('⚠️  Redis not available after 5 attempts:', e.message);
+      else await new Promise(r => setTimeout(r, attempt * 2000));
+    }
   }
 
   // Start scheduled reports
@@ -1061,11 +1084,13 @@ async function main() {
   await sendMessage('🤖 <b>Cryonix Bot Online</b>\n\nType /help for commands.');
   console.log('✅ Bot running — polling for commands...');
 
-  // Polling loop
+  // Polling loop with exponential backoff on errors
   let offset = 0;
+  let consecutiveErrors = 0;
   while (true) {
     try {
       const updates = await getUpdates(offset);
+      consecutiveErrors = 0; // Reset on success
       for (const update of updates) {
         offset = update.update_id + 1;
         const msg = update.message;
@@ -1075,8 +1100,16 @@ async function main() {
         }
       }
     } catch (e) {
-      console.error('Poll error:', e.message);
-      await new Promise(r => setTimeout(r, 5000));
+      consecutiveErrors++;
+      const backoff = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 120000);
+      console.error(`Poll error (streak ${consecutiveErrors}): ${e.message} — retrying in ${backoff / 1000}s`);
+      await new Promise(r => setTimeout(r, backoff));
+
+      // Attempt to reconnect services after repeated failures
+      if (consecutiveErrors >= 3 && consecutiveErrors % 3 === 0) {
+        try { await reconnectDB(); } catch {}
+        try { await reconnectRedis(); } catch {}
+      }
     }
   }
 }

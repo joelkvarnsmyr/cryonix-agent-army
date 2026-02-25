@@ -414,7 +414,8 @@ Rules:
 
 
 def call_grok(context, is_acute=False):
-    """Call Grok API with trading context. Returns parsed JSON response."""
+    """Call Grok API with trading context. Returns parsed JSON response.
+    Retries up to 3 times with increasing timeout on failure."""
     api_key = os.environ.get('XAI_API_KEY', '')
     if not api_key:
         raise RuntimeError('XAI_API_KEY not set')
@@ -423,30 +424,49 @@ def call_grok(context, is_acute=False):
     if is_acute:
         user_msg = "⚠️ ACUTE TRIGGER: 3+ consecutive losses detected. Losses are accelerating — assess immediately and prioritize defensive actions.\n\n" + user_msg
 
-    resp = httpx.post(
-        GROK_API_URL,
-        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-        json={
-            'model': 'grok-3-mini-fast',
-            'messages': [
-                {'role': 'system', 'content': SYSTEM_PROMPT},
-                {'role': 'user', 'content': user_msg},
-            ],
-            'temperature': 0.1,
-            'max_tokens': 2000,
-        },
-        timeout=60,
-    )
-    resp.raise_for_status()
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            timeout = 60 * attempt  # 60s, 120s, 180s
+            resp = httpx.post(
+                GROK_API_URL,
+                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                json={
+                    'model': 'grok-3-mini-fast',
+                    'messages': [
+                        {'role': 'system', 'content': SYSTEM_PROMPT},
+                        {'role': 'user', 'content': user_msg},
+                    ],
+                    'temperature': 0.1,
+                    'max_tokens': 2000,
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
 
-    content = resp.json()['choices'][0]['message']['content']
-    # Strip markdown fences if present
-    if content.startswith('```'):
-        content = content.split('\n', 1)[1]
-        if content.endswith('```'):
-            content = content[:-3]
+            content = resp.json()['choices'][0]['message']['content']
+            # Strip markdown fences if present
+            if content.startswith('```'):
+                content = content.split('\n', 1)[1]
+                if content.endswith('```'):
+                    content = content[:-3]
 
-    return json.loads(content)
+            return json.loads(content)
+
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            last_error = e
+            print(f'[AI BRAIN] Grok attempt {attempt}/3 failed (timeout/connect): {e}')
+            if attempt < 3:
+                import time
+                time.sleep(attempt * 5)
+        except Exception as e:
+            last_error = e
+            print(f'[AI BRAIN] Grok attempt {attempt}/3 failed: {e}')
+            if attempt < 3:
+                import time
+                time.sleep(attempt * 5)
+
+    raise RuntimeError(f'Grok API failed after 3 attempts: {last_error}')
 
 
 # === Main ===
