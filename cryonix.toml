@@ -399,6 +399,11 @@ dip_focus_mode = true
 # At least one must be present in a signal when dip_focus_mode = true.
 value_patterns = ["DIP_BUY", "DEEP_VALUE_CRASH", "BOLLINGER_SQUEEZE"]
 
+# Trending exception: minimum ADX to allow trend signals (MACD/EMA cross)
+# through the dip focus filter. Requires HTF trend alignment.
+# 30 = strong trend. Set higher (35) for more selective, lower (25) for more trades.
+trending_adx_threshold = 30
+
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  PATTERN CONSENSUS GATE                                                ║

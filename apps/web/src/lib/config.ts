@@ -53,7 +53,7 @@ export interface CryonixConfig {
     dip_buy_drawdown: number; dip_buy_lookback: number; dip_buy_max_rsi: number;
     deep_value_threshold: number; deep_value_support_lookback_days: number;
     deep_value_rug_pull_velocity: number;
-    dip_focus_mode: boolean; value_patterns: string[];
+    dip_focus_mode: boolean; value_patterns: string[]; trending_adx_threshold: number;
   };
   consensus: {
     single_pattern_penalty: number; two_pattern_boost: number;

@@ -1164,13 +1164,24 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
 
   // === DIP FOCUS MODE: require at least one value pattern ===
   // Backtest: DIP_BUY+DV = 80-100% WR, MACD+EMA alone = 0-25% WR.
-  // When enabled, rejects trend-only signals (MACD+EMA without a dip/value pattern).
+  // When enabled, rejects trend-only signals UNLESS strong trend conditions are met.
   const dipFocusMode = TOML?.patterns?.dip_focus_mode ?? false;
   if (dipFocusMode) {
     const valuePatterns: string[] = TOML?.patterns?.value_patterns ?? ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'];
     const hasValuePattern = patterns.some((p: string) => valuePatterns.includes(p));
     if (!hasValuePattern) {
-      return { pass: false, reason: `Dip focus: no value pattern (has: ${patterns.join(', ')})` };
+      // Exception: allow trend signals in strong trending markets
+      const adx = Number(signal.indicators?.adx ?? 0);
+      const htfTrend = String(signal.indicators?.htf_trend ?? '');
+      const trendAligned = Boolean(signal.indicators?.trend_aligned);
+      const adxThreshold = TOML?.patterns?.trending_adx_threshold ?? 30;
+      const isTrendPattern = patterns.some((p: string) => ['MACD_BULLISH_CROSS', 'EMA_BULLISH_CROSS'].includes(p));
+
+      if (isTrendPattern && adx >= adxThreshold && (htfTrend === 'bullish' || trendAligned)) {
+        console.log(`[TREND-PASS] ${signal.symbol}: trend signal allowed (ADX=${adx.toFixed(0)}, HTF=${htfTrend}, patterns=${patterns.join('+')})`);
+      } else {
+        return { pass: false, reason: `Dip focus: no value pattern (has: ${patterns.join(', ')}, ADX=${adx.toFixed(0)})` };
+      }
     }
   }
 
