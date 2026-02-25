@@ -156,6 +156,7 @@ Auto-Trader (Node, every 30s)
   -> Filter: SPOT_ONLY, max positions, daily limits
   -> CMC Market Cap filter (reject rank > 500, reject FDV/MC > 4x)
   -> CMC Global regime override (MC crash → volatile regime)
+  -> **Dip Focus Filter** (require DIP_BUY/DEEP_VALUE_CRASH/BOLLINGER_SQUEEZE)
   -> EV Model Filter (reject negative EV patterns)
   -> X Sentiment Check (reject on hack/exploit alerts)
   -> GROK AI validation (fail-closed, blends confidence)
@@ -263,3 +264,6 @@ CMC_API_KEY=...                      # CoinMarketCap Free tier API key (engine)
 - **Telegram commands**: `/status`, `/positions`, `/trades`, `/pnl`, `/signals`, `/risk`, `/audit`, `/gainers`, `/evolve`, `/cost`, `/journal`, `/help`
 - **Analytics page**: `/analytics` — trade journal, config version comparison, pattern performance
 - **Baseline mode**: `[baseline]` section in cryonix.toml controls freeze state. When `frozen = true`, AI Brain and Evolution Engine exit early (cron still fires but scripts return immediately). Calibration is unaffected (read-only). Snapshots stored in `baselines/` (gitignored). Three systems mutate params (Evolution 2h, AI Brain 6h, Calibration 6h) — freeze isolates their impact.
+- **Smart Dip Hunter** (active since 2026-02-25): `[patterns] dip_focus_mode = true` requires every signal to contain at least one value pattern (DIP_BUY, DEEP_VALUE_CRASH, BOLLINGER_SQUEEZE). Trend-only signals (MACD+EMA) are rejected. Backtest-validated: value patterns have 80-100% WR vs 0-25% for trend-only. Signal cooldown reduced to 5min (from 15min) to catch fast dips. 3 position slots (was 2). See `docs/plans/2026-02-25-smart-dip-hunter-strategy.md` for full rationale.
+- **Engine resilience**: `BaseTank.run_loop()` wraps each symbol in try/except and skips `None` outputs from LangGraph. One failed symbol no longer kills the entire scanner.
+- **Backtester**: Supports 5m/15m/1h/4h/1d timeframes. Smart fetch — only primary TF + HTF context (1h/4h/1d). Run via `docker exec cryonix-engine-1 python3 /app/scripts/strategy-lab/backtest.py --symbol BTC/USDC --days 30 --json`.
