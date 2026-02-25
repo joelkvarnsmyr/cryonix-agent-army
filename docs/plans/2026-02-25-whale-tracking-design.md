@@ -1,10 +1,11 @@
 # Whale Tracking Integration — Design Document
 
-**Date:** 2026-02-25
+**Date:** 2026-02-25 (revised)
 **Status:** Planned (not implemented)
 **Author:** Joel + Claude Opus 4.6
 **Priority:** Next after validating Dip + Trend strategy
 **Prerequisite:** Let current strategy run 1-2 weeks and measure results first
+**Cost:** $0/month (all free tier sources)
 
 ## Motivation
 
@@ -13,110 +14,161 @@ Our signal pipeline currently uses three data dimensions:
 2. **Social Sentiment** (Grok X search, x_sentiment.py)
 3. **Macro Intelligence** (CMC: Fear & Greed, market cap, BTC dominance)
 
-Missing dimension: **On-chain data / whale activity**. This is the #1 gap vs professional signal groups. When a whale moves $5M of LINK to a cold wallet (accumulation) right when our system detects a DIP_BUY — that's a 3-source confirmation that dramatically increases conviction.
+Missing dimension: **On-chain data / whale activity**. This is the #1 gap vs professional signal groups. When a whale accumulates $5M of LINK right when our system detects a DIP_BUY — that's a 3-source confirmation that dramatically increases conviction.
 
-## What Is Whale Tracking?
+## Free Data Sources (No Paid APIs)
 
-Monitoring large cryptocurrency transfers (typically >$100K) to detect:
-- **Exchange inflows** (whale sends to Binance) → likely selling → bearish
-- **Exchange outflows** (whale withdraws from Binance) → likely holding → bullish
-- **Large accumulation** (whale buys on DEX or OTC) → bullish
-- **Whale-to-whale transfers** (cold wallet reshuffling) → neutral
+### Tier 1 — Zero cost, uses existing infrastructure
 
-## Data Sources (All Free Tier)
+| Source | Method | Covers | Cost |
+|--------|--------|--------|------|
+| **@whale_alert on X** | Grok search (already paid) | BTC, ETH, XRP, SOL + 50 more | $0 (existing) |
+| **@whale_alert Telegram** | Our Telegram scraper (already running) | Same | $0 (existing) |
 
-### Primary: Whale Alert API
-- **URL:** `https://api.whale-alert.io/v1/transactions`
-- **Free tier:** 10 requests/minute, historical 3600s lookback
-- **Returns:** Transaction hash, from/to (exchange/unknown/known), amount, USD value, symbol
-- **Cost:** Free (10 req/min = 600/hr = enough for 15min polling)
-- **Covers:** BTC, ETH, SOL, XRP, LINK, ADA, DOT, AVAX + 50 more
+**Why this is the best starting point:**
+- @whale_alert posts every >$500K-$1M+ transfer in real-time on both X and Telegram
+- We already have Grok with `search: 'on'` scanning X every signal validation
+- We already have `scripts/telegram-scraper/scraper.py` running in Docker
+- Just add Whale Alert's Telegram channel to our scraper config → instant whale data
 
-### Supplementary: Etherscan API (ERC-20 tokens)
-- **URL:** `https://api.etherscan.io/api`
-- **Free tier:** 5 requests/second, 100K/day
-- **Use case:** Track specific whale wallets for ETH, LINK, UNI, ARB
-- **Cost:** Free with API key
-- **Limitation:** Only Ethereum chain
+### Tier 2 — Free APIs, needs new code
 
-### Future: Solscan / BscScan / similar
-- Same pattern as Etherscan but for SOL chain tokens
-- Add when we expand beyond ERC-20
+| Source | Free Tier | Best For | API Key |
+|--------|-----------|----------|---------|
+| **Etherscan** | 5 req/s, 100K/day | ETH, LINK, UNI, ARB (ERC-20) | Free signup |
+| **Arkham Intelligence** | Dashboard + basic API | Wallet labeling, entity tracking | Free signup |
+| **DeBank** | Full free access | DeFi whale portfolios, token flows | No key needed |
+| **Blockchair** | 1440 req/day | BTC, ETH, DOT, XRP, ADA (multi-chain) | Free |
 
-## Architecture
+### Tier 3 — Supplementary (future)
 
-### New Component: WhaleScout
+| Source | Use Case |
+|--------|----------|
+| **Cryptocurrency Alerting** | Free Telegram/Discord alerts for custom whale thresholds |
+| **DexCheck** | DEX whale board (Uniswap/Raydium) for altcoin tracking |
+| **Nansen** | Smart money tracking (free tier limited but useful) |
 
-```
-┌──────────────────────────────────────────────────┐
-│  WhaleScout (Python, cron every 10 min)          │
-│                                                  │
-│  1. Poll Whale Alert API → large transactions    │
-│  2. Classify: exchange_inflow / exchange_outflow │
-│  3. Aggregate per symbol: net_flow, tx_count     │
-│  4. Score: -3 (heavy selling) to +3 (heavy buy)  │
-│  5. Write to Redis                               │
-└──────────────────┬───────────────────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────────────────┐
-│  Redis Keys                                      │
-│                                                  │
-│  whale:{SYMBOL}           → score (-3 to +3)     │
-│  whale:context:{SYMBOL}   → JSON (details)       │
-│  whale:alert:{SYMBOL}     → "mega whale sell"    │
-│  whale:latest             → full scan summary    │
-└──────────────────┬───────────────────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────────────────┐
-│  Auto-Trader (existing pipeline)                 │
-│                                                  │
-│  1. Risk gate: reject BUY if whale:alert active  │
-│  2. Confidence boost: +5% if whale score >= 2    │
-│  3. Confidence penalty: -5% if whale score <= -2 │
-│  4. Grok AI prompt: include whale context        │
-└──────────────────────────────────────────────────┘
-```
+## Implementation Plan
 
-### Redis Key Schema
+### Phase 1: Grok X search enhancement (easiest, 30 min)
 
-```
-whale:{SYMBOL}              # Score -3 to +3 (TTL 1800s / 30min)
-                            # +3 = heavy accumulation (outflows >> inflows)
-                            # -3 = heavy distribution (inflows >> outflows)
-
-whale:context:{SYMBOL}      # JSON (TTL 1800s)
-  {
-    "score": 2,
-    "net_flow_usd": -5200000,    # negative = outflow from exchange (bullish)
-    "inflow_usd": 1200000,       # sent TO exchanges
-    "outflow_usd": 6400000,      # withdrawn FROM exchanges
-    "tx_count": 7,
-    "largest_tx_usd": 3100000,
-    "narrative": "3 large outflows from Binance ($6.4M total), suggesting accumulation"
-  }
-
-whale:alert:{SYMBOL}        # String alert (TTL 1200s / 20min)
-                            # "mega_sell: $12M moved to Binance"
-                            # Used as hard reject in risk gate
-
-whale:latest                # Full scan summary JSON (TTL 900s / 15min)
-```
-
-### Scoring Algorithm
+Modify `x_sentiment.py` prompt to explicitly ask about whale movements:
 
 ```python
-def score_whale_activity(inflow_usd: float, outflow_usd: float,
-                         tx_count: int) -> int:
+SYSTEM_PROMPT = (
+    'You are a crypto market analyst with access to real-time X/Twitter data. '
+    'Analyze sentiment AND whale activity for the requested cryptocurrencies. '
+    'Check @whale_alert posts for large transfers (>$1M). '
+    'Distinguish between exchange inflows (bearish) and outflows (bullish).'
+)
+
+# Add to response format:
+# "whale": {"direction": "accumulation"|"distribution"|"neutral",
+#            "largest_tx": "$5.2M from Binance", "tx_count": 3}
+```
+
+New Redis keys:
+```
+whale:{SYMBOL}              → score -3 to +3 (same as sentiment)
+whale:context:{SYMBOL}      → JSON with direction + details
+```
+
+**Pro:** Zero new infrastructure. Works immediately.
+**Con:** Grok interprets tweets, may miss some or hallucinate. Not raw data.
+
+### Phase 2: Telegram scraper for @whale_alert (medium, 2-3 hours)
+
+Add Whale Alert's Telegram channel to our existing scraper:
+
+```bash
+# In .env on VM:
+TELEGRAM_CHANNELS=channel1,channel2,whale_alert  # add whale_alert
+```
+
+Extend `parser.py` with a whale message parser:
+```
+"🐋 5,000,000 #USDT transferred from #Binance to unknown wallet"
+→ { symbol: "USDT", amount: 5000000, direction: "outflow", exchange: "Binance" }
+```
+
+New Redis keys (from scraper):
+```
+whale:telegram:{SYMBOL}     → latest whale tx for symbol
+whale:telegram:recent       → list of last 50 whale transactions
+```
+
+**Pro:** Real-time, raw data, no interpretation needed.
+**Con:** Need to parse Whale Alert's message format. Only covers what they post.
+
+### Phase 3: Etherscan API for ERC-20 (medium, 3-4 hours)
+
+New standalone script `whale_tracker.py`:
+
+```python
+# Poll Etherscan for large transfers of tracked ERC-20 tokens
+# Focus on transfers TO/FROM known exchange hot wallets
+# Binance, Coinbase, Kraken hot wallet addresses are public
+
+EXCHANGE_WALLETS = {
+    'binance': ['0x28C6c06298d514Db089934071355E5743bf21d60', ...],
+    'coinbase': ['0x71660c4005BA85c37ccec55d0C4493E66Fe775d3', ...],
+}
+
+# For each tracked token (LINK, UNI, ARB):
+# GET /api?module=account&action=tokentx&address={wallet}&sort=desc
+# Filter for value > $100K
+# Classify: inflow (to exchange) or outflow (from exchange)
+```
+
+**Pro:** Raw on-chain data, most accurate.
+**Con:** Only EVM chains. Need to maintain exchange wallet list.
+
+### Phase 4: Arkham Intelligence integration (future)
+
+Use Arkham's free dashboard/API for:
+- **Entity resolution** — who owns which wallet (labeled addresses)
+- **Smart money tracking** — follow known profitable wallets
+- **Alert setup** — notify on specific wallet movements
+
+## Architecture (All Phases Combined)
+
+```
+┌─────────────────────┐  ┌──────────────────────┐  ┌─────────────────┐
+│ x_sentiment.py      │  │ telegram-scraper      │  │ whale_tracker.py│
+│ (Grok @whale_alert) │  │ (@whale_alert channel)│  │ (Etherscan API) │
+│ Phase 1             │  │ Phase 2               │  │ Phase 3         │
+└────────┬────────────┘  └──────────┬────────────┘  └────────┬────────┘
+         │                          │                         │
+         ▼                          ▼                         ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  Redis                                                               │
+│                                                                      │
+│  whale:{SYMBOL}           → score -3 to +3 (aggregated)              │
+│  whale:context:{SYMBOL}   → JSON (best source wins)                  │
+│  whale:alert:{SYMBOL}     → hard reject trigger                      │
+│  whale:telegram:recent    → raw Telegram messages                    │
+└──────────────────────────────┬───────────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  Auto-Trader (existing pipeline additions)                           │
+│                                                                      │
+│  1. Risk gate: reject BUY if whale:alert active (mega dump)          │
+│  2. Confidence: +5% if whale score >= 2, -5% if <= -2                │
+│  3. Grok AI prompt: include whale context + narrative                 │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+## Scoring Algorithm
+
+```python
+def score_whale_activity(inflow_usd: float, outflow_usd: float) -> int:
     """
-    Score based on net exchange flow direction.
     Exchange inflow = selling pressure (bearish)
     Exchange outflow = accumulation (bullish)
     """
     net_flow = outflow_usd - inflow_usd  # positive = bullish
 
-    # Thresholds (adjustable in cryonix.toml)
     if net_flow > 5_000_000:    return 3   # Mega accumulation
     if net_flow > 1_000_000:    return 2   # Strong accumulation
     if net_flow > 200_000:      return 1   # Mild accumulation
@@ -126,156 +178,74 @@ def score_whale_activity(inflow_usd: float, outflow_usd: float,
     return 0                               # Neutral
 ```
 
-### Alert Triggers (Hard Reject)
-
-Generate `whale:alert:{SYMBOL}` when:
-- Single transaction > $10M to an exchange (mega whale dump)
-- 5+ exchange inflow transactions within 1 hour (coordinated selling)
-- Known "smart money" wallet dumps entire position
-
-## Integration Points in Auto-Trade
-
-### 1. Risk Gate (hard reject)
-```typescript
-// After existing X sentiment alert check
-const whaleAlert = await redis.get(`whale:alert:${baseAsset}`);
-if (whaleAlert && signal.action === 'BUY') {
-    return { pass: false, reason: `Whale alert: ${whaleAlert}` };
-}
-```
-
-### 2. Confidence Adjustment (after TA+AI blending)
-```typescript
-// Same pattern as X sentiment boost
-const whaleScore = parseInt(await redis.get(`whale:${baseAsset}`) || '0');
-if (whaleScore >= 2) signal.confidence += whaleBoost;      // +5%
-if (whaleScore <= -2) signal.confidence -= whalePenalty;    // -5%
-```
-
-### 3. Grok AI Context
-```typescript
-// Add to validation prompt alongside X sentiment
-const whaleCtx = await redis.get(`whale:context:${baseAsset}`);
-// "Whale activity: 3 large outflows from Binance ($6.4M), score +2 (accumulation)"
-```
-
 ## Configuration (cryonix.toml)
 
 ```toml
 [whale]
-# Master switch
-enabled = false              # Enable after adding WHALE_ALERT_API_KEY to .env
+enabled = false
 
-# Polling interval (seconds). 600 = 10min.
-# Free tier: 10 req/min, we use ~2 req/poll (transactions + status)
-poll_interval_seconds = 600
-
-# Minimum transaction value (USD) to track
-min_transaction_usd = 100000
-
-# Lookback window per poll (seconds). Max 3600 for free tier.
-lookback_seconds = 3600
-
-# Confidence adjustments
+# Confidence adjustments (same pattern as [sentiment])
 accumulation_boost = 0.05        # +5% when whale score >= 2
 strong_accumulation_boost = 0.08 # +8% when whale score >= 3
 distribution_penalty = 0.05      # -5% when whale score <= -2
 
-# Alert thresholds
-mega_tx_alert_usd = 10000000    # Single tx > $10M triggers alert
-coordinated_sell_count = 5       # N+ inflows in lookback = alert
+# Alert threshold — single tx that triggers hard BUY reject
+mega_tx_alert_usd = 10000000    # $10M to exchange = alert
 ```
 
-## File Structure
+## Auto-Trade Integration (same pattern as X sentiment)
 
-```
-scripts/strategy-lab/
-  whale_tracker.py           # Main script (like x_sentiment.py)
-                             # Cron: */10 * * * * (every 10 min)
+```typescript
+// Risk gate (hard reject)
+const whaleAlert = await redis.get(`whale:alert:${baseAsset}`);
+if (whaleAlert && signal.action === 'BUY') {
+    return { pass: false, reason: `Whale alert: ${whaleAlert}` };
+}
 
-packages/engine/src/tanks/   # Alternative: run as engine tank
-  whale_scout.py             # If we want it in Docker (like CMCScout)
-```
+// Confidence adjustment (after TA+AI blending)
+const whaleScore = parseInt(await redis.get(`whale:${baseAsset}`) || '0');
+const accumBoost = TOML?.whale?.accumulation_boost ?? 0.05;
+if (whaleScore >= 2) signal.confidence += accumBoost;
+if (whaleScore <= -2) signal.confidence -= distribPenalty;
 
-### Recommendation: Standalone script (like x_sentiment.py)
-- Simpler deployment (just cron + host Python)
-- Same pattern as x_sentiment.py (proven)
-- No Docker rebuild needed
-- Uses same `db.py` helper for Redis access
-
-## API Cost Analysis
-
-| Source | Free Tier | Our Usage | Monthly Cost |
-|--------|-----------|-----------|-------------|
-| Whale Alert | 10 req/min | ~2 req / 10min = 288/day | Free |
-| Etherscan | 100K req/day | ~144/day (per known wallet) | Free |
-| **Total** | | | **$0/month** |
-
-## Symbol Coverage
-
-Whale Alert covers all 15 symbols in our trading whitelist:
-BTC, ETH, SOL, XRP, AVAX, LINK, ADA, DOT, NEAR, SUI, ATOM, INJ, ARB, UNI, RENDER
-
-Etherscan covers ERC-20 subset: ETH, LINK, UNI, ARB (for specific wallet tracking).
-
-## Example Signal Enhancement
-
-**Scenario: LINK DIP_BUY signal**
-
-Without whale tracking:
-```
-Signal: BUY LINK/USDC
-Patterns: DIP_BUY + RSI_OVERSOLD
-TA confidence: 72%
-X sentiment: +1 (Positive)
-→ Blended confidence: ~70% → Passes min_confidence
+// Grok prompt context
+const whaleCtx = await redis.get(`whale:context:${baseAsset}`);
+// → "Whale: 3 large outflows from Binance ($6.4M accumulation)"
 ```
 
-With whale tracking:
-```
-Signal: BUY LINK/USDC
-Patterns: DIP_BUY + RSI_OVERSOLD
-TA confidence: 72%
-X sentiment: +1 (Positive)
-Whale: score +2 (3 large outflows, $4.2M accumulation) → +5% boost
-→ Blended confidence: ~75% → Stronger conviction
-→ Grok sees: "Whale accumulation aligns with dip — likely smart money buying"
-```
+## Example: Triple Confirmation
 
-**Scenario: SOL falling knife**
+**LINK DIP_BUY + bullish X + whale accumulation:**
 ```
-Signal: BUY SOL/USDC
-Patterns: DEEP_VALUE_CRASH
-TA confidence: 68%
-X sentiment: -2 (Bearish, hack rumors)
-Whale: score -3 (mega sell: $12M to Binance) → ALERT
-→ Hard reject at risk gate: "Whale alert: mega_sell $12M to Binance"
-→ Saved from falling knife trade
+TA:        DIP_BUY + RSI_OVERSOLD → 72% confidence
+X:         Score +2 (bullish buzz) → +5% boost → 77%
+Whale:     Score +2 ($4.2M outflow from Binance) → +5% boost → 82%
+Grok AI:   Sees all three sources aligned → high conviction approve
+Result:    Strong buy signal with 3-source confirmation
 ```
 
-## Risks
+**SOL falling knife — whale catches it:**
+```
+TA:        DEEP_VALUE_CRASH → 68% confidence
+X:         Score -2 (hack rumors) → -5% penalty → 63%
+Whale:     Score -3 ($12M TO Binance) → ALERT → hard reject
+Result:    Saved from falling knife trade
+```
 
-| Risk | Mitigation |
-|------|-----------|
-| Whale Alert API goes down | Graceful fallback (score = 0, no boost/penalty) |
-| False signals (whale moves between own wallets) | Exchange-specific flow only (not wallet-to-wallet) |
-| API rate limits | Conservative polling (10min interval, well within 10 req/min) |
-| Whale data too delayed (already priced in) | 10min poll + 1hr lookback catches most moves in time for 15m candle signals |
+## Cost Summary
 
-## Implementation Steps (When Ready)
+| Phase | New API Keys | Monthly Cost |
+|-------|-------------|-------------|
+| Phase 1 (Grok search) | None | $0 |
+| Phase 2 (Telegram scraper) | None | $0 |
+| Phase 3 (Etherscan) | Free signup | $0 |
+| Phase 4 (Arkham) | Free signup | $0 |
+| **Total** | | **$0/month** |
 
-1. Get Whale Alert API key (free signup)
-2. Write `whale_tracker.py` (same structure as `x_sentiment.py`)
-3. Add `[whale]` section to `cryonix.toml`
-4. Add whale confidence boost in `auto-trade/route.ts` (same pattern as sentiment)
-5. Add whale context to Grok AI prompt
-6. Set up cron: `*/10 * * * *`
-7. Monitor for 1 week with `enabled = true` but boosts at 0 (log-only mode)
-8. Enable boosts after validating data quality
+## Implementation Order
 
-## Dependencies
-
-- Whale Alert API key (free, instant signup)
-- `requests` Python package (already in engine requirements)
-- No new Docker containers needed
-- No database schema changes
+1. **Phase 1 first** — modify x_sentiment.py prompt (30 min, zero risk)
+2. Validate Phase 1 data quality for 1 week
+3. **Phase 2** — add @whale_alert to Telegram scraper (2-3 hours)
+4. **Phase 3** — Etherscan for precise ERC-20 tracking (3-4 hours)
+5. Phase 4 — Arkham for entity resolution (future, if needed)
