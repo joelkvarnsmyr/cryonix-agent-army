@@ -313,18 +313,18 @@ function cmdHelp() {
     `/pnl — P&L summary (24h + 7d)\n` +
     `/signals — Signal queue\n` +
     `/risk — Risk exposure\n` +
-    `/gainers — Top movers & volume surges\n` +
+    `/gainers — Top movers &amp; volume surges\n` +
     `/audit — Full system audit\n` +
     `/evolve — Evolution history\n` +
     `/cost — AI API costs\n` +
     `/journal — Trade journal &amp; config analysis\n` +
     `/help — This menu\n\n` +
-    `<b>Auto Reports:</b>\n` +
-    `📡 Every 15min — Pipeline health\n` +
-    `📅 08:00 UTC — Morning brief\n` +
-    `📅 14:00 UTC — System audit\n` +
-    `📅 22:00 UTC — Daily summary\n` +
-    `⚡ Real-time — Trade & health alerts`;
+    `<b>Auto Alerts:</b>\n` +
+    `🟩 Trade executed — varför + AI-resonemang\n` +
+    `🟢🔴 Trade stängd — P&amp;L + hålltid + reason\n` +
+    `☀️ 08:00 UTC — Morning brief\n` +
+    `🌙 22:00 UTC — Daily summary\n` +
+    `🚨 Health — bara vid statusändring`;
 }
 
 async function cmdAudit() {
