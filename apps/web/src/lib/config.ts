@@ -21,6 +21,7 @@ export interface CryonixConfig {
     max_position_size_pct: number; min_order_value: number;
     signal_pool_pct: number; grid_pool_pct: number; reserve_pct: number;
     kelly_fraction_multiplier: number; deep_value_max_pct: number; deep_value_min_confidence: number;
+    notional_safety_buffer: number;
   };
   limits: {
     max_open_positions: number; max_signal_positions: number;
@@ -39,6 +40,7 @@ export interface CryonixConfig {
     deep_value_sl_atr: number; deep_value_tp_atr: number;
     native_sl_limit_offset: number;
     stagnation_timeout_hours: number;
+    stagnation_min_pnl_pct: number;
   };
   indicators: {
     rsi_period: number; rsi_oversold: number; rsi_overbought: number;
@@ -54,6 +56,7 @@ export interface CryonixConfig {
     deep_value_threshold: number; deep_value_support_lookback_days: number;
     deep_value_rug_pull_velocity: number;
     dip_focus_mode: boolean; value_patterns: string[]; trending_adx_threshold: number;
+    weak_solo_patterns: string[];
   };
   consensus: {
     single_pattern_penalty: number; two_pattern_boost: number;
@@ -80,6 +83,7 @@ export interface CryonixConfig {
     ws_heartbeat_ms: number; ws_timeout_ms: number;
     capital_cache_ms: number; calibration_cache_ms: number; regime_ttl_seconds: number;
     reconcile_interval_ms: number; instance_lock_ttl_seconds: number; position_lock_ttl_seconds: number;
+    loss_cooldown_seconds: number;
   };
   engine: { timeframe: string; candle_limit: number; signal_cooldown_seconds: number; news_scan_interval_seconds: number };
   grid: { level_trigger_tolerance: number };

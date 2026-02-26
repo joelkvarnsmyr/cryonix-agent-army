@@ -102,6 +102,12 @@ max_position_size_pct = 0.35
 # When to change: only if Binance changes their NOTIONAL minimum.
 min_order_value = 7.50
 
+# Safety buffer multiplier for NOTIONAL minimum.
+# Safe min = max(pair_notional * buffer, min_order_value).
+# 1.5 = 50% buffer. A $5 notional becomes $7.50 safe min.
+# Prevents buying positions that immediately become unsellable dust.
+notional_safety_buffer = 1.5
+
 # Capital allocation split between strategies. Must sum to ~1.0.
 #   signal_pool — for TA/AI-validated signal trades (the main strategy)
 #   grid_pool   — for grid DCA trades (buy at preset levels)
@@ -270,12 +276,13 @@ tp_atr_multiplier = 6.0
 deep_value_sl_atr = 6.0
 deep_value_tp_atr = 8.0
 
-# Stagnation exit timeout. If a position hasn't moved more than 1%
-# (in either direction) after this many hours, sell it to free the slot
-# for higher-conviction signals. 8h is conservative — most breakouts
-# happen within 4h of pattern detection.
+# Stagnation exit timeout. If a position hasn't moved more than
+# stagnation_min_pnl_pct% (in either direction) after this many hours,
+# sell it to free the slot for higher-conviction signals.
+# 8h is conservative — most breakouts happen within 4h of pattern detection.
 # When to change: lower to 6h for faster turnover, raise to 12h for patience.
 stagnation_timeout_hours = 8
+stagnation_min_pnl_pct = 1.0
 
 # Native Binance stop-loss limit order offset.
 # When placing a STOP_LOSS_LIMIT on Binance, the limit price is set
@@ -403,6 +410,12 @@ value_patterns = ["DIP_BUY", "DEEP_VALUE_CRASH", "BOLLINGER_SQUEEZE"]
 # through the dip focus filter. Requires HTF trend alignment.
 # 30 = strong trend. Set higher (35) for more selective, lower (25) for more trades.
 trending_adx_threshold = 30
+
+# Patterns that consistently lose money when they fire alone (no confirming pattern).
+# Single-pattern signals matching these are rejected before AI validation.
+# Data: RSI_OVERSOLD solo → 33% WR, EMA_BULLISH_CROSS solo → 0% WR.
+# When to change: add/remove patterns based on calibration data.
+weak_solo_patterns = ["RSI_OVERSOLD", "EMA_BULLISH_CROSS", "MACD_BULLISH_CROSS"]
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -637,6 +650,12 @@ regime_ttl_seconds = 3600
 # reconcile_interval_ms: how often to check for phantom positions.
 #   600000 = 10 min. Catches positions that were sold outside the system.
 reconcile_interval_ms = 600_000
+
+# Per-symbol loss cooldown. After a losing trade, the system won't
+# re-buy that symbol for this many seconds. Prevents revenge trading.
+# 7200 = 2 hours. Lower to 3600 (1h) if positions turn around quickly,
+# raise to 14400 (4h) if repeated losses on same symbol are a problem.
+loss_cooldown_seconds = 7200
 
 # Instance lock prevents multiple environments from trading the same
 # Binance account simultaneously. TTL must be > auto_trader_poll_ms.

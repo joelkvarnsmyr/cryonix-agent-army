@@ -21,7 +21,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import asyncio
+
 import ccxt
+import httpx
 import numpy as np
 import pandas as pd
 from tabulate import tabulate
@@ -40,6 +43,178 @@ for _p in _engine_paths:
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 from src.guilds.quant import QuantGuild
+from src.core.config import get_toml
+
+
+# ---------------------------------------------------------------------------
+# Grok AI Validation (mirrors production auto-trade route)
+# ---------------------------------------------------------------------------
+
+XAI_API_KEY = os.getenv('XAI_API_KEY', '')
+GROK_API_URL = 'https://api.x.ai/v1/chat/completions'
+
+class GrokValidator:
+    """Calls Grok AI to validate signals, matching production prompt logic."""
+
+    def __init__(self, capital: float = 17.0):
+        self.capital = capital
+        self.enabled = bool(XAI_API_KEY)
+        self.client = httpx.Client(timeout=30) if self.enabled else None
+        self.stats = {'total': 0, 'approved': 0, 'rejected': 0, 'errors': 0}
+        self.log: List[Dict[str, Any]] = []
+        # Load config from TOML
+        self.value_patterns = get_toml('patterns', 'value_patterns', ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'])
+        self.rsi_oversold = get_toml('indicators', 'rsi_oversold', 30)
+        self.adx_threshold = get_toml('indicators', 'adx_trending_threshold', 25)
+        self.alert_keywords = get_toml('sentiment', 'alert_keywords', ['hack', 'exploit', 'rug', 'delist', 'scam'])
+        self.min_conf = int((get_toml('risk', 'min_confidence', 0.70)) * 100)
+        self.dip_focus = get_toml('patterns', 'dip_focus_mode', True)
+        self.ta_weight = get_toml('ai', 'ta_weight', 0.60)
+        self.ai_weight = get_toml('ai', 'ai_weight', 0.40)
+        self.model = get_toml('ai', 'model', 'grok-3-mini-fast')
+
+    def validate(self, signal: Dict, result: Dict) -> Dict[str, Any]:
+        """Validate a signal with Grok AI. Returns {approved, confidence, reasoning}."""
+        if not self.enabled:
+            return {'approved': True, 'confidence': signal.get('confidence', 0.7), 'reasoning': 'AI disabled'}
+
+        self.stats['total'] += 1
+        patterns = signal.get('patterns', [])
+        indicators = result.get('indicators', {})
+        htf_trend = result.get('htf_trend', {})
+
+        is_deep_value = 'DEEP_VALUE_CRASH' in patterns
+        is_dip = any(p in self.value_patterns and p != 'DEEP_VALUE_CRASH' for p in patterns)
+        alert_kw_str = ', '.join(self.alert_keywords)
+        strategy_mode = 'Smart Dip Hunter (mean-reversion focus)' if self.dip_focus else 'All patterns'
+
+        if is_deep_value:
+            system_prompt = (
+                'You are a crash-buying specialist for crypto markets. '
+                'Evaluate whether a large drawdown is PANIC SELLING (buy opportunity) or a FALLING KNIFE (avoid). '
+                'Use your reasoning to analyze drop velocity, volume patterns, multi-timeframe RSI alignment. '
+                'Respond with ONLY a JSON object.'
+            )
+        elif is_dip:
+            non_dv = [p for p in self.value_patterns if p != 'DEEP_VALUE_CRASH']
+            system_prompt = (
+                f'You are a mean-reversion specialist for crypto dip buying. Strategy: {strategy_mode}.\n\n'
+                f'CRITICAL: {", ".join(non_dv)} are mean-reversion strategies. '
+                'A bearish short-term trend is EXPECTED — that is what creates the dip. '
+                'Do NOT reject simply because the higher-timeframe trend is bearish. Instead focus on:\n'
+                f'- Is price near historical support levels?\n'
+                f'- Is RSI deeply oversold (< {self.rsi_oversold + 5})?\n'
+                f'- Any negative catalysts? Watch for: {alert_kw_str}\n\n'
+                f'Key principles:\n'
+                f'- On a ${self.capital:.0f} account, missing a good dip costs more than a small stop-loss\n'
+                f'- APPROVE if: dip looks structural (no bad news), price near support, RSI oversold\n'
+                f'- REJECT only if: X reveals negative catalyst ({alert_kw_str}), drop velocity suggests rug pull\n'
+                f'- Give confidence {self.min_conf - 10}-90 based on conviction level\n\n'
+                'Respond with ONLY a JSON object.'
+            )
+        else:
+            system_prompt = (
+                f'You are a crypto trading risk analyst. Strategy: {strategy_mode}.\n\n'
+                f'Key principles:\n'
+                f'- On a ${self.capital:.0f} account, missed good trades cost more than small losses\n'
+                f'- Approve signals with 2+ confirming indicators\n'
+                f'- For trend signals: reject if HTF bearish or ADX < {self.adx_threshold}\n'
+                f'- REJECT if: negative EV pattern, or bad news ({alert_kw_str})\n\n'
+                'Respond with ONLY a JSON object.'
+            )
+
+        # Build user prompt with signal data
+        htf_label = htf_trend.get('trend', 'unknown') if htf_trend else 'unknown'
+        user_prompt = (
+            f'SIGNAL: BUY {signal.get("symbol", "?")}\n\n'
+            f'Setup: {" + ".join(patterns)} | TA confidence: {signal.get("confidence", 0) * 100:.0f}%\n'
+            f'Reason: {signal.get("reason", "?")}\n'
+            f'Entry: ${signal.get("entry_price", 0):.4f} | SL: ${signal.get("stop_loss", 0):.4f} | TP: ${signal.get("target_price", 0):.4f}\n\n'
+            f'Indicators:\n'
+            f'RSI={indicators.get("rsi", "?")} | MACD hist={indicators.get("macd_hist", "?")} | ADX={indicators.get("adx", "?")}\n'
+            f'ATR={indicators.get("atr_pct", "?")}% | EMA9/21={indicators.get("ema9", "?")}/{indicators.get("ema21", "?")}\n'
+            f'Volume: {indicators.get("volume_ratio", "?")}x avg | HTF trend: {htf_label}\n\n'
+            f'JSON: {{"approve":bool,"confidence":0-100,"reasoning":"2-3 sentences"}}'
+        )
+
+        try:
+            resp = self.client.post(GROK_API_URL, headers={
+                'Authorization': f'Bearer {XAI_API_KEY}',
+                'Content-Type': 'application/json',
+            }, json={
+                'model': self.model,
+                'messages': [
+                    {'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': user_prompt},
+                ],
+                'temperature': 0.1,
+                'max_tokens': 300,
+            })
+            resp.raise_for_status()
+            content = resp.json()['choices'][0]['message']['content']
+            json_match = __import__('re').search(r'\{[\s\S]*\}', content)
+            if not json_match:
+                self.stats['errors'] += 1
+                return {'approved': False, 'confidence': 0, 'reasoning': 'AI parse failed'}
+
+            ai_result = json.loads(json_match.group())
+            approved = ai_result.get('approve', False)
+            ai_confidence = (ai_result.get('confidence', 50)) / 100
+            reasoning = ai_result.get('reasoning', '')
+
+            # Blend TA + AI confidence (matching production)
+            ta_conf = signal.get('confidence', 0.7)
+            blended = ta_conf * self.ta_weight + ai_confidence * self.ai_weight
+
+            entry = {
+                'symbol': signal.get('symbol', '?'),
+                'patterns': patterns,
+                'ta_confidence': round(ta_conf, 3),
+                'ai_confidence': round(ai_confidence, 3),
+                'blended': round(blended, 3),
+                'approved': approved,
+                'reasoning': reasoning[:120],
+                'is_dip': is_dip or is_deep_value,
+            }
+            self.log.append(entry)
+
+            if approved:
+                self.stats['approved'] += 1
+            else:
+                self.stats['rejected'] += 1
+
+            return {'approved': approved, 'confidence': blended, 'reasoning': reasoning}
+
+        except Exception as e:
+            self.stats['errors'] += 1
+            return {'approved': False, 'confidence': 0, 'reasoning': f'AI error: {e}'}
+
+    def print_summary(self):
+        """Print AI validation summary."""
+        print(f'\n  AI VALIDATION SUMMARY (Grok: {self.model})')
+        print(f'  Total validated:   {self.stats["total"]}')
+        print(f'  Approved:          {self.stats["approved"]} ({self.stats["approved"]/max(self.stats["total"],1)*100:.0f}%)')
+        print(f'  Rejected:          {self.stats["rejected"]} ({self.stats["rejected"]/max(self.stats["total"],1)*100:.0f}%)')
+        if self.stats['errors']:
+            print(f'  Errors:            {self.stats["errors"]}')
+
+        if self.log:
+            print(f'\n  PER-SIGNAL AI DECISIONS')
+            ai_table = []
+            for entry in self.log:
+                status = 'PASS' if entry['approved'] else 'REJECT'
+                ai_table.append([
+                    entry['symbol'].replace('/USDC', ''),
+                    ' + '.join(entry['patterns'])[:30],
+                    f'{entry["ta_confidence"]*100:.0f}%',
+                    f'{entry["ai_confidence"]*100:.0f}%',
+                    f'{entry["blended"]*100:.0f}%',
+                    status,
+                    entry['reasoning'][:60],
+                ])
+            print(tabulate(ai_table,
+                           headers=['Symbol', 'Patterns', 'TA', 'AI', 'Blend', 'Status', 'Reasoning'],
+                           tablefmt='simple'))
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +233,29 @@ class BacktestConfig:
     min_confidence: float = 0.65
     trailing_stop_pct: float = 0.03  # 3%
     trailing_profit_threshold: float = 0.015  # 1.5%
+    dip_focus_mode: bool = False
+    value_patterns: List[str] = field(default_factory=lambda: ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'])
+    trending_adx_threshold: float = 100.0  # effectively disabled by default
+
+    @classmethod
+    def from_toml(cls, symbol: str = 'BTC/USDC', days: int = 30) -> 'BacktestConfig':
+        """Create config from cryonix.toml to match live system."""
+        from src.core.config import get_toml
+        return cls(
+            symbol=symbol,
+            days=days,
+            timeframe=get_toml('engine', 'timeframe', '15m'),
+            capital=17.0,  # actual account size
+            fee_pct=0.001,
+            max_positions=get_toml('limits', 'max_open_positions', 3),
+            position_size_pct=get_toml('capital', 'max_position_size_pct', 0.35),
+            min_confidence=get_toml('risk', 'min_confidence', 0.70),
+            trailing_stop_pct=get_toml('exits', 'trailing_stop_pct', 3.0) / 100,
+            trailing_profit_threshold=get_toml('exits', 'trailing_activation_pct', 3.0) / 100,
+            dip_focus_mode=get_toml('patterns', 'dip_focus_mode', True),
+            value_patterns=get_toml('patterns', 'value_patterns', ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE']),
+            trending_adx_threshold=get_toml('patterns', 'trending_adx_threshold', 30),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +570,20 @@ class Backtester:
             if (action == 'BUY'
                     and confidence >= self.config.min_confidence
                     and self.pm.can_open(self.config.symbol)):
-                # Optional AI filter (e.g. Grok validation)
+                # Dip focus mode filter (matches live auto-trade route)
+                if self.config.dip_focus_mode:
+                    sig_patterns = signal.get('patterns', [])
+                    has_value = any(p in self.config.value_patterns for p in sig_patterns)
+                    if not has_value:
+                        # ADX trending exception
+                        adx = result.get('indicators', {}).get('adx', 0)
+                        htf = result.get('htf_trend', {})
+                        htf_bullish = htf.get('trend') == 'bullish' if htf else False
+                        has_trend = any(p in ('MACD_BULLISH_CROSS', 'EMA_BULLISH_CROSS') for p in sig_patterns)
+                        if not (has_trend and adx >= self.config.trending_adx_threshold and htf_bullish):
+                            self.signals_filtered += 1
+                            continue
+                # Optional external filter (e.g. Grok validation)
                 if self.signal_filter and not self.signal_filter(signal, result):
                     self.signals_filtered += 1
                     continue
@@ -838,7 +1049,13 @@ def save_to_postgres(config: BacktestConfig, metrics: Dict[str, Any],
         monthly_ret = metrics.get('monthlyReturns', metrics.get('monthly_returns', {}))
 
         # Clean metrics for the metrics column (remove nested dicts)
-        metrics_clean = {k: v for k, v in metrics.items()
+        # Replace Infinity/NaN with finite values for JSON/Postgres compatibility
+        def _sanitize(v):
+            if isinstance(v, float) and (math.isinf(v) or math.isnan(v)):
+                return 999.99 if v > 0 else (-999.99 if v < 0 else 0.0)
+            return v
+
+        metrics_clean = {k: _sanitize(v) for k, v in metrics.items()
                         if k not in ('patternPerformance', 'monthlyReturns',
                                      'pattern_performance', 'monthly_returns')}
 
@@ -874,6 +1091,127 @@ def save_to_postgres(config: BacktestConfig, metrics: Dict[str, Any],
 # Main
 # ---------------------------------------------------------------------------
 
+def run_single(config: BacktestConfig, save: bool = True, json_output: bool = False,
+               grok_validator: Optional['GrokValidator'] = None) -> Dict[str, Any]:
+    """Run backtest for a single symbol. Returns metrics dict."""
+    print(f'\n  Symbol: {config.symbol} | Days: {config.days} | TF: {config.timeframe}')
+    print(f'  Capital: ${config.capital:,.2f} | Fee: {config.fee_pct*100}%')
+    print(f'  Confidence: {config.min_confidence} | Dip Focus: {config.dip_focus_mode}')
+    print(f'  Position Size: {config.position_size_pct*100}% | Max Positions: {config.max_positions}')
+    if grok_validator:
+        print(f'  AI Validation: ENABLED ({grok_validator.model})')
+    print(f'\n  Fetching data...')
+
+    fetcher = DataFetcher(config.symbol, config.days, config.timeframe)
+    data = fetcher.fetch_all()
+
+    # If AI validation enabled, create a signal_filter that calls Grok
+    signal_filter = None
+    if grok_validator:
+        def ai_filter(signal, result):
+            # Add symbol to signal for Grok context
+            signal['symbol'] = config.symbol
+            ai_result = grok_validator.validate(signal, result)
+            if not ai_result['approved']:
+                return False
+            # Blend confidence like production
+            signal['confidence'] = ai_result['confidence']
+            return True
+        signal_filter = ai_filter
+
+    bt = Backtester(config, signal_filter=signal_filter)
+    trades, equity_curve = bt.run(data)
+
+    print(f'\n  Signals generated: {bt.signals_generated} | Filtered (dip focus): {bt.signals_filtered}')
+    if grok_validator:
+        print(f'  AI filtered: {bt.signals_filtered if not signal_filter else grok_validator.stats["rejected"]}')
+    print(f'  Trades executed: {len(trades)}')
+
+    metrics = MetricsCalculator.compute(trades, equity_curve, config.capital, config.days)
+
+    if json_output:
+        print(json.dumps(metrics, indent=2, default=str))
+    else:
+        print_report(config, metrics)
+
+    if save:
+        save_to_postgres(config, metrics, trades, equity_curve)
+
+    return metrics
+
+
+def run_multi(symbols: List[str], days: int, live_config: bool,
+              save: bool = True, json_output: bool = False,
+              grok_validator: Optional['GrokValidator'] = None):
+    """Run backtest across multiple symbols and print aggregate summary."""
+    all_metrics = {}
+    total_pnl = 0.0
+    total_trades = 0
+    total_wins = 0
+
+    for sym in symbols:
+        print(f'\n{"=" * 72}')
+        print(f'  BACKTESTING: {sym}')
+        print(f'{"=" * 72}')
+
+        if live_config:
+            config = BacktestConfig.from_toml(symbol=sym, days=days)
+        else:
+            config = BacktestConfig(symbol=sym, days=days)
+
+        try:
+            metrics = run_single(config, save=save, json_output=False, grok_validator=grok_validator)
+            all_metrics[sym] = metrics
+            total_pnl += metrics.get('total_pnl', 0)
+            total_trades += metrics.get('total_trades', 0)
+            total_wins += metrics.get('winning_trades', 0)
+        except Exception as e:
+            print(f'  ERROR backtesting {sym}: {e}')
+            all_metrics[sym] = {'error': str(e)}
+
+    # Aggregate summary
+    print(f'\n{"=" * 72}')
+    print(f'  AGGREGATE SUMMARY ({len(symbols)} symbols, {days} days)')
+    print(f'{"=" * 72}')
+    print(f'  Total P&L:      ${total_pnl:+.4f}')
+    print(f'  Total Trades:    {total_trades}')
+    win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+    print(f'  Win Rate:        {win_rate:.1f}%')
+    print(f'  Avg P&L/Trade:   ${total_pnl / total_trades:.4f}' if total_trades > 0 else '  Avg P&L/Trade:   N/A')
+
+    # Per-symbol table
+    print(f'\n  PER-SYMBOL BREAKDOWN')
+    sym_table = []
+    for sym in symbols:
+        m = all_metrics.get(sym, {})
+        if 'error' in m:
+            sym_table.append([sym, 'ERROR', '-', '-', '-', '-'])
+        else:
+            sym_table.append([
+                sym.replace('/USDC', ''),
+                m.get('total_trades', 0),
+                f'{m.get("win_rate", 0):.0f}%',
+                f'${m.get("total_pnl", 0):+.4f}',
+                f'{m.get("profit_factor", 0):.2f}',
+                f'{m.get("sharpe_ratio", 0):.2f}',
+            ])
+    print(tabulate(sym_table, headers=['Symbol', 'Trades', 'Win%', 'P&L', 'PF', 'Sharpe'],
+                   tablefmt='simple'))
+
+    # AI validation summary (if enabled)
+    if grok_validator and grok_validator.stats['total'] > 0:
+        grok_validator.print_summary()
+
+    if json_output:
+        print(json.dumps({'aggregate': {
+            'total_pnl': round(total_pnl, 4),
+            'total_trades': total_trades,
+            'win_rate': round(win_rate, 1),
+        }, 'per_symbol': all_metrics}, indent=2, default=str))
+
+    print('')
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Strategy Lab: Python Backtester (QuantGuild Engine)')
@@ -889,44 +1227,41 @@ def main():
                         help='Skip saving to Postgres')
     parser.add_argument('--json', action='store_true',
                         help='Output JSON instead of formatted report')
+    parser.add_argument('--live-config', action='store_true',
+                        help='Use parameters from cryonix.toml (matches production)')
+    parser.add_argument('--multi', action='store_true',
+                        help='Run across all whitelist symbols from cryonix.toml')
+    parser.add_argument('--with-ai', action='store_true',
+                        help='Enable Grok AI validation (requires XAI_API_KEY)')
     args = parser.parse_args()
 
-    config = BacktestConfig(
-        symbol=args.symbol,
-        days=args.days,
-        timeframe=args.timeframe,
-        capital=args.capital,
-    )
+    print(f'\n  Cryonix Backtester v2.0')
 
-    print(f'\n  Cryonix Backtester v1.0')
-    print(f'  Symbol: {config.symbol} | Days: {config.days} | TF: {config.timeframe}')
-    print(f'  Capital: ${config.capital:,.2f} | Fee: {config.fee_pct*100}%')
-    print(f'  Confidence threshold: {config.min_confidence}')
-    print(f'\n  Fetching data...')
+    # Initialize Grok validator if requested
+    grok = None
+    if args.with_ai:
+        grok = GrokValidator(capital=args.capital if not args.live_config else 17.0)
+        if not grok.enabled:
+            print('  WARNING: --with-ai requires XAI_API_KEY env var')
+            grok = None
+        else:
+            print(f'  AI Validation: ENABLED ({grok.model})')
 
-    # 1. Fetch data
-    fetcher = DataFetcher(config.symbol, config.days, config.timeframe)
-    data = fetcher.fetch_all()
-
-    # 2. Run backtest
-    bt = Backtester(config)
-    trades, equity_curve = bt.run(data)
-
-    print(f'\n  Signals generated: {bt.signals_generated}')
-    print(f'  Trades executed: {len(trades)}')
-
-    # 3. Compute metrics
-    metrics = MetricsCalculator.compute(trades, equity_curve, config.capital, config.days)
-
-    # 4. Output
-    if args.json:
-        print(json.dumps(metrics, indent=2, default=str))
+    if args.multi:
+        symbols = get_toml('trading', 'symbol_whitelist', ['BTC/USDC'])
+        run_multi(symbols, args.days, live_config=args.live_config,
+                  save=not args.no_save, json_output=args.json, grok_validator=grok)
+    elif args.live_config:
+        config = BacktestConfig.from_toml(symbol=args.symbol, days=args.days)
+        run_single(config, save=not args.no_save, json_output=args.json, grok_validator=grok)
     else:
-        print_report(config, metrics)
-
-    # 5. Save to Postgres
-    if not args.no_save:
-        save_to_postgres(config, metrics, trades, equity_curve)
+        config = BacktestConfig(
+            symbol=args.symbol,
+            days=args.days,
+            timeframe=args.timeframe,
+            capital=args.capital,
+        )
+        run_single(config, save=not args.no_save, json_output=args.json, grok_validator=grok)
 
 
 if __name__ == '__main__':

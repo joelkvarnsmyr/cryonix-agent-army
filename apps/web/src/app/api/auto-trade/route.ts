@@ -478,7 +478,7 @@ async function reconcilePositions(): Promise<void> {
 
           // Per-symbol loss cooldown: prevent re-buying a losing symbol too soon
           if (estimatedPnl < 0) {
-            await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', 7200);
+            await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', TOML?.timing?.loss_cooldown_seconds ?? 7200);
           }
 
           await logTrade({
@@ -541,7 +541,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
 
             // Per-symbol loss cooldown: prevent re-buying a losing symbol too soon
             if (realizedPnl < 0) {
-              await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', 7200);
+              await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', TOML?.timing?.loss_cooldown_seconds ?? 7200);
             }
 
             const nativeSlFees = (slOrder.fee?.cost || 0) + (pos.entryFee || 0);
@@ -640,7 +640,8 @@ async function monitorPositions(): Promise<MonitorResult[]> {
       let shouldSell = false;
       let exitReason = '';
 
-      if (currentValue < CONFIG.MIN_ORDER_VALUE && currentValue >= 5.0) {
+      const dustFloor = TOML?.reconciliation?.dust_sell_floor ?? 5.0;
+      if (currentValue < CONFIG.MIN_ORDER_VALUE && currentValue >= dustFloor) {
         shouldSell = true;
         exitReason = `Dust prevention: value $${currentValue.toFixed(2)} approaching NOTIONAL minimum`;
       }
@@ -648,10 +649,11 @@ async function monitorPositions(): Promise<MonitorResult[]> {
       // Stagnation exit: sell positions that haven't moved >1% in N hours
       if (!shouldSell && pos.openedAt) {
         const ageHours = (Date.now() - new Date(pos.openedAt).getTime()) / (1000 * 60 * 60);
-        const stagnationTimeout = TOML?.exits.stagnation_timeout_hours ?? 8;
-        if (ageHours > stagnationTimeout && Math.abs(pnlPct) < 1.0) {
+        const stagnationTimeout = TOML?.exits?.stagnation_timeout_hours ?? 8;
+        const stagnationMinPnl = TOML?.exits?.stagnation_min_pnl_pct ?? 1.0;
+        if (ageHours > stagnationTimeout && Math.abs(pnlPct) < stagnationMinPnl) {
           shouldSell = true;
-          exitReason = `Stagnation exit: ${ageHours.toFixed(1)}h old, only ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% movement (< 1%)`;
+          exitReason = `Stagnation exit: ${ageHours.toFixed(1)}h old, only ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% movement (< ${stagnationMinPnl}%)`;
         }
       }
 
@@ -734,7 +736,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
 
           // Per-symbol loss cooldown: prevent re-buying a losing symbol too soon
           if ((realizedPnl - fees) < 0) {
-            await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', 7200);
+            await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', TOML?.timing?.loss_cooldown_seconds ?? 7200);
           }
 
           // Update daily P&L (persisted to Redis)
@@ -822,7 +824,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
 
             // Per-symbol loss cooldown: prevent re-buying a losing symbol too soon
             if (pnl < 0) {
-              await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', 7200);
+              await redis.set(`cooldown:loss:${pos.symbol}`, Date.now().toString(), 'EX', TOML?.timing?.loss_cooldown_seconds ?? 7200);
             }
 
             // Cancel native SL if present (position is gone, SL would be orphaned)
@@ -1156,7 +1158,7 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
   // === WEAK PATTERN FILTER: reject single-pattern signals with known poor performance ===
   // These patterns consistently lose money when they fire alone (no confirming pattern).
   // Data: RSI_OVERSOLD solo → 33% WR, -$0.48 total | EMA_BULLISH_CROSS solo → 0% WR, -$0.05
-  const weakSoloPatterns = ['RSI_OVERSOLD', 'EMA_BULLISH_CROSS', 'MACD_BULLISH_CROSS'];
+  const weakSoloPatterns: string[] = TOML?.patterns?.weak_solo_patterns ?? ['RSI_OVERSOLD', 'EMA_BULLISH_CROSS', 'MACD_BULLISH_CROSS'];
   const patterns = signal.patterns || [];
   if (patterns.length === 1 && weakSoloPatterns.includes(patterns[0])) {
     return { pass: false, reason: `Weak solo pattern: ${patterns[0]} (requires 2+ confirming patterns)` };
@@ -1270,12 +1272,42 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
       ? ((signal.target_price - signal.entry_price) / slDiff).toFixed(2)
       : 'N/A';
 
-    // Use specialized prompt for deep value crash signals
+    // Classify signal type for prompt selection
+    const valuePatterns: string[] = TOML?.patterns?.value_patterns ?? ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'];
     const isDeepValue = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
+    const isDipBuy = signal.patterns?.some((p: string) => valuePatterns.includes(p) && p !== 'DEEP_VALUE_CRASH');
+    const isMeanReversion = isDeepValue || isDipBuy;
+
+    // Dynamic values from cryonix.toml for AI context
+    const rsiOversold = TOML?.indicators?.rsi_oversold ?? 30;
+    const adxThreshold = TOML?.indicators?.adx_trending_threshold ?? 25;
+    const alertKeywords = (TOML?.sentiment?.alert_keywords ?? ['hack', 'exploit', 'rug', 'delist', 'scam']).join(', ');
+    const minConf = Math.round((TOML?.risk?.min_confidence ?? 0.70) * 100);
+    const strategyMode = TOML?.patterns?.dip_focus_mode ? 'Smart Dip Hunter (mean-reversion focus)' : 'All patterns';
 
     const systemPrompt = isDeepValue
       ? `You are a crash-buying specialist for crypto markets. Evaluate whether a large drawdown is PANIC SELLING (buy opportunity) or a FALLING KNIFE (avoid). Use your reasoning to analyze drop velocity, volume patterns, multi-timeframe RSI alignment, and whether the selloff is isolated or broad-based. Search X/Twitter for breaking news about this asset. Respond with ONLY a JSON object.`
-      : `You are a crypto trading risk analyst with access to real-time X/Twitter data and web search. Your role:
+      : isDipBuy
+      ? `You are a mean-reversion specialist for crypto dip buying. Strategy: ${strategyMode}.
+
+1. THINK through whether this dip is a buying opportunity or start of a larger decline
+2. SEARCH X for any breaking news or negative catalysts about this coin
+3. Evaluate whether the dip is structural (good: profit-taking, market-wide pullback) or fundamental (bad: hack, delisting, broken protocol)
+
+CRITICAL: ${valuePatterns.filter(p => p !== 'DEEP_VALUE_CRASH').join(', ')} are mean-reversion strategies. A bearish short-term trend is EXPECTED — that is what creates the dip. Do NOT reject simply because the higher-timeframe trend is bearish. Instead focus on:
+- Is price near historical support levels?
+- Is RSI deeply oversold (< ${rsiOversold + 5})?
+- Is there capitulation volume or drying sell pressure?
+- Any negative catalysts on X? Watch for: ${alertKeywords}
+
+Key principles:
+- On a $${totalCapital.toFixed(0)} account, missing a good dip recovery costs more than a small stop-loss
+- APPROVE if: dip looks structural (no bad news), price near support, RSI oversold
+- REJECT only if: X reveals negative catalyst (${alertKeywords}), drop velocity suggests rug pull, or coin is fundamentally broken
+- Give confidence ${minConf - 10}-90 based on conviction level
+
+Respond with ONLY a JSON object.`
+      : `You are a crypto trading risk analyst with access to real-time X/Twitter data and web search. Strategy: ${strategyMode}.
 
 1. THINK through the technical setup step by step (use your reasoning capability)
 2. SEARCH X for any breaking news, hacks, delistings, or sentiment shifts about this coin
@@ -1284,8 +1316,9 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
 
 Key principles:
 - On a $${totalCapital.toFixed(0)} account, missed good trades cost more than small losses
-- Approve signals with 2+ confirming indicators or 1 strong signal (RSI<30, Bollinger squeeze with volume)
-- REJECT if: signal contradicts higher-timeframe trend, negative EV pattern, or X reveals bad news
+- Approve signals with 2+ confirming indicators or 1 strong signal (RSI<${rsiOversold}, Bollinger squeeze with volume)
+- For trend-following signals (MACD/EMA cross): reject if higher-timeframe trend is bearish or ADX < ${adxThreshold}
+- REJECT if: negative EV pattern, or X reveals bad news (${alertKeywords})
 - BOOST confidence if X sentiment is bullish AND technical setup aligns
 - Adjust SL/TP if you see better levels based on your analysis
 
@@ -1475,11 +1508,11 @@ async function executeBuy(signal: Signal): Promise<{
     }
 
     const positionValue = qty * signal.entry_price;
-    // Use pair's actual Binance NOTIONAL minimum with 50% buffer.
+    // Use pair's actual Binance NOTIONAL minimum with safety buffer.
     // Without buffer, a $5.00 buy that drops 5% becomes $4.75 → unsellable dust.
-    // Default to $5 (not CONFIG.MIN_ORDER_VALUE) when market data is missing.
-    const pairMinNotional = market.limits?.cost?.min || 5.0;
-    const safeMinNotional = Math.max(pairMinNotional * 1.5, CONFIG.MIN_ORDER_VALUE);
+    const pairMinNotional = market.limits?.cost?.min || CONFIG.MIN_ORDER_VALUE;
+    const notionalBuffer = TOML?.capital?.notional_safety_buffer ?? 1.5;
+    const safeMinNotional = Math.max(pairMinNotional * notionalBuffer, CONFIG.MIN_ORDER_VALUE);
     if (positionValue < safeMinNotional) {
       return { success: false, error: `Value $${positionValue.toFixed(2)} < $${safeMinNotional.toFixed(2)} safe min (${signal.symbol}, notional=${pairMinNotional})` };
     }
