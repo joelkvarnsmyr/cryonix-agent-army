@@ -968,7 +968,7 @@ async function checkTradeAlerts() {
     // Check for NEW trades (BUY executed)
     const r = await query(`
       SELECT t.id, t.symbol, t.side, t.entry_price, t.exit_price, t.pnl, t.pattern,
-             t.confidence, t.stop_loss, t.take_profit, t.status, t.timestamp, t.reasoning,
+             t.confidence, t.status, t.timestamp, t.reasoning,
              t.config_version,
              v.reasoning as ai_reasoning, v.adjusted_confidence, v.consensus_level,
              v.usage->>'model' as ai_model
@@ -981,9 +981,14 @@ async function checkTradeAlerts() {
     if (r.rows.length === 0) return;
 
     const latest = r.rows[0];
-    if (lastTradeId === null) { lastTradeId = latest.id; return; }
+    if (lastTradeId === null) {
+      lastTradeId = latest.id;
+      console.log(`[TRADE-POLL] Initialized lastTradeId=${latest.id} (${latest.symbol})`);
+      return;
+    }
     if (latest.id <= lastTradeId) return;
 
+    console.log(`[TRADE-POLL] New trade detected: #${latest.id} ${latest.symbol} ${latest.side} (prev: #${lastTradeId})`);
     lastTradeId = latest.id;
     const price = parseFloat(latest.entry_price);
     const priceFmt = price < 1 ? 6 : price < 100 ? 4 : 2;
@@ -998,18 +1003,26 @@ async function checkTradeAlerts() {
     };
     const patternStr = patterns.map(p => patternIcons[p] || p).join(' + ');
 
-    // SL/TP with R:R
+    // SL/TP with R:R — read from Redis open position
     let riskStr = '';
-    if (latest.stop_loss && latest.take_profit) {
-      const sl = parseFloat(latest.stop_loss);
-      const tp = parseFloat(latest.take_profit);
-      const risk = Math.abs(price - sl);
-      const reward = Math.abs(tp - price);
-      const rr = risk > 0 ? (reward / risk).toFixed(1) : '?';
-      const slPct = ((sl - price) / price * 100).toFixed(1);
-      const tpPct = ((tp - price) / price * 100).toFixed(1);
-      riskStr = `\n📐 SL: $${sl.toFixed(priceFmt)} (${slPct}%) · TP: $${tp.toFixed(priceFmt)} (+${tpPct}%) · R:R ${rr}`;
-    }
+    try {
+      const rd = await connectRedis();
+      const posRaw = await rd.get('positions:open');
+      if (posRaw) {
+        const positions = JSON.parse(posRaw);
+        const pos = positions.find(p => p.symbol === latest.symbol);
+        if (pos && pos.stopLoss && pos.takeProfit) {
+          const sl = parseFloat(pos.stopLoss);
+          const tp = parseFloat(pos.takeProfit);
+          const risk = Math.abs(price - sl);
+          const reward = Math.abs(tp - price);
+          const rr = risk > 0 ? (reward / risk).toFixed(1) : '?';
+          const slPct = ((sl - price) / price * 100).toFixed(1);
+          const tpPct = ((tp - price) / price * 100).toFixed(1);
+          riskStr = `\n📐 SL: $${sl.toFixed(priceFmt)} (${slPct}%) · TP: $${tp.toFixed(priceFmt)} (+${tpPct}%) · R:R ${rr}`;
+        }
+      }
+    } catch {}
 
     // AI reasoning (truncated)
     let aiStr = '';
@@ -1044,14 +1057,20 @@ async function checkTradeAlerts() {
     );
 
     // Post to public channels (Telegram + Discord)
-    await Promise.all([
+    console.log(`[SIGNAL] Posting BUY ${latest.symbol} to public channels...`);
+    const results = await Promise.allSettled([
       sendSignalToChannel(latest, 'buy'),
       sendDiscordSignal(latest, 'buy'),
     ]);
+    results.forEach((r, i) => {
+      const ch = i === 0 ? 'Telegram' : 'Discord';
+      if (r.status === 'fulfilled') console.log(`[SIGNAL] ✅ ${ch} BUY posted`);
+      else console.error(`[SIGNAL] ❌ ${ch} BUY failed:`, r.reason?.message || r.reason);
+    });
 
-    // Check for CLOSED positions
-    await checkClosedPositions();
-  } catch { /* silent */ }
+  } catch (err) {
+    console.error('[TRADE-ALERT] Error:', err.message || err);
+  }
 }
 
 async function checkClosedPositions() {
@@ -1066,9 +1085,14 @@ async function checkClosedPositions() {
     if (r.rows.length === 0) return;
 
     const latest = r.rows[0];
-    if (lastClosedId === null) { lastClosedId = latest.id; return; }
+    if (lastClosedId === null) {
+      lastClosedId = latest.id;
+      console.log(`[CLOSE-POLL] Initialized lastClosedId=${latest.id} (${latest.symbol})`);
+      return;
+    }
     if (latest.id <= lastClosedId) return;
 
+    console.log(`[CLOSE-POLL] New close detected: #${latest.id} ${latest.symbol} ${latest.close_reason} (prev: #${lastClosedId})`);
     lastClosedId = latest.id;
     const pnl = parseFloat(latest.pnl || 0);
     const entry = parseFloat(latest.entry_price || 0);
@@ -1112,11 +1136,19 @@ async function checkClosedPositions() {
     );
 
     // Post to public channels (Telegram + Discord)
-    await Promise.all([
+    console.log(`[SIGNAL] Posting CLOSE ${latest.symbol} to public channels...`);
+    const closeResults = await Promise.allSettled([
       sendSignalToChannel(latest, 'close'),
       sendDiscordSignal(latest, 'close'),
     ]);
-  } catch { /* silent */ }
+    closeResults.forEach((r, i) => {
+      const ch = i === 0 ? 'Telegram' : 'Discord';
+      if (r.status === 'fulfilled') console.log(`[SIGNAL] ✅ ${ch} CLOSE posted`);
+      else console.error(`[SIGNAL] ❌ ${ch} CLOSE failed:`, r.reason?.message || r.reason);
+    });
+  } catch (err) {
+    console.error('[CLOSE-ALERT] Error:', err.message || err);
+  }
 }
 
 async function checkHealthAlerts() {
@@ -1312,8 +1344,11 @@ function startScheduledReports() {
     }
   }, 60000);
 
-  // Trade alerts: check for new trades + closed positions every 15s
-  setInterval(() => checkTradeAlerts().catch(() => {}), TRADE_POLL);
+  // Trade alerts: check for new trades every 15s
+  setInterval(() => checkTradeAlerts().catch(e => console.error('[TRADE-POLL] Fatal:', e.message)), TRADE_POLL);
+
+  // Close alerts: check for closed positions every 15s (independent of trade detection)
+  setInterval(() => checkClosedPositions().catch(e => console.error('[CLOSE-POLL] Fatal:', e.message)), TRADE_POLL);
 
   // Health alerts: only on status CHANGE (healthy→down or down→healthy)
   setInterval(() => checkHealthAlerts().catch(() => {}), HEALTH_INTERVAL);
