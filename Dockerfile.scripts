@@ -4,7 +4,8 @@ FROM node:20-alpine
 WORKDIR /app
 
 # ws-server.mjs needs the ws package, auto-trader.mjs only uses native fetch
-RUN npm install --no-save ws@8 pg@8 ioredis@5 dotenv@16
+# satori + resvg for signal card image generation
+RUN npm install --no-save ws@8 pg@8 ioredis@5 dotenv@16 satori@0.12 @resvg/resvg-js@2
 
 COPY scripts/services/auto-trader.mjs scripts/services/ws-server.mjs scripts/services/telegram-interactive.mjs ./scripts/services/
 COPY scripts/lib/ ./scripts/lib/

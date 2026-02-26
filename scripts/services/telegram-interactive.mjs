@@ -13,12 +13,25 @@ import pg from 'pg';
 import Redis from 'ioredis';
 import 'dotenv/config';
 import { getToml } from '../lib/load-toml.mjs';
+import { formatBuySignal, formatCloseSignal } from '../lib/signal-formatter.mjs';
+
+let renderBuyCard, renderCloseCard;
+try {
+  const renderer = await import('../lib/signal-card-renderer.mjs');
+  renderBuyCard = renderer.renderBuyCard;
+  renderCloseCard = renderer.renderCloseCard;
+  console.log('✅ Signal card renderer loaded (image mode)');
+} catch (e) {
+  console.log('⚠️ Signal card renderer not available, using text mode:', e.message);
+}
 
 const { Client } = pg;
 
 // ─── Config ──────────────────────────────────────────────
 const BOT_TOKEN = process.env.TELEGRAM_INTERACTIVE_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const SIGNAL_CHANNEL_ID = process.env.TELEGRAM_SIGNAL_CHANNEL_ID;
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_SIGNAL_WEBHOOK_URL;
 const API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const DB_URL = process.env.POSTGRES_URL ||
   `postgresql://postgres:${process.env.POSTGRES_PASSWORD || 'password'}@${process.env.DB_HOST || 'localhost'}:5432/cryonix`;
@@ -46,6 +59,178 @@ async function sendMessage(text, chatId = CHAT_ID) {
   } catch (e) {
     console.error('Telegram send error:', e.message);
     return null;
+  }
+}
+
+async function sendPhoto(pngBuffer, caption, chatId = CHAT_ID) {
+  try {
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('photo', new Blob([pngBuffer], { type: 'image/png' }), 'signal.png');
+    if (caption) {
+      form.append('caption', caption.substring(0, 1024));
+      form.append('parse_mode', 'HTML');
+    }
+    const res = await fetch(`${API}/sendPhoto`, { method: 'POST', body: form });
+    return res.json();
+  } catch (e) {
+    console.error('Telegram sendPhoto error:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Send signal to public channel: image card with text fallback
+ */
+async function sendSignalToChannel(trade, type) {
+  if (!SIGNAL_CHANNEL_ID) return;
+  try {
+    const renderer = type === 'buy' ? renderBuyCard : renderCloseCard;
+    const formatter = type === 'buy' ? formatBuySignal : formatCloseSignal;
+    const caption = formatter(trade);
+
+    if (renderer) {
+      const png = await renderer(trade);
+      await sendPhoto(png, caption, SIGNAL_CHANNEL_ID);
+    } else {
+      await sendMessage(caption, SIGNAL_CHANNEL_ID);
+    }
+  } catch (e) {
+    // Fallback to text if image fails
+    console.error('Signal card render failed, using text:', e.message);
+    const formatter = type === 'buy' ? formatBuySignal : formatCloseSignal;
+    try { await sendMessage(formatter(trade), SIGNAL_CHANNEL_ID); } catch {}
+  }
+}
+
+// ─── Discord helpers ──────────────────────────────────────
+const DISCORD_COLORS = { green: 0x22c55e, red: 0xef4444, cyan: 0x00d4ff, muted: 0x64748b };
+
+function fmtPriceDiscord(price) {
+  const p = parseFloat(price || 0);
+  if (p < 0.01) return p.toFixed(8);
+  if (p < 1) return p.toFixed(6);
+  if (p < 100) return p.toFixed(4);
+  return p.toFixed(2);
+}
+
+function fmtPatternsDiscord(patternStr) {
+  const labels = {
+    dip_buy: 'Dip Buy', deep_value_crash: 'Deep Value Crash', bollinger_squeeze: 'Bollinger Squeeze',
+    rsi_oversold: 'RSI Oversold', rsi_overbought: 'RSI Overbought', volume_spike_up: 'Volume Spike',
+    macd_bullish_cross: 'MACD Bullish Cross', ema_bullish_cross: 'EMA Bullish Cross', momentum_gainer: 'Momentum Gainer',
+  };
+  if (!patternStr) return 'Mixed';
+  return patternStr.split(',').map(p => labels[p.trim()] || p.trim()).join(' + ');
+}
+
+function buildBuyEmbed(trade) {
+  const pair = trade.symbol || '?';
+  const entry = fmtPriceDiscord(trade.entry_price || trade.entryPrice);
+  const conf = Math.round(parseFloat(trade.confidence || 0));
+  const patterns = fmtPatternsDiscord(trade.pattern);
+  const meta = typeof trade.metadata === 'object' ? trade.metadata : {};
+  const slRaw = trade.stop_loss || trade.stopLoss || meta.stopLoss || null;
+  const tpRaw = trade.take_profit || trade.takeProfit || meta.takeProfit || null;
+  const sl = slRaw ? fmtPriceDiscord(slRaw) : null;
+  const tp = tpRaw ? fmtPriceDiscord(tpRaw) : null;
+
+  const fields = [
+    { name: 'Entry', value: `\`$${entry}\``, inline: true },
+  ];
+  if (sl) fields.push({ name: 'Stop Loss', value: `\`$${sl}\``, inline: true });
+  if (tp) fields.push({ name: 'Take Profit', value: `\`$${tp}\``, inline: true });
+  if (sl && tp) {
+    const risk = Math.abs(parseFloat(entry) - parseFloat(sl));
+    const reward = Math.abs(parseFloat(tp) - parseFloat(entry));
+    if (risk > 0) fields.push({ name: 'R:R', value: `1:${(reward / risk).toFixed(1)}`, inline: true });
+  }
+  fields.push({ name: 'Pattern', value: patterns, inline: true });
+  fields.push({ name: 'Confidence', value: `**${conf}%**`, inline: true });
+
+  return {
+    color: DISCORD_COLORS.green,
+    author: { name: 'CRYONIX' },
+    title: `BUY SIGNAL — ${pair}`,
+    fields,
+    image: { url: 'attachment://signal.png' },
+    footer: { text: 'Powered by Cryonix' },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function buildCloseEmbed(position) {
+  const pair = position.symbol || '?';
+  const entry = fmtPriceDiscord(position.entry_price || position.entryPrice);
+  const exit = fmtPriceDiscord(position.exit_price || position.exitPrice);
+  const pnl = parseFloat(position.pnl || 0);
+  const entryNum = parseFloat(position.entry_price || position.entryPrice || 0);
+  const exitNum = parseFloat(position.exit_price || position.exitPrice || 0);
+  const pnlPct = entryNum > 0 ? ((exitNum - entryNum) / entryNum * 100).toFixed(2) : '0';
+  const holdH = parseFloat(position.holding_hours || 0);
+  const holdStr = holdH < 1 ? `${Math.round(holdH * 60)}min` : `${holdH.toFixed(1)}h`;
+  const patterns = fmtPatternsDiscord(position.pattern);
+
+  const isWin = pnl > 0;
+  const isLoss = pnl < 0;
+  const resultLabel = isWin ? 'WIN' : isLoss ? 'LOSS' : 'BREAKEVEN';
+  const color = isWin ? DISCORD_COLORS.green : isLoss ? DISCORD_COLORS.red : DISCORD_COLORS.muted;
+
+  const reasonMap = {
+    'STOP_LOSS': 'Stop Loss', 'TAKE_PROFIT': 'Take Profit', 'TRAILING_STOP': 'Trailing Stop',
+    'STAGNATION': 'Stagnation', 'NATIVE_SL': 'Stop Loss', 'MANUAL': 'Manual', 'DUST': 'Dust',
+  };
+  const reason = reasonMap[position.close_reason || position.closeReason] || position.close_reason || position.closeReason || '?';
+
+  return {
+    color,
+    author: { name: 'CRYONIX' },
+    title: `CLOSED — ${resultLabel} — ${pair}`,
+    description: `**${pnlPct >= 0 ? '+' : ''}${pnlPct}%**`,
+    fields: [
+      { name: 'Entry', value: `\`$${entry}\``, inline: true },
+      { name: 'Exit', value: `\`$${exit}\``, inline: true },
+      { name: 'Duration', value: holdStr, inline: true },
+      { name: 'Close Reason', value: reason, inline: true },
+      { name: 'Pattern', value: patterns, inline: true },
+    ],
+    image: { url: 'attachment://signal.png' },
+    footer: { text: 'Powered by Cryonix' },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+async function sendDiscordSignal(trade, type) {
+  if (!DISCORD_WEBHOOK_URL) return;
+  try {
+    const embed = type === 'buy' ? buildBuyEmbed(trade) : buildCloseEmbed(trade);
+    const renderer = type === 'buy' ? renderBuyCard : renderCloseCard;
+
+    // Try to attach image card
+    if (renderer) {
+      try {
+        const png = await renderer(trade);
+        const form = new FormData();
+        form.append('payload_json', JSON.stringify({ embeds: [embed] }));
+        form.append('files[0]', new Blob([png], { type: 'image/png' }), 'signal.png');
+        const res = await fetch(DISCORD_WEBHOOK_URL, { method: 'POST', body: form });
+        if (!res.ok) console.error('Discord webhook error:', res.status, await res.text());
+        return;
+      } catch (e) {
+        console.error('Discord image failed, sending embed only:', e.message);
+      }
+    }
+
+    // Fallback: embed without image
+    delete embed.image;
+    const res = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ embeds: [embed] }),
+    });
+    if (!res.ok) console.error('Discord webhook error:', res.status, await res.text());
+  } catch (e) {
+    console.error('Discord signal error:', e.message);
   }
 }
 
@@ -752,6 +937,13 @@ const COMMANDS = {
 async function handleCommand(text, chatId) {
   const cmd = text.split(/\s+/)[0].toLowerCase().replace(/@\w+$/, '');
   if (!cmd.startsWith('/')) return;
+
+  // Auth check: only allow commands from the configured admin chat
+  if (CHAT_ID && String(chatId) !== String(CHAT_ID)) {
+    console.log(`Unauthorized command ${cmd} from chat ${chatId} (expected ${CHAT_ID})`);
+    return;
+  }
+
   const handler = COMMANDS[cmd];
   if (!handler) {
     await sendMessage(`Unknown command: <code>${cmd}</code>\nType /help for available commands.`, chatId);
@@ -851,6 +1043,12 @@ async function checkTradeAlerts() {
       `\n\n⏱ ${new Date(latest.timestamp).toLocaleString('sv-SE', { timeZone: 'UTC' })}`
     );
 
+    // Post to public channels (Telegram + Discord)
+    await Promise.all([
+      sendSignalToChannel(latest, 'buy'),
+      sendDiscordSignal(latest, 'buy'),
+    ]);
+
     // Check for CLOSED positions
     await checkClosedPositions();
   } catch { /* silent */ }
@@ -912,6 +1110,12 @@ async function checkClosedPositions() {
       `Mönster: ${latest.pattern || '?'}` +
       runningStr
     );
+
+    // Post to public channels (Telegram + Discord)
+    await Promise.all([
+      sendSignalToChannel(latest, 'close'),
+      sendDiscordSignal(latest, 'close'),
+    ]);
   } catch { /* silent */ }
 }
 
