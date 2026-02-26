@@ -25,7 +25,7 @@
       "pattern": "Detect",
       "filter": "Filter",
       "ai": "Validate",
-      "execute": "Execute"
+      "execute": "Deliver"
     },
     "stats": {
       "layers": "Intelligence Layers",
@@ -79,7 +79,7 @@
     "empty": "Još nema dovoljno podataka. Statistika se ažurira nakon završetka transakcija.",
     "level_banner": {
       "title": "Level 1: Growth Engine (Free)",
-      "desc": "Optimized for small assets (400 - 1,000 SEK). Scale your capital safely with AI-validated spot signals."
+      "desc": "Optimized for growing small investments. Scale your capital safely with AI-validated spot signals. Tier 2-4 available for higher trading volumes."
     }
   },
   "preview": {
@@ -110,7 +110,7 @@
     "mcp_server": {
       "title": "Cryonix MCP Server - AI Signals for Agents",
       "subtitle": "Connect your AI agents (Claude, OpenHands, GPT) directly to Cryonix trading signals using the Model Context Protocol.",
-      "intro": "The future of trading is autonomous. With the Cryonix MCP Server, you can give your AI agents the ability to read real-time market signals, analyze performance, and execute trades based on our AI-validated data.",
+      "intro": "The future of trading is autonomous. With the Cryonix MCP Server, you can give your AI agents the ability to read real-time market signals, analyze performance, and act on our AI-validated data.",
       "setup_claude": "Setting up with Claude Desktop",
       "setup_openhands": "Setting up with OpenHands",
       "features": "Available Tools & Resources"
@@ -136,7 +136,7 @@
     },
     "ai_brain": {
       "title": "The Cryonix Brain: Multi-Model Orchestration",
-      "subtitle": "Why one AI is not enough. How we route tasks to specialized models like Grok and Claude for peak performance.",
+      "subtitle": "Why one AI is not enough. How we route tasks to specialized models like Grok, Claude, GPT, and Gemini for peak performance.",
       "intro": "At Cryonix, we don't just use 'AI'. We run a sophisticated orchestration layer that assigns every task to the specific model best suited for the job."
     },
     "drawdown_truth": {
@@ -153,7 +153,7 @@
   "layers": {
     "label": "Under the Hood",
     "title": "10 Intelligence Layers",
-    "subtitle": "Every signal passes through 10 independent analysis layers before it reaches your wallet. Each layer adds context, filters noise, and increases conviction. No other system comes close.",
+    "subtitle": "Every signal passes through 10 independent analysis layers before it reaches you. Each layer adds context, filters noise, and increases conviction. No other signal service comes close.",
     "items": {
       "0": {
         "title": "QuantGuild Technical Analysis",
@@ -298,19 +298,19 @@
     "reasons": {
       "0": {
         "title": "Fully Automated",
-        "description": "No humans manually drawing charts. Our Python engine scans 15 pairs every 10 seconds. Zero labor cost per signal."
+        "description": "No humans manually drawing charts. Our engine continuously scans the market and generates signals autonomously. Zero labor cost per signal."
       },
       "1": {
         "title": "Radical Transparency",
         "description": "Every trade is logged, every win and loss is public. We don't need to hide behind a VIP paywall because our results speak for themselves."
       },
       "2": {
-        "title": "Minimal Infrastructure",
-        "description": "Runs on a single $15/month Azure VM. Grok AI costs ~$5/month. No expensive data feeds, no Bloomberg terminal, no team of analysts."
+        "title": "Built to Scale",
+        "description": "Lean architecture with no expensive data feeds, no Bloomberg terminal, no team of analysts. Automation keeps overhead near zero."
       },
       "3": {
         "title": "Community First",
-        "description": "We're building a community of informed traders, not a subscription business. Premium API access and advanced features fund development."
+        "description": "We're building a community of informed traders, not a subscription business. The signals are free because better traders make a stronger community."
       }
     }
   },

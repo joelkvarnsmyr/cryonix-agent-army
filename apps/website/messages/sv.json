@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Cryonix - Bästa Gratis Kryptosignaler 2026",
-    "description": "Pricksäkra AI-drivna kryptosignaler. 10 intelligenslager, 8 mönsterdetektorer, Grok AI-validering. 100% gratis spot-signaler för Bitcoin och Altcoins."
+    "description": "Pricksäkra AI-drivna kryptosignaler. 10 intelligenslager, 8 mönsterdetektorer, multi-AI-validering (Grok, Claude, GPT, Gemini). 100% gratis spot-signaler för Bitcoin och Altcoins."
   },
   "nav": {
     "home": "Hem",
@@ -29,7 +29,7 @@
     "mcp_server": {
       "title": "Cryonix MCP Server - AI-signaler för agenter",
       "subtitle": "Anslut dina AI-agenter (Claude, OpenHands, GPT) direkt till Cryonix-signaler via Model Context Protocol.",
-      "intro": "Framtidens trading är autonom. Med Cryonix MCP Server kan du ge dina AI-agenter förmågan att läsa marknadssignaler i realtid, analysera prestanda och agera på AI-validerad data.",
+      "intro": "Framtidens trading är autonom. Med Cryonix MCP Server kan du ge dina AI-agenter förmågan att läsa marknadssignaler i realtid, analysera prestanda och agera utifrån AI-validerad data.",
       "setup_claude": "Installation för Claude Desktop",
       "setup_openhands": "Installation för OpenHands",
       "features": "Tillgängliga verktyg och resurser"
@@ -51,7 +51,7 @@
     },
     "ai_brain": {
       "title": "Cryonix Brain: Multi-Model Orchestration",
-      "subtitle": "Varför en AI inte räcker. Hur vi skickar uppgifter till specialiserade modeller som Grok och Claude för maximal prestanda.",
+      "subtitle": "Varför en AI inte räcker. Hur vi skickar uppgifter till specialiserade modeller som Grok, Claude, GPT och Gemini för maximal prestanda.",
       "intro": "På Cryonix använder vi inte bara 'AI'. Vi har ett avancerat orkestreringslager som tilldelar varje uppgift till den specifika modell som är bäst lämpad för jobbet."
     },
     "drawdown_truth": {
@@ -79,7 +79,7 @@
       "pattern": "Detektera",
       "filter": "Filtrera",
       "ai": "Validera",
-      "execute": "Exekvera"
+      "execute": "Leverera"
     },
     "stats": {
       "layers": "Intelligenslager",
@@ -106,7 +106,7 @@
   "layers": {
     "label": "Under huven",
     "title": "10 intelligenslager",
-    "subtitle": "Varje signal passerar 10 oberoende analyslager innan den når din plånbok. Varje lager lägger till kontext, filtrerar brus och ökar övertygelse. Inget annat system kommer i närheten.",
+    "subtitle": "Varje signal passerar 10 oberoende analyslager innan den når dig. Varje lager lägger till kontext, filtrerar brus och ökar övertygelse. Ingen annan signaltjänst kommer i närheten.",
     "items": {
       "0": {
         "title": "QuantGuild Teknisk Analys",
@@ -251,19 +251,19 @@
     "reasons": {
       "0": {
         "title": "Helt automatiserat",
-        "description": "Inga människor som manuellt ritar diagram. Vår Python-motor skannar 15 par var 10:e sekund. Noll arbetskostnad per signal."
+        "description": "Inga människor som manuellt ritar diagram. Vår motor skannar marknaden kontinuerligt och genererar signaler autonomt. Noll arbetskostnad per signal."
       },
       "1": {
         "title": "Radikal transparens",
         "description": "Varje trade loggas, varje vinst och förlust är offentlig. Vi behöver inte gömma oss bakom en VIP-betalvägg för våra resultat talar för sig själva."
       },
       "2": {
-        "title": "Minimal infrastruktur",
-        "description": "Körs på en enda Azure VM för ~$15/månad. Grok AI kostar ~$5/månad. Inga dyra dataflöden, inget Bloomberg-terminal, inget analytikerteam."
+        "title": "Byggt för att skala",
+        "description": "Slimmad arkitektur utan dyra dataflöden, inget Bloomberg-terminal, inget analytikerteam. Automatisering håller driftkostnaderna nära noll."
       },
       "3": {
         "title": "Community först",
-        "description": "Vi bygger en gemenskap av informerade traders, inte en prenumerationsverksamhet. Premium API-åtkomst och avancerade funktioner finansierar utvecklingen."
+        "description": "Vi bygger en gemenskap av informerade traders, inte en prenumerationsverksamhet. Signalerna är gratis för att bättre traders skapar en starkare community."
       }
     }
   },
@@ -342,7 +342,7 @@
     "empty": "Inte tillräckligt med data ännu. Statistiken uppdateras när trades slutförs.",
     "level_banner": {
       "title": "Nivå 1: Growth Engine (Gratis)",
-      "desc": "Anpassad för små tillgångar (400 - 1 000 kr). Låt ditt kapital växa säkert med AI-validerade spot-signaler."
+      "desc": "Optimerad för att växa små investeringar. Låt ditt kapital växa säkert med AI-validerade spot-signaler. Tier 2-4 tillgängliga för högre handelsvolymer."
     }
   },
   "tooltips": {
