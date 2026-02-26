@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 71% 4%;
+    --foreground: 214 20% 90%;
+    --card: 220 55% 7%;
+    --card-foreground: 214 20% 90%;
+    --popover: 220 55% 7%;
+    --popover-foreground: 214 20% 90%;
+    --primary: 191 100% 50%;
+    --primary-foreground: 222 84% 4.9%;
+    --primary-glow: 191 100% 50%;
+    --secondary: 218 45% 13%;
+    --secondary-foreground: 214 20% 90%;
+    --muted: 218 40% 14%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 218 45% 13%;
+    --accent-foreground: 214 20% 90%;
+    --accent-glow: 191 100% 50%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+    --success: 160 84% 39%;
+    --success-foreground: 210 40% 98%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 222 84% 4.9%;
+    --border: 218 35% 16%;
+    --input: 218 35% 16%;
+    --ring: 191 100% 50%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+@layer utilities {
+  .text-glow-cyan {
+    text-shadow: 0 0 20px hsl(191 100% 50% / 0.4), 0 0 40px hsl(191 100% 50% / 0.15);
+  }
+  .text-glow-green {
+    text-shadow: 0 0 20px hsl(160 84% 39% / 0.4), 0 0 40px hsl(160 84% 39% / 0.15);
+  }
+  .text-glow-red {
+    text-shadow: 0 0 20px hsl(0 72% 51% / 0.4), 0 0 40px hsl(0 72% 51% / 0.15);
+  }
+  .glass-card {
+    background: hsl(220 55% 7% / 0.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid hsl(218 35% 16% / 0.6);
+  }
+  .glass-card-elevated {
+    background: hsl(220 55% 9% / 0.8);
+    backdrop-filter: blur(16px);
+    border: 1px solid hsl(218 35% 20% / 0.6);
+  }
+  .dot-grid {
+    background-image: radial-gradient(circle, hsl(218 35% 20% / 0.3) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+}
+
+@keyframes scan {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(218 35% 18%);
+  border-radius: 3px;
+}

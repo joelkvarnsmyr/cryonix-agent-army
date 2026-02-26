@@ -1,0 +1,374 @@
+{
+  "meta": {
+    "title": "Cryonix - Bästa Gratis Kryptosignaler 2026",
+    "description": "Pricksäkra AI-drivna kryptosignaler. 10 intelligenslager, 8 mönsterdetektorer, Grok AI-validering. 100% gratis spot-signaler för Bitcoin och Altcoins."
+  },
+  "nav": {
+    "home": "Hem",
+    "signals": "Signaler",
+    "performance": "Prestanda",
+    "guides": "Guider",
+    "account": "Konto",
+    "telegram": "Telegram-kanal"
+  },
+  "guides": {
+    "index": {
+      "title": "Guider & Resurser",
+      "subtitle": "Lär dig hur du använder AI för kryptohandel, sätter upp egna AI-agenter och maximerar din fördel på marknaden."
+    },
+    "best_signals": {
+      "title": "Bästa Kryptosignaler för Telegram 2026",
+      "subtitle": "Hitta de mest pricksäkra AI-drivna och manuella signalgrupperna för att maximera din trading.",
+      "intro": "Kryptomarknaden sover aldrig, och det gör inte våra algoritmer heller. Att hitta pålitliga kryptosignaler på Telegram kan vara en djungel av bedrägerier. I denna guide går vi igenom de bästa leverantörerna och förklarar varför AI-validering förändrar allt.",
+      "table_of_contents": "Innehållsförteckning",
+      "why_ai": "Varför AI-signaler är överlägsna",
+      "top_list": "Topp 5 Leverantörer av Kryptosignaler",
+      "how_to_choose": "Hur man väljer en signalleverantör",
+      "faq": "Vanliga frågor"
+    },
+    "mcp_server": {
+      "title": "Cryonix MCP Server - AI-signaler för agenter",
+      "subtitle": "Anslut dina AI-agenter (Claude, OpenHands, GPT) direkt till Cryonix-signaler via Model Context Protocol.",
+      "intro": "Framtidens trading är autonom. Med Cryonix MCP Server kan du ge dina AI-agenter förmågan att läsa marknadssignaler i realtid, analysera prestanda och agera på AI-validerad data.",
+      "setup_claude": "Installation för Claude Desktop",
+      "setup_openhands": "Installation för OpenHands",
+      "features": "Tillgängliga verktyg och resurser"
+    },
+    "fail_closed": {
+      "title": "AI-kryptohandel: Fail-Closed-metoden",
+      "subtitle": "Varför säkerhet går före allt i Cryonix-ekosystem och hur vi förhindrar katastrofala förluster.",
+      "intro": "I kryptovärldens volatilitet misslyckas de flesta botar för att de är programmerade att alltid vara på marknaden. Cryonix använder en 'Fail-Closed'-arkitektur: om vår AI-validering inte är 100% säker, sker ingen affär."
+    },
+    "scam_spotting": {
+      "title": "Varför 99% av alla kryptosignaler på Telegram är bedrägerier",
+      "subtitle": "Lär dig känna igen falska vinstprocent och skydda ditt kapital från signalbedrägerier.",
+      "intro": "Löften om 'Diamond Hands' och '1000% vinst' finns överallt. Vi avslöjar hur signalgrupper manipulerar data och varför transparens är den enda vägen framåt."
+    },
+    "bollinger_squeeze": {
+      "title": "Trading med Bollinger Squeeze och AI",
+      "subtitle": "Hur Cryonix identifierar sannolika volatilitetsutbrott innan de sker.",
+      "intro": "Bollinger Squeeze är ett av de mest kraftfulla tekniska mönstren. Genom att kombinera det med AI-marknadskontext kan vi filtrera bort falska utbrott och fånga den riktiga rörelsen."
+    },
+    "ai_brain": {
+      "title": "Cryonix Brain: Multi-Model Orchestration",
+      "subtitle": "Varför en AI inte räcker. Hur vi skickar uppgifter till specialiserade modeller som Grok och Claude för maximal prestanda.",
+      "intro": "På Cryonix använder vi inte bara 'AI'. Vi har ett avancerat orkestreringslager som tilldelar varje uppgift till den specifika modell som är bäst lämpad för jobbet."
+    },
+    "drawdown_truth": {
+      "title": "Sanningen om Drawdowns: Varför de flesta signalgrupper förlorar 70%",
+      "subtitle": "Den mörka sidan av kryptosignaler som VIP-grupper aldrig pratar om. Lär dig varför Cryonix är byggt för överlevnad.",
+      "intro": "I världen av kryptosignaler är förluster den hemlighet alla bevarar. Medan 'VIP'-grupper visar skärmdumpar på 1000% vinster, döljer de de 70% drawdowns som raderar ut småsparare."
+    },
+    "open_claw": {
+      "title": "Anslut Cryonix MCP till Open Claw (OpenHands)",
+      "subtitle": "En steg-för-steg guide för nybörjare att koppla sin AI-agent till realtidssignaler.",
+      "intro": "Open Claw (OpenHands) är en kraftfull AI-agent. Genom att ansluta Cryonix MCP får din agent 'Marknadsmedvetenhet'—vilket låter den analysera eller handla krypto autonomt."
+    }
+  },
+  "hero": {
+    "badge": "Autonom AI-trading",
+    "title": "AI-drivna kryptosignaler",
+    "title_line1": "10 intelligenslager.",
+    "title_line2": "Helt gratis.",
+    "subtitle": "Varje signal passerar 8 mönsterdetektorer, multitidsrams-analys, makrointelligens och Grok AI-validering innan den når dig. Det mest transparenta tradingsystemet som någonsin byggts.",
+    "cta_signals": "Se signaler",
+    "cta_telegram": "Telegram",
+    "cta_discord": "Discord",
+    "pipeline": {
+      "scan": "Skanna",
+      "pattern": "Detektera",
+      "filter": "Filtrera",
+      "ai": "Validera",
+      "execute": "Exekvera"
+    },
+    "stats": {
+      "layers": "Intelligenslager",
+      "patterns": "Mönsterdetektorer",
+      "filters": "Kvalitetsfilter",
+      "uptime": "Drifttid"
+    }
+  },
+  "features": {
+    "title": "Så funkar det",
+    "pattern": {
+      "title": "Mönsterdetektion",
+      "description": "8 tekniska analysmonster skannar 15 kryptopar var 10:e sekund — Dip Buy, Bollinger Squeeze, RSI, MACD, EMA, Volume Spike med mera."
+    },
+    "validation": {
+      "title": "AI-validering",
+      "description": "Varje signal passerar AI-validering som blandar teknisk konfidens med marknadskontext. Fail-closed — om AI är otillgänglig avvisas signalen."
+    },
+    "risk": {
+      "title": "Riskhantering",
+      "description": "Kapitalallokering, positionsgränser, stop-loss, trailing stops, stagnationstimeout och marknadsregimsdetektion skyddar varje trade."
+    }
+  },
+  "layers": {
+    "label": "Under huven",
+    "title": "10 intelligenslager",
+    "subtitle": "Varje signal passerar 10 oberoende analyslager innan den når din plånbok. Varje lager lägger till kontext, filtrerar brus och ökar övertygelse. Inget annat system kommer i närheten.",
+    "items": {
+      "0": {
+        "title": "QuantGuild Teknisk Analys",
+        "short": "13 indikatorer, 8 mönsterdetektorer som skannar var 10:e sekund.",
+        "detail": "Den matematiska kärnan. Beräknar RSI, MACD, Bollinger-band, EMA-korsningar, ATR, ADX och volymkvoter på 100 ljus av historik. Detekterar 8 mönster: Dip Buy, Deep Value Crash, Bollinger Squeeze, RSI Oversold, MACD Cross, EMA Cross, Volume Spike och Momentum Gainer.",
+        "tags": [
+          "RSI",
+          "MACD",
+          "Bollinger",
+          "EMA",
+          "ATR",
+          "ADX",
+          "Volym",
+          "100 ljus"
+        ]
+      },
+      "1": {
+        "title": "Multitidsrams-bekräftelse",
+        "short": "15-minuterssignaler verifieras mot 1h, 4h och dagliga trender.",
+        "detail": "Ett 15-minutersutbrott betyder ingenting om tim- och 4-timmarsdiagrammen inte håller med. Vårt HTF-vetosystem kräver EMA-anpassning över flera tidsramar. Om 1h och 4h båda är baissiga blockeras köpsignaler — förhindrar falska utbrott.",
+        "tags": [
+          "15m primär",
+          "1h bekräftelse",
+          "4h veto",
+          "1d kontext"
+        ]
+      },
+      "2": {
+        "title": "Smart Dip Hunter-strategi",
+        "short": "Backtestvaliderad 80-100% vinstprocent på mean-reversion-mönster.",
+        "detail": "Vår data visar att dip/värdemönster (DIP_BUY, DEEP_VALUE_CRASH, BOLLINGER_SQUEEZE) har 80-100% vinstprocent jämfört med 0-25% för trendföljande signaler. Smart Dip Hunter kräver detta: varje signal MÅSTE innehålla ett värdemönster.",
+        "tags": [
+          "80-100% WR",
+          "Mean reversion",
+          "Dip-fokus",
+          "Backtestbevisad"
+        ]
+      },
+      "3": {
+        "title": "GainerScanner",
+        "short": "Topprörare får +10% konfidensboost när de matchar signaler.",
+        "detail": "Var 15:e minut rankar vi alla symboler efter 1h, 4h och 24h prisförändring. När en teknisk signal matchar en topprörare (+3% på 1 timme) ökar konfidens med +10%.",
+        "tags": [
+          "1h rörare",
+          "4h rörare",
+          "+10% boost",
+          "Var 15:e min"
+        ]
+      },
+      "4": {
+        "title": "CoinMarketCap Makrointelligens",
+        "short": "Fear & Greed-index, BTC-dominans, marknadsvärdesfilter.",
+        "detail": "Global makrokontext från CoinMarketCap: Fear & Greed-justeringar (+8% vid extrem rädsla, -10% vid extrem girighet), BTC-dominansstraff för altcoins, marknadsvärdes-rankingsfilter (topp 500), FDV/MC-utspädningsfilter.",
+        "tags": [
+          "Fear & Greed",
+          "BTC-dominans",
+          "MC-ranking",
+          "FDV-filter"
+        ]
+      },
+      "5": {
+        "title": "Telegram-signalkonsensus",
+        "short": "Korsrefererar 4+ kanaler för flerkälls-bekräftelse.",
+        "detail": "Realtidsövervakning av professionella Telegram-signalkanaler. Multiformat-parser hanterar Cornix, enkel text och emojisignaler. När 2-3 kanaler enas om samma symbol ökar konfidens +8-12%.",
+        "tags": [
+          "4+ kanaler",
+          "Realtid",
+          "Multiformat",
+          "+12% boost"
+        ]
+      },
+      "6": {
+        "title": "X/Twitter Sentimentanalys",
+        "short": "Avvisar automatiskt signaler vid hack-, exploit- eller rug pull-händelser.",
+        "detail": "Skannar X/Twitter efter säkerhetsvarningar: hack, exploit, rug pull, avlistning, bedrägeri. Om det upptäcks för en symbol avvisas köpsignalen omedelbart. Positiv sentiment ger +5-8% boost.",
+        "tags": [
+          "Säkerhetsvarningar",
+          "Auto-avvisning",
+          "Sentimentboost",
+          "1h TTL"
+        ]
+      },
+      "7": {
+        "title": "Nyhets-RSS-sentiment",
+        "short": "Cointelegraph och CoinDesk sentimentanalys var 15:e minut.",
+        "detail": "Parsar RSS-flöden från stora kryptonyhetskanaler. Nyckelordsbaserad sentimentpoäng upptäcker positiv (adoption, uppgång) och negativ (förbud, krasch, exploit) kontext per symbol.",
+        "tags": [
+          "Cointelegraph",
+          "CoinDesk",
+          "Nyckelord",
+          "15min cykel"
+        ]
+      },
+      "8": {
+        "title": "Grok AI-validering",
+        "short": "3 specialiserade AI-promptar: kraschspecialist, dipspecialist, trendanalytiker.",
+        "detail": "Varje signal får ett second opinion från Grok-4.1 med högansträngningsresonemang. Tre specialiserade promptlägen: Deep Value Crash, Dip Buy (förväntar baissig HTF) och Trendföljning. Konfidens blandas: 60% teknik + 40% AI. Fail-closed: om AI är otillgänglig avvisas signalen.",
+        "tags": [
+          "Grok-4.1",
+          "3 promptar",
+          "60/40 blandning",
+          "Fail-closed"
+        ]
+      },
+      "9": {
+        "title": "Expected Value (EV)-modell",
+        "short": "Avvisar mönster med historiskt negativ lönsamhet.",
+        "detail": "Daglig kalibrering analyserar alla stängda trades under 30 dagar. Beräknar EV per mönster: vinstprocent, genomsnittlig vinst/förlust, totalt förväntat värde. Mönster med negativ EV blockeras automatiskt.",
+        "tags": [
+          "30 dagars lookback",
+          "EV per mönster",
+          "Auto-blockering",
+          "Självkalibrerande"
+        ]
+      }
+    }
+  },
+  "comparison": {
+    "label": "Skillnaden",
+    "title": "Cryonix vs. VIP-signalgrupper",
+    "subtitle": "De flesta Telegram-signalgrupper tar $50-300/månad för en människa med ett diagram. Här är vad du får för $0.",
+    "feature": "Funktion",
+    "vip_groups": "VIP-grupper",
+    "price": "Månadspris",
+    "rows": {
+      "free": "100% gratis, ingen registrering",
+      "ai_validated": "AI validerar varje signal",
+      "transparent_pnl": "Verifierbar P&L-historik",
+      "backtested": "Backtestade strategier",
+      "risk_management": "Automatisk riskhantering",
+      "auto_sl_tp": "Auto stop-loss & trailing stop",
+      "self_improving": "Självförbättrande algoritmer",
+      "fail_closed": "Fail-closed säkerhetsarkitektur",
+      "multi_source": "Multikälls-intelligens (7+ flöden)",
+      "open_history": "Komplett öppen handelshistorik"
+    }
+  },
+  "why_free": {
+    "label": "Ingen hake",
+    "title": "Varför Cryonix är gratis",
+    "subtitle": "Vi tror att den bästa signaltjänsten inte ska kosta något. Så här gör vi det möjligt.",
+    "reasons": {
+      "0": {
+        "title": "Helt automatiserat",
+        "description": "Inga människor som manuellt ritar diagram. Vår Python-motor skannar 15 par var 10:e sekund. Noll arbetskostnad per signal."
+      },
+      "1": {
+        "title": "Radikal transparens",
+        "description": "Varje trade loggas, varje vinst och förlust är offentlig. Vi behöver inte gömma oss bakom en VIP-betalvägg för våra resultat talar för sig själva."
+      },
+      "2": {
+        "title": "Minimal infrastruktur",
+        "description": "Körs på en enda Azure VM för ~$15/månad. Grok AI kostar ~$5/månad. Inga dyra dataflöden, inget Bloomberg-terminal, inget analytikerteam."
+      },
+      "3": {
+        "title": "Community först",
+        "description": "Vi bygger en gemenskap av informerade traders, inte en prenumerationsverksamhet. Premium API-åtkomst och avancerade funktioner finansierar utvecklingen."
+      }
+    }
+  },
+  "risk_section": {
+    "label": "Kapitalskydd",
+    "title": "5-lagers riskarkitektur",
+    "subtitle": "De flesta botar spränger konton. Vi byggde 5 oberoende risklager som skyddar ditt kapital även när marknaderna går vilda.",
+    "numbers": {
+      "0": {
+        "value": "5",
+        "label": "Strömbrytare"
+      },
+      "1": {
+        "value": "12",
+        "label": "Sekventiella filter"
+      },
+      "2": {
+        "value": "5",
+        "label": "Exitmekanismer"
+      },
+      "3": {
+        "value": "0.5x",
+        "label": "Kelly-fraktion"
+      }
+    },
+    "layers": {
+      "0": {
+        "title": "Strömbrytare (Circuit Breakers)",
+        "description": "5 automatiska strömbrytare: daglig förlustgräns (5%), veckoförlustgräns (10%), skydd vid upprepade förluster (5+), ATR-volatilitetspaus och per-symbol-nedkylning. Handeln stoppas automatiskt."
+      },
+      "1": {
+        "title": "12 sekventiella kvalitetsfilter",
+        "description": "Varje signal passerar 12 filter i ordning: konfidenströskel, risk/reward-kvot, ordervärde, dagsgränser, positionsantal, spreadkontroll, EV-modell, dip-fokus, HTF-veto, sentimentkontroll, AI-validering och kapitalallokering."
+      },
+      "2": {
+        "title": "5-vägs positionsexitsystem",
+        "description": "Take-profit (ATR-baserad), stop-loss (native exchangeorder), trailing stop (aktiveras vid +3%), stagnationstimeout (8 timmar) och dust-prevention (säljer innan minimalt ordervärde nås)."
+      },
+      "3": {
+        "title": "Kelly Criterion positionsstorlek",
+        "description": "Positionsstorlekar beräknas med Kelly Criterion vid 0.5x (halv-Kelly för stabilitet). Ingen enskild trade riskerar mer än 35% av kapitalet."
+      },
+      "4": {
+        "title": "Marknadsregimsdetektion",
+        "description": "Klassificerar marknaden som Trending, Ranging eller Volatile med ADX och ATR-expansion. Kapitalallokering skiftar automatiskt: volatila marknader ökar reserven till 30%."
+      }
+    }
+  },
+  "signals": {
+    "title": "Senaste signaler",
+    "subtitle": "Livehandelssignaler från Cryonix-motorn",
+    "empty": "Inga signaler ännu. Kom tillbaka snart.",
+    "buy": "KÖP",
+    "closed": "Stängda trades",
+    "recent_buys": "Senaste köporder",
+    "entry": "Ingång",
+    "exit": "Utgång",
+    "pnl": "P&L",
+    "pattern": "Mönster",
+    "confidence": "Konfidens",
+    "close_reason": "Stängningsorsak",
+    "duration": "Varaktighet",
+    "win": "VINST",
+    "loss": "FÖRLUST",
+    "breakeven": "BREAKEVEN"
+  },
+  "performance": {
+    "title": "Prestanda",
+    "subtitle": "30 dagars handelsstatistik",
+    "total_trades": "Totala trades",
+    "win_rate": "Vinstprocent",
+    "avg_hold": "Snitthållningstid",
+    "pattern_breakdown": "Mönsterfördelning",
+    "pattern_name": "Mönster",
+    "trades": "Trades",
+    "empty": "Inte tillräckligt med data ännu. Statistiken uppdateras när trades slutförs.",
+    "level_banner": {
+      "title": "Nivå 1: Growth Engine (Gratis)",
+      "desc": "Anpassad för små tillgångar (400 - 1 000 kr). Låt ditt kapital växa säkert med AI-validerade spot-signaler."
+    }
+  },
+  "tooltips": {
+    "entry": "Priset där vår AI-motor rekommenderade att gå in i affären.",
+    "exit": "Priset där positionen stängdes.",
+    "pnl": "Vinst eller förlust i procent efter avgifter.",
+    "confidence": "AI-förtroendepoäng baserat på mönsterstyrka och marknadssentiment.",
+    "pattern": "Det tekniska mönstret som upptäcktes av våra skannrar.",
+    "hold": "Total tid som positionen hölls öppen."
+  },
+  "preview": {
+    "title": "Senaste signaler",
+    "view_all": "Visa alla signaler"
+  },
+  "telegram": {
+    "title": "Gå med i communityn",
+    "description": "Ta emot varje KÖP- och STÄNGD-signal direkt på Telegram och Discord. Gratis, ingen registrering krävs.",
+    "join": "Gå med på Telegram",
+    "join_discord": "Gå med på Discord"
+  },
+  "glossary": {
+    "title": "Ordlista: Alla termer förklarade",
+    "subtitle": "Kryptohandel är fullt av jargong. Här är varje term, förkortning och koncept som används i Cryonix-systemet — på klarspråk med korsreferenser."
+  },
+  "footer": {
+    "disclaimer": "Kryptohandel innebär betydande risk. Tidigare resultat garanterar inte framtida avkastning. Signaler är enbart för informationssyfte — inte finansiell rådgivning.",
+    "powered": "Drivs av Cryonix"
+  }
+}

@@ -1,0 +1,374 @@
+{
+  "meta": {
+    "title": "Cryonix - AI valdomos kriptovaliutų prekybos signalai",
+    "description": "Nemokami AI kriptovaliutų signalai su pažangiu šablonų atpažinimu, daugiasluoksne validacija ir autonominiu rizikos valdymu."
+  },
+  "nav": {
+    "home": "Pradžia",
+    "signals": "Signalai",
+    "performance": "Rezultatai",
+    "telegram": "Prisijungti prie Telegram",
+    "guides": "Guides",
+    "account": "Account"
+  },
+  "hero": {
+    "badge": "Autonominė AI prekyba",
+    "title": "AI valdomi kriptovaliutų signalai",
+    "subtitle": "Prekybos signalai realiuoju laiku, generuojami daugiasluoksnio šablonų atpažinimo, AI validacijos ir institucinio lygio rizikos valdymo.",
+    "cta_signals": "Žiūrėti signalus",
+    "cta_telegram": "Prisijungti prie Telegram kanalo",
+    "cta_discord": "Prisijungti prie Discord",
+    "title_line1": "10 Intelligence Layers.",
+    "title_line2": "Zero Cost.",
+    "pipeline": {
+      "scan": "Scan",
+      "pattern": "Detect",
+      "filter": "Filter",
+      "ai": "Validate",
+      "execute": "Execute"
+    },
+    "stats": {
+      "layers": "Intelligence Layers",
+      "patterns": "Pattern Detectors",
+      "filters": "Quality Filters",
+      "uptime": "Uptime"
+    }
+  },
+  "features": {
+    "title": "Kaip tai veikia",
+    "pattern": {
+      "title": "Šablonų atpažinimas",
+      "description": "8 techninės analizės šablonai skenuoja daugiau nei 45 kriptovaliutų poras kas 10 sekundžių — Dip Buy, Bollinger Squeeze, RSI, MACD, EMA, Volume Spike ir daugiau."
+    },
+    "validation": {
+      "title": "AI validacija",
+      "description": "Kiekvienas signalas praeina AI validaciją, kuri sujungia techninį pasitikėjimą su rinkos kontekstu. Fail-closed — jei AI nepasiekiama, signalas atmetamas."
+    },
+    "risk": {
+      "title": "Rizikos valdymas",
+      "description": "Kapitalo paskirstymas, pozicijų limitai, stop-loss, trailing stop, stagnacijos timeout ir rinkos režimo aptikimas saugo kiekvieną sandorį."
+    }
+  },
+  "signals": {
+    "title": "Naujausi signalai",
+    "subtitle": "Tiesioginiai prekybos signalai iš Cryonix variklio",
+    "empty": "Signalų dar nėra. Patikrinkite vėliau.",
+    "buy": "PIRKTI",
+    "closed": "Uždaryti sandoriai",
+    "recent_buys": "Naujausi įėjimai",
+    "entry": "Įėjimas",
+    "exit": "Išėjimas",
+    "pnl": "P&L",
+    "pattern": "Šablonas",
+    "confidence": "Pasitikėjimas",
+    "close_reason": "Uždarymo priežastis",
+    "duration": "Trukmė",
+    "win": "PELNAS",
+    "loss": "NUOSTOLIS",
+    "breakeven": "LYGU"
+  },
+  "performance": {
+    "title": "Rezultatai",
+    "subtitle": "30 dienų prekybos statistika",
+    "total_trades": "Iš viso sandorių",
+    "win_rate": "Laimėjimų dalis",
+    "avg_hold": "Vid. laikymo laikas",
+    "pattern_breakdown": "Pasiskirstymas pagal šablonus",
+    "pattern_name": "Šablonas",
+    "trades": "Sandoriai",
+    "empty": "Dar nepakanka duomenų. Statistika atnaujinama užbaigus sandorius.",
+    "level_banner": {
+      "title": "Level 1: Growth Engine (Free)",
+      "desc": "Optimized for small assets (400 - 1,000 SEK). Scale your capital safely with AI-validated spot signals."
+    }
+  },
+  "preview": {
+    "title": "Naujausi signalai",
+    "view_all": "Žiūrėti visus signalus"
+  },
+  "telegram": {
+    "title": "Prisijunkite prie bendruomenės",
+    "description": "Gaukite kiekvieną PIRKIMO ir UŽDARYMO signalą akimirksniu per Telegram ir Discord. Nemokamai, be registracijos.",
+    "join": "Prisijungti prie @cryonixsignals",
+    "join_discord": "Prisijungti prie Discord"
+  },
+  "footer": {
+    "disclaimer": "Prekyba kriptovaliutomis susijusi su didelėmis rizikomis. Ankstesni rezultatai negarantuoja ateities grąžos. Signalai yra tik informacinio pobūdžio — ne finansinė konsultacija.",
+    "powered": "Veikia su Cryonix"
+  },
+  "guides": {
+    "best_signals": {
+      "title": "Best Crypto Trading Signals for Telegram in 2026",
+      "subtitle": "Discover the most accurate AI-powered and manual crypto signal groups to maximize your trading success.",
+      "intro": "The crypto market never sleeps, and neither do our algorithms. Finding reliable crypto trading signals on Telegram can be a minefield of 'get-rich-quick' schemes. In this guide, we review the top providers and explain why AI-driven validation is changing the game.",
+      "table_of_contents": "Table of Contents",
+      "why_ai": "Why AI Signals are Superior",
+      "top_list": "Top 5 Crypto Signal Providers",
+      "how_to_choose": "How to Choose a Signal Provider",
+      "faq": "Frequently Asked Questions"
+    },
+    "mcp_server": {
+      "title": "Cryonix MCP Server - AI Signals for Agents",
+      "subtitle": "Connect your AI agents (Claude, OpenHands, GPT) directly to Cryonix trading signals using the Model Context Protocol.",
+      "intro": "The future of trading is autonomous. With the Cryonix MCP Server, you can give your AI agents the ability to read real-time market signals, analyze performance, and execute trades based on our AI-validated data.",
+      "setup_claude": "Setting up with Claude Desktop",
+      "setup_openhands": "Setting up with OpenHands",
+      "features": "Available Tools & Resources"
+    },
+    "index": {
+      "title": "Guides & Resources",
+      "subtitle": "Learn how to use AI for crypto trading, setup your own AI agents, and maximize your edge in the market."
+    },
+    "fail_closed": {
+      "title": "AI Crypto Trading: The Fail-Closed Approach",
+      "subtitle": "Why safety comes first in the Cryonix ecosystem and how we prevent catastrophic losses.",
+      "intro": "In the volatile world of crypto, most bots fail because they are programmed to always be in the market. Cryonix uses a 'Fail-Closed' architecture: if our AI validation isn't 100% confident, the trade never happens."
+    },
+    "scam_spotting": {
+      "title": "Why 99% of Crypto Telegram Signals are Scams",
+      "subtitle": "Learn how to spot fake win rates and protect your capital from signal scams.",
+      "intro": "The 'Diamond Hands' and '1000% Gain' promises are everywhere. We pull back the curtain on how signal groups manipulate data and why transparency is the only way forward."
+    },
+    "bollinger_squeeze": {
+      "title": "Trading the Bollinger Squeeze with AI",
+      "subtitle": "How Cryonix identifies high-probability volatility breakouts before they happen.",
+      "intro": "The Bollinger Squeeze is one of the most powerful technical patterns. By combining it with AI market context, we can filter out 'fakeouts' and capture the real move."
+    },
+    "ai_brain": {
+      "title": "The Cryonix Brain: Multi-Model Orchestration",
+      "subtitle": "Why one AI is not enough. How we route tasks to specialized models like Grok and Claude for peak performance.",
+      "intro": "At Cryonix, we don't just use 'AI'. We run a sophisticated orchestration layer that assigns every task to the specific model best suited for the job."
+    },
+    "drawdown_truth": {
+      "title": "The Drawdown Truth: Why Most Signal Groups Lose 70%",
+      "subtitle": "The dark side of crypto signals that VIP groups never talk about. Learn why Cryonix is built for survival.",
+      "intro": "In the world of crypto signals, losses are the secret everyone keeps. While 'VIP' groups flash screenshots of 1000% gains, they hide the 70% account drawdowns that wipe out retail traders."
+    },
+    "open_claw": {
+      "title": "Setup Cryonix MCP with Open Claw (OpenHands)",
+      "subtitle": "A step-by-step guide for beginners to connect their autonomous AI agent to real-time signals.",
+      "intro": "Open Claw (OpenHands) is a powerful AI agent that can write code and execute tasks. By connecting Cryonix MCP, your agent gains 'Market Awareness'—allowing it to trade or analyze crypto autonomously."
+    }
+  },
+  "layers": {
+    "label": "Under the Hood",
+    "title": "10 Intelligence Layers",
+    "subtitle": "Every signal passes through 10 independent analysis layers before it reaches your wallet. Each layer adds context, filters noise, and increases conviction. No other system comes close.",
+    "items": {
+      "0": {
+        "title": "QuantGuild Technical Analysis",
+        "short": "13 indicators, 8 pattern detectors scanning every 10 seconds.",
+        "detail": "The mathematical core. Calculates RSI, MACD, Bollinger Bands, EMA crossovers, ATR, ADX, and volume ratios on 100 candles of history. Detects 8 patterns: Dip Buy, Deep Value Crash, Bollinger Squeeze, RSI Oversold, MACD Cross, EMA Cross, Volume Spike, and Momentum Gainer.",
+        "tags": [
+          "RSI",
+          "MACD",
+          "Bollinger",
+          "EMA",
+          "ATR",
+          "ADX",
+          "Volume",
+          "100 candles"
+        ]
+      },
+      "1": {
+        "title": "Multi-Timeframe Confirmation",
+        "short": "15-minute signals verified against 1h, 4h, and daily trends.",
+        "detail": "A 15-minute breakout means nothing if the hourly and 4-hour charts disagree. Our HTF veto system requires EMA alignment across multiple timeframes. If 1h and 4h are both bearish, BUY signals are blocked — preventing false breakout trades.",
+        "tags": [
+          "15m primary",
+          "1h confirm",
+          "4h veto",
+          "1d context"
+        ]
+      },
+      "2": {
+        "title": "Smart Dip Hunter Strategy",
+        "short": "Backtested 80-100% win rate on mean-reversion patterns.",
+        "detail": "Our data shows dip/value patterns (DIP_BUY, DEEP_VALUE_CRASH, BOLLINGER_SQUEEZE) have 80-100% win rates vs 0-25% for trend-following signals. Smart Dip Hunter enforces this: every signal MUST contain a value pattern. Pure trend signals are rejected.",
+        "tags": [
+          "80-100% WR",
+          "Mean reversion",
+          "Dip focus",
+          "Backtest proven"
+        ]
+      },
+      "3": {
+        "title": "GainerScanner",
+        "short": "Top movers get a +10% confidence boost when aligned with signals.",
+        "detail": "Every 15 minutes, we rank all symbols by 1h, 4h, and 24h price change. When a technical signal aligns with a top mover (3%+ in 1 hour), confidence jumps +10%. This prevents trading against the tape.",
+        "tags": [
+          "1h movers",
+          "4h movers",
+          "+10% boost",
+          "Every 15min"
+        ]
+      },
+      "4": {
+        "title": "CoinMarketCap Macro Intelligence",
+        "short": "Fear & Greed index, BTC dominance, market cap filters.",
+        "detail": "Global macro context from CoinMarketCap: Fear & Greed adjustments (+8% in extreme fear for deep value, -10% in extreme greed), BTC dominance penalty for altcoins, market cap rank filter (top 500 only), FDV/MC dilution filter (reject >4x ratio), and global regime override on market crash.",
+        "tags": [
+          "Fear & Greed",
+          "BTC dominance",
+          "MC rank",
+          "FDV filter"
+        ]
+      },
+      "5": {
+        "title": "Telegram Signal Consensus",
+        "short": "Cross-references 4+ channels for multi-source confirmation.",
+        "detail": "Real-time monitoring of professional Telegram signal channels using Telethon. Multi-format parser handles Cornix, simple text, and emoji signals. When 2-3 channels agree on the same symbol, confidence increases +8-12%. Built-in deduplication prevents double-counting.",
+        "tags": [
+          "4+ channels",
+          "Real-time",
+          "Multi-format",
+          "+12% boost"
+        ]
+      },
+      "6": {
+        "title": "X/Twitter Sentiment Analysis",
+        "short": "Auto-rejects signals during hack, exploit, or rug events.",
+        "detail": "Scans X/Twitter for security alerts: hack, exploit, rug pull, delist, scam, lawsuit. If detected for a symbol, the BUY signal is instantly rejected. Bullish sentiment gives +5-8% boost, bearish sentiment applies -5% penalty.",
+        "tags": [
+          "Security alerts",
+          "Auto-reject",
+          "Sentiment boost",
+          "1h TTL"
+        ]
+      },
+      "7": {
+        "title": "News RSS Sentiment",
+        "short": "Cointelegraph and CoinDesk sentiment analysis every 15 minutes.",
+        "detail": "Parses RSS feeds from major crypto news outlets. Keyword-based sentiment scoring detects positive (adoption, surge, bullish) and negative (ban, crash, exploit) context per symbol. Results cached in Redis with 1-hour TTL.",
+        "tags": [
+          "Cointelegraph",
+          "CoinDesk",
+          "Keyword scoring",
+          "15min cycle"
+        ]
+      },
+      "8": {
+        "title": "Grok AI Validation",
+        "short": "3 specialized AI prompts: crash specialist, dip specialist, trend analyst.",
+        "detail": "Every signal gets a second opinion from Grok-4.1 with high-effort reasoning. Three specialized prompt modes: Deep Value Crash (crash-buying specialist), Dip Buy (mean-reversion specialist that expects bearish HTF), and Trend Following (standard risk analyst). Confidence is blended: 60% technical + 40% AI. Fail-closed: if AI is unavailable, the signal is rejected.",
+        "tags": [
+          "Grok-4.1",
+          "3 prompts",
+          "60/40 blend",
+          "Fail-closed"
+        ]
+      },
+      "9": {
+        "title": "Expected Value (EV) Model",
+        "short": "Rejects patterns with historically negative profitability.",
+        "detail": "Daily calibration analyzes all closed trades over 30 days. Computes per-pattern EV: win rate, average win/loss, total expected value. Patterns with negative EV are automatically blocked. Self-improving: as more trades complete, the model becomes more accurate.",
+        "tags": [
+          "30-day lookback",
+          "Per-pattern EV",
+          "Auto-block",
+          "Self-calibrating"
+        ]
+      }
+    }
+  },
+  "comparison": {
+    "label": "The Difference",
+    "title": "Cryonix vs. VIP Signal Groups",
+    "subtitle": "Most Telegram signal groups charge $50-300/month for a human with a chart. Here's what you get for $0.",
+    "feature": "Feature",
+    "vip_groups": "VIP Groups",
+    "price": "Monthly price",
+    "rows": {
+      "free": "100% free, no registration",
+      "ai_validated": "AI validates every signal",
+      "transparent_pnl": "Verifiable P&L history",
+      "backtested": "Backtest-proven strategies",
+      "risk_management": "Automated risk management",
+      "auto_sl_tp": "Auto stop-loss & trailing stop",
+      "self_improving": "Self-improving algorithms",
+      "fail_closed": "Fail-closed safety architecture",
+      "multi_source": "Multi-source intelligence (7+ feeds)",
+      "open_history": "Complete open trade history"
+    }
+  },
+  "why_free": {
+    "label": "No Catch",
+    "title": "Why Cryonix is Free",
+    "subtitle": "We believe the best signal service shouldn't cost anything. Here's how.",
+    "reasons": {
+      "0": {
+        "title": "Fully Automated",
+        "description": "No humans manually drawing charts. Our Python engine scans 15 pairs every 10 seconds. Zero labor cost per signal."
+      },
+      "1": {
+        "title": "Radical Transparency",
+        "description": "Every trade is logged, every win and loss is public. We don't need to hide behind a VIP paywall because our results speak for themselves."
+      },
+      "2": {
+        "title": "Minimal Infrastructure",
+        "description": "Runs on a single $15/month Azure VM. Grok AI costs ~$5/month. No expensive data feeds, no Bloomberg terminal, no team of analysts."
+      },
+      "3": {
+        "title": "Community First",
+        "description": "We're building a community of informed traders, not a subscription business. Premium API access and advanced features fund development."
+      }
+    }
+  },
+  "risk_section": {
+    "label": "Capital Protection",
+    "title": "5-Layer Risk Architecture",
+    "subtitle": "Most bots blow up accounts. We built 5 independent risk layers that protect your capital even when markets go haywire.",
+    "numbers": {
+      "0": {
+        "value": "5",
+        "label": "Circuit Breakers"
+      },
+      "1": {
+        "value": "12",
+        "label": "Sequential Filters"
+      },
+      "2": {
+        "value": "5",
+        "label": "Exit Mechanisms"
+      },
+      "3": {
+        "value": "0.5x",
+        "label": "Kelly Fraction"
+      }
+    },
+    "layers": {
+      "0": {
+        "title": "Circuit Breakers",
+        "description": "5 automatic circuit breakers: daily loss limit (5%), weekly loss limit (10%), consecutive loss protection (5+ losses), ATR volatility pause, and per-symbol cooldowns. Trading stops automatically when limits are hit."
+      },
+      "1": {
+        "title": "12 Sequential Quality Filters",
+        "description": "Every signal passes through 12 filters in order: confidence threshold, risk/reward ratio, order value, daily limits, position count, spread check, EV model, dip focus validation, HTF veto, sentiment check, AI validation, and capital allocation."
+      },
+      "2": {
+        "title": "5-Way Position Exit System",
+        "description": "Take-profit (ATR-based), stop-loss (native exchange order), trailing stop (activates at +3%), stagnation timeout (8 hours), and dust prevention (sells before hitting minimum order value)."
+      },
+      "3": {
+        "title": "Kelly Criterion Position Sizing",
+        "description": "Position sizes are calculated using the Kelly Criterion at 0.5x (half-Kelly for stability). No single trade risks more than 35% of capital. Sizes adapt based on pattern win rate and average win/loss ratio."
+      },
+      "4": {
+        "title": "Market Regime Detection",
+        "description": "Classifies market as Trending, Ranging, or Volatile using ADX and ATR expansion. Capital allocation shifts automatically: volatile markets increase reserve to 30%, protect capital first."
+      }
+    }
+  },
+  "tooltips": {
+    "entry": "The price where our AI engine recommended entering the trade.",
+    "exit": "The price where the position was closed.",
+    "pnl": "Profit or Loss percentage after exchange fees.",
+    "confidence": "AI confidence score based on pattern strength and market sentiment.",
+    "pattern": "The technical pattern detected by our scanners.",
+    "hold": "Total time the position was held open."
+  },
+  "glossary": {
+    "title": "Glossary: Every Term Explained",
+    "subtitle": "Crypto trading is full of jargon. Here's every term, abbreviation, and concept used in the Cryonix system — in plain language with cross-references."
+  }
+}
