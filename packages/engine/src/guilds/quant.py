@@ -701,15 +701,17 @@ class QuantGuild:
         buy_signals = [p for p in patterns if p['action'] == 'BUY']
         sell_signals = [p for p in patterns if p['action'] == 'SELL']
 
-        # ── Consensus gate: require 2+ confirming patterns ──
+        # ── Consensus gate: require N+ confirming patterns ──
         # Single-pattern signals (e.g. RSI_OVERSOLD alone) have 25% win rate.
         # Combo signals (e.g. BOLLINGER + RSI) have 50%+ win rate.
         # DEEP_VALUE_CRASH is exempt (handled above with its own multi-TF logic).
-        if buy_signals and len(buy_signals) < 2 and not sell_signals:
+        # Configurable: consensus_min_patterns in cryonix.toml [patterns] section.
+        consensus_min = int(get_toml('patterns', 'consensus_min_patterns', 2))
+        if buy_signals and len(buy_signals) < consensus_min and not sell_signals:
             return {
                 "action": "HOLD",
                 "confidence": max(p['confidence'] for p in buy_signals) * 0.5,
-                "reason": f"Single pattern ({buy_signals[0]['pattern']}) — need 2+ for consensus",
+                "reason": f"Single pattern ({buy_signals[0]['pattern']}) — need {consensus_min}+ for consensus",
                 "patterns": [p['pattern'] for p in buy_signals],
                 "entry_price": price,
                 "stop_loss": rp(price * 0.98),
@@ -717,11 +719,11 @@ class QuantGuild:
                 "consensus_score": 0,
                 "filtered_by": "consensus_gate",
             }
-        if sell_signals and len(sell_signals) < 2 and not buy_signals:
+        if sell_signals and len(sell_signals) < consensus_min and not buy_signals:
             return {
                 "action": "HOLD",
                 "confidence": max(p['confidence'] for p in sell_signals) * 0.5,
-                "reason": f"Single pattern ({sell_signals[0]['pattern']}) — need 2+ for consensus",
+                "reason": f"Single pattern ({sell_signals[0]['pattern']}) — need {consensus_min}+ for consensus",
                 "patterns": [p['pattern'] for p in sell_signals],
                 "entry_price": price,
                 "stop_loss": rp(price * 1.02),
