@@ -1,6 +1,7 @@
 {
   "version": 2,
   "framework": "nextjs",
-  "buildCommand": "cd apps/website && npx next build",
+  "installCommand": "pnpm install --filter=@cryonix/website...",
+  "buildCommand": "pnpm turbo build --filter=@cryonix/website",
   "outputDirectory": "apps/website/.next"
 }
