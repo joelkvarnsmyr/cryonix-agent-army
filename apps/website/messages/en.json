@@ -27,10 +27,10 @@
     },
     "mcp_server": {
       "title": "Cryonix MCP Server - AI Signals for Agents",
-      "subtitle": "Connect your AI agents (Claude, OpenHands, GPT) directly to Cryonix trading signals using the Model Context Protocol.",
+      "subtitle": "Connect your AI agents (Claude, Open Claw, GPT) directly to Cryonix trading signals using the Model Context Protocol.",
       "intro": "The future of trading is autonomous. With the Cryonix MCP Server, you can give your AI agents the ability to read real-time market signals, analyze performance, and act on our AI-validated data.",
       "setup_claude": "Setting up with Claude Desktop",
-      "setup_openhands": "Setting up with OpenHands",
+      "setup_openclaw": "Setting up with Open Claw",
       "features": "Available Tools & Resources"
     },
     "fail_closed": {
@@ -59,9 +59,9 @@
       "intro": "In the world of crypto signals, losses are the secret everyone keeps. While 'VIP' groups flash screenshots of 1000% gains, they hide the 70% account drawdowns that wipe out retail traders."
     },
     "open_claw": {
-      "title": "Setup Cryonix MCP with Open Claw (OpenHands)",
-      "subtitle": "A step-by-step guide for beginners to connect their autonomous AI agent to real-time signals.",
-      "intro": "Open Claw (OpenHands) is a powerful AI agent that can write code and execute tasks. By connecting Cryonix MCP, your agent gains 'Market Awareness'—allowing it to trade or analyze crypto autonomously."
+      "title": "Setup Cryonix MCP with Open Claw",
+      "subtitle": "Connect your self-hosted AI personal assistant to live trading signals via MCP.",
+      "intro": "Open Claw is a free, open-source autonomous AI personal assistant that runs on your machine and connects to messaging platforms like Telegram, Discord, and WhatsApp. By adding the Cryonix MCP server, your Open Claw agent gains access to live trading signals, performance data, and market analysis — delivered straight to your preferred messaging app."
     }
   },
   "hero": {

@@ -28,10 +28,10 @@
     },
     "mcp_server": {
       "title": "Cryonix MCP Server - AI-signaler för agenter",
-      "subtitle": "Anslut dina AI-agenter (Claude, OpenHands, GPT) direkt till Cryonix-signaler via Model Context Protocol.",
+      "subtitle": "Anslut dina AI-agenter (Claude, Open Claw, GPT) direkt till Cryonix-signaler via Model Context Protocol.",
       "intro": "Framtidens trading är autonom. Med Cryonix MCP Server kan du ge dina AI-agenter förmågan att läsa marknadssignaler i realtid, analysera prestanda och agera utifrån AI-validerad data.",
       "setup_claude": "Installation för Claude Desktop",
-      "setup_openhands": "Installation för OpenHands",
+      "setup_openclaw": "Installation för Open Claw",
       "features": "Tillgängliga verktyg och resurser"
     },
     "fail_closed": {
@@ -60,9 +60,9 @@
       "intro": "I världen av kryptosignaler är förluster den hemlighet alla bevarar. Medan 'VIP'-grupper visar skärmdumpar på 1000% vinster, döljer de de 70% drawdowns som raderar ut småsparare."
     },
     "open_claw": {
-      "title": "Anslut Cryonix MCP till Open Claw (OpenHands)",
-      "subtitle": "En steg-för-steg guide för nybörjare att koppla sin AI-agent till realtidssignaler.",
-      "intro": "Open Claw (OpenHands) är en kraftfull AI-agent. Genom att ansluta Cryonix MCP får din agent 'Marknadsmedvetenhet'—vilket låter den analysera eller handla krypto autonomt."
+      "title": "Anslut Cryonix MCP till Open Claw",
+      "subtitle": "Koppla din AI-assistent till realtidssignaler via MCP.",
+      "intro": "Open Claw är en gratis AI-assistent med öppen källkod som körs lokalt och ansluter till meddelandeplattformar som Telegram, Discord och WhatsApp. Genom att lägga till Cryonix MCP-server får din Open Claw-agent tillgång till live-handelssignaler, prestandadata och marknadsanalys — levererat direkt till din meddelandeapp."
     }
   },
   "hero": {

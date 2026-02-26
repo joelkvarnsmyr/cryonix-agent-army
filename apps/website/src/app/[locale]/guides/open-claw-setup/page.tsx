@@ -31,13 +31,18 @@ export default async function OpenClawGuide() {
     "step": [
       {
         "@type": "HowToStep",
-        "name": "Get Your Pairing Code",
-        "text": "Sign in to your account and generate a unique pairing code."
+        "name": "Get Your API Key",
+        "text": "Follow the MCP Server Setup Guide to get your free Cryonix API key."
       },
       {
         "@type": "HowToStep",
         "name": "Configure Open Claw",
-        "text": "Add MCP_SERVERS and CRYONIX_API_KEY to your agent settings."
+        "text": "Add the Cryonix MCP server and CRYONIX_API_KEY to your Open Claw agent configuration."
+      },
+      {
+        "@type": "HowToStep",
+        "name": "Use It",
+        "text": "Ask your agent questions via Telegram or Discord and it will pull live data from the Cryonix engine."
       }
     ]
   };
@@ -112,28 +117,61 @@ export default async function OpenClawGuide() {
         <section className="prose prose-invert max-w-none">
           <p className="text-lg leading-relaxed mb-8">{t('intro')}</p>
 
+          <div className="flex gap-4 p-6 rounded-2xl bg-blue-500/5 border border-blue-500/20 mb-12">
+            <Info className="h-6 w-6 text-blue-400 shrink-0" />
+            <p className="text-sm text-blue-100/80 m-0">
+              <strong>What is Open Claw?</strong> Open Claw is a free, open-source autonomous AI personal assistant created by Peter Steinberger. It runs on your machine and connects to messaging platforms like Telegram, Discord, WhatsApp, and Signal. Since it uses LLMs (Claude, GPT, DeepSeek) under the hood, it supports MCP servers natively.
+            </p>
+          </div>
+
           <h2 className="text-2xl font-bold mt-12 mb-6 flex items-center gap-2">
             <Key className="text-primary h-6 w-6" />
-            Step 1: Get Your Pairing Code
+            Step 1: Get Your API Key
           </h2>
-          <p>First, you need a secure connection. We call this a <strong>Pairing Code</strong>.</p>
+          <p>First, you need a Cryonix API key so Open Claw can authenticate with our MCP server.</p>
           <ol className="space-y-4">
-            <li>Go to your <Link href="/developers" className="text-primary underline">Account Dashboard</Link>.</li>
-            <li>Sign in using your Email or GitHub.</li>
-            <li>Click <strong>"Create Pairing Code"</strong>.</li>
+            <li>Follow the <Link href="/guides/mcp-server-setup" className="text-primary underline">MCP Server Setup Guide</Link> to get your free API key.</li>
+            <li>Keep the key handy -- you will add it to your Open Claw configuration in the next step.</li>
           </ol>
+
+          <h2 className="text-2xl font-bold mt-12 mb-6 flex items-center gap-2">
+            <Terminal className="text-primary h-6 w-6" />
+            Step 2: Configure Open Claw
+          </h2>
+          <p>In your Open Claw configuration, add the Cryonix MCP server so the agent can access live trading signals:</p>
+          <pre className="bg-black/50 p-6 rounded-xl border border-border/40 overflow-x-auto">
+            <code className="text-cyan-400">
+{`{
+  "mcpServers": {
+    "cryonix": {
+      "command": "npx",
+      "args": ["-y", "@cryonix/mcp-server"],
+      "env": {
+        "CRYONIX_API_KEY": "YOUR_FREE_KEY"
+      }
+    }
+  }
+}`}
+            </code>
+          </pre>
+
+          <h2 className="text-2xl font-bold mt-12 mb-6 flex items-center gap-2">
+            <Bot className="text-primary h-6 w-6" />
+            Step 3: Use It
+          </h2>
+          <p>Once configured, Open Claw gains access to Cryonix tools like <code>get_signals()</code> and <code>get_performance()</code>. You can ask your agent questions via Telegram or Discord and it will pull live data from the Cryonix engine.</p>
 
           <div className="bg-primary/10 border border-primary/20 rounded-2xl p-8 my-16 text-center">
             <h2 className="text-2xl font-bold mb-4 flex items-center justify-center gap-2">
               <Cpu className="h-6 w-6 text-primary" />
-              Grow Your Capital
+              Automate Your Trading Intelligence
             </h2>
-            <p className="mb-8 text-muted-foreground">Signals optimized for portfolios starting at 400 SEK.</p>
-            <Link 
-              href="/developers" 
+            <p className="mb-8 text-muted-foreground">Open Claw routes Cryonix signals straight to your Telegram, Discord, or WhatsApp.</p>
+            <Link
+              href="/guides/mcp-server-setup"
               className="inline-block bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-4 rounded-full font-bold transition-all"
             >
-              Start Automation Now
+              Set Up MCP Server
             </Link>
           </div>
         </section>

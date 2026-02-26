@@ -91,9 +91,9 @@ export default async function McpServerGuide() {
 
         <h2 className="text-2xl font-bold mt-16 mb-6 flex items-center gap-2">
           <Bot className="text-primary h-6 w-6" />
-          {t('setup_openhands')}
+          {t('setup_openclaw')}
         </h2>
-        <p>In <strong>OpenHands</strong> (or similar agent frameworks), you can mount the MCP server via Docker or by adding the environment configuration in your workspace settings.</p>
+        <p>In <strong>Open Claw</strong> (or similar MCP-compatible agent frameworks), add the Cryonix MCP server to your agent configuration. Open Claw supports MCP natively and can route signals to your Telegram, Discord, or WhatsApp.</p>
         <div className="glass-card p-6 rounded-xl border-primary/20">
           <ol className="space-y-4 m-0">
             <li className="flex gap-3">
