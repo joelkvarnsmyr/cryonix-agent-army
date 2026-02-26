@@ -28,8 +28,8 @@ WORKDIR /app
 COPY --from=deps /app/ ./
 COPY . .
 
-# Build the Next.js app (standalone output)
-RUN pnpm build
+# Build only the dashboard app (website deploys to Vercel separately)
+RUN pnpm turbo build --filter=@cryonix/web
 
 # --- Production runner ---
 FROM node:20-alpine AS runner
