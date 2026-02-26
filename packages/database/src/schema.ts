@@ -5,12 +5,63 @@ import { pgTable, text, serial, decimal, timestamp, boolean, jsonb, varchar, int
 // ============================================================================
 
 export const users = pgTable('users', {
-  id: serial('id').primaryKey(),
-  username: varchar('username', { length: 50 }).unique().notNull(),
-  email: varchar('email', { length: 100 }).unique().notNull(),
-  apiKeys: jsonb('api_keys'), // Encrypted API keys
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  name: varchar('name', { length: 255 }),
+  email: varchar('email', { length: 255 }).unique().notNull(),
+  emailVerified: timestamp('email_verified', { mode: 'date' }),
+  image: varchar('image', { length: 255 }),
+  username: varchar('username', { length: 50 }).unique(),
+  apiKeys: jsonb('api_keys').default([]), // Array of { key: string, label: string, createdAt: string }
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+export const accounts = pgTable(
+  "account",
+  {
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: varchar("type", { length: 255 }).notNull(),
+    provider: varchar("provider", { length: 255 }).notNull(),
+    providerAccountId: varchar("providerAccountId", { length: 255 }).notNull(),
+    refresh_token: text("refresh_token"),
+    access_token: text("access_token"),
+    expires_at: integer("expires_at"),
+    token_type: varchar("token_type", { length: 255 }),
+    scope: varchar("scope", { length: 255 }),
+    id_token: text("id_token"),
+    session_state: varchar("session_state", { length: 255 }),
+  },
+  (account) => [
+    uniqueIndex("account_provider_providerAccountId_idx").on(
+      account.provider,
+      account.providerAccountId
+    ),
+  ]
+);
+
+export const sessions = pgTable("session", {
+  sessionToken: varchar("sessionToken", { length: 255 }).primaryKey(),
+  userId: text("userId")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  expires: timestamp("expires", { mode: "date" }).notNull(),
+});
+
+export const verificationTokens = pgTable(
+  "verificationToken",
+  {
+    identifier: varchar("identifier", { length: 255 }).notNull(),
+    token: varchar("token", { length: 255 }).notNull(),
+    expires: timestamp("expires", { mode: "date" }).notNull(),
+  },
+  (vt) => [
+    uniqueIndex("verificationToken_identifier_token_idx").on(
+      vt.identifier,
+      vt.token
+    ),
+  ]
+);
 
 // ============================================================================
 // PORTFOLIO TABLE

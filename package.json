@@ -19,9 +19,12 @@
     "test:ui": "vitest --ui"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@playwright/test": "^1.58.2",
+    "@resvg/resvg-js": "2",
     "@vitest/coverage-v8": "^4.0.17",
     "@vitest/ui": "^4.0.17",
+    "satori": "0.12",
     "turbo": "^2.3.3",
     "typescript": "^5.8.3",
     "vitest": "^4.0.17"

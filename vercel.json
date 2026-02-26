@@ -1,0 +1,6 @@
+{
+  "version": 2,
+  "framework": "nextjs",
+  "buildCommand": "cd apps/website && npx next build",
+  "outputDirectory": "apps/website/.next"
+}
