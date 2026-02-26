@@ -139,9 +139,9 @@
       },
       "5": {
         "title": "Telegram Signal Consensus",
-        "short": "Cross-references 4+ channels for multi-source confirmation.",
+        "short": "Cross-references multiple professional channels for multi-source confirmation.",
         "detail": "Real-time monitoring of professional Telegram signal channels using Telethon. Multi-format parser handles Cornix, simple text, and emoji signals. When 2-3 channels agree on the same symbol, confidence increases +8-12%. Built-in deduplication prevents double-counting.",
-        "tags": ["4+ channels", "Real-time", "Multi-format", "+12% boost"]
+        "tags": ["Multi-channel", "Real-time", "Multi-format", "+12% boost"]
       },
       "6": {
         "title": "X/Twitter Sentiment Analysis",

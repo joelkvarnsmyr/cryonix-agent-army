@@ -169,10 +169,10 @@
       },
       "5": {
         "title": "Telegram-signalkonsensus",
-        "short": "Korsrefererar 4+ kanaler för flerkälls-bekräftelse.",
+        "short": "Korsrefererar flera professionella kanaler för flerkälls-bekräftelse.",
         "detail": "Realtidsövervakning av professionella Telegram-signalkanaler. Multiformat-parser hanterar Cornix, enkel text och emojisignaler. När 2-3 kanaler enas om samma symbol ökar konfidens +8-12%.",
         "tags": [
-          "4+ kanaler",
+          "Flerkanal",
           "Realtid",
           "Multiformat",
           "+12% boost"
