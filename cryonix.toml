@@ -404,10 +404,9 @@ dip_focus_mode = true
 
 # Consensus gate: minimum number of confirming patterns required.
 # 2 = require 2+ patterns (strict, fewer signals, higher quality combos)
-# 1 = allow single-pattern signals through (more signals, rely on dip_focus + AI validation)
-# When dip_focus_mode = true, value patterns (BOLLINGER_SQUEEZE, DIP_BUY) already
-# have 80-100% WR in backtest, so consensus_min_patterns = 1 is safe.
-consensus_min_patterns = 1
+# 1 = allow single-pattern signals through (more signals, lower quality)
+# ADR-022 + backtest: consensus_min=2 → 73% WR / +$1.49, consensus_min=1 → 39% WR / -$1.72
+consensus_min_patterns = 2
 
 # Patterns considered "value" for dip focus filtering.
 # At least one must be present in a signal when dip_focus_mode = true.
