@@ -134,8 +134,8 @@ export default async function GuidesIndex() {
             <p className="text-2xl font-mono font-bold text-primary">Fail-Closed</p>
           </div>
           <div>
-            <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Models</p>
-            <p className="text-2xl font-mono font-bold text-primary">Grok + Claude</p>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">AI Models</p>
+            <p className="text-2xl font-mono font-bold text-primary">4 Models</p>
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Protocol</p>
