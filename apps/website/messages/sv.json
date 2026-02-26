@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "Cryonix - Bästa Gratis Kryptosignaler 2026",
-    "description": "Pricksäkra AI-drivna kryptosignaler. 10 intelligenslager, 8 mönsterdetektorer, multi-AI-validering (Grok, Claude, GPT, Gemini). 100% gratis spot-signaler för Bitcoin och Altcoins."
+    "title": "Cryonix - En AI-motor, byggd tillsammans",
+    "description": "Varför bygga din egen tradingbot? Cryonix är en gemensam AI-motor — 10 intelligenslager, 4 AI-modeller, 8 mönsterdetektorer. Gratis kryptosignaler byggda av communityn, för communityn."
   },
   "nav": {
     "home": "Hem",
@@ -66,13 +66,13 @@
     }
   },
   "hero": {
-    "badge": "Autonom AI-trading",
+    "badge": "Delad intelligens",
     "title": "AI-drivna kryptosignaler",
-    "title_line1": "10 intelligenslager.",
-    "title_line2": "Helt gratis.",
-    "subtitle": "Varje signal passerar 8 mönsterdetektorer, multitidsrams-analys, makrointelligens och Grok AI-validering innan den når dig. Det mest transparenta tradingsystemet som någonsin byggts.",
+    "title_line1": "En motor.",
+    "title_line2": "Byggd tillsammans.",
+    "subtitle": "Varför ska tusen traders bygga varsitt system? Cryonix är en gemensam AI-motor — 10 intelligenslager, 4 AI-modeller, 8 mönsterdetektorer — byggd en gång, delad av alla. Ju fler som använder den, desto bättre blir algoritmerna.",
     "cta_signals": "Se signaler",
-    "cta_telegram": "Telegram",
+    "cta_telegram": "Gå med i betan",
     "cta_discord": "Discord",
     "pipeline": {
       "scan": "Skanna",
@@ -227,7 +227,7 @@
   "comparison": {
     "label": "Skillnaden",
     "title": "Cryonix vs. VIP-signalgrupper",
-    "subtitle": "De flesta Telegram-signalgrupper tar $50-300/månad för en människa med ett diagram. Här är vad du får för $0.",
+    "subtitle": "De flesta Telegram-signalgrupper tar $50-300/månad för en persons chartåsikter. Här är vad en gemensam AI-motor levererar för $0.",
     "feature": "Funktion",
     "vip_groups": "VIP-grupper",
     "price": "Månadspris",
@@ -245,25 +245,25 @@
     }
   },
   "why_free": {
-    "label": "Ingen hake",
-    "title": "Varför Cryonix är gratis",
-    "subtitle": "Vi tror att den bästa signaltjänsten inte ska kosta något. Så här gör vi det möjligt.",
+    "label": "Den gemensamma motorn",
+    "title": "Varför bygga eget?",
+    "subtitle": "Alla behöver samma verktyg: marknadsskanning, mönsterdetektion, AI-validering, riskhantering. Istället för att tusen traders bygger samma sak var för sig, byggde vi det en gång — ordentligt — och öppnade det för alla.",
     "reasons": {
       "0": {
-        "title": "Helt automatiserat",
-        "description": "Inga människor som manuellt ritar diagram. Vår motor skannar marknaden kontinuerligt och genererar signaler autonomt. Noll arbetskostnad per signal."
+        "title": "En motor, många traders",
+        "description": "Alla kryptotraders behöver skanning, analys och validering. Det är tusentals personer som löser exakt samma problem ensamma. Cryonix är den gemensamma lösningen — en optimerad motor för alla."
       },
       "1": {
-        "title": "Radikal transparens",
-        "description": "Varje trade loggas, varje vinst och förlust är offentlig. Vi behöver inte gömma oss bakom en VIP-betalvägg för våra resultat talar för sig själva."
+        "title": "Kollektiv intelligens",
+        "description": "Fler traders betyder fler trades, mer data, skarpare kalibrering. Varje avslutad signal matar tillbaka i EV-modellen och förbättrar träffsäkerheten för alla. Dina resultat gör systemet smartare."
       },
       "2": {
-        "title": "Byggt för att skala",
-        "description": "Slimmad arkitektur utan dyra dataflöden, inget Bloomberg-terminal, inget analytikerteam. Automatisering håller driftkostnaderna nära noll."
+        "title": "Radikal transparens",
+        "description": "Varje trade loggas, varje vinst och förlust är offentlig. Ingen VIP-betalvägg, inga cherry-pickade skärmdumpar. Hela historiken är öppen för att en gemensam resurs bara fungerar om alla kan verifiera den."
       },
       "3": {
-        "title": "Community först",
-        "description": "Vi bygger en gemenskap av informerade traders, inte en prenumerationsverksamhet. Signalerna är gratis för att bättre traders skapar en starkare community."
+        "title": "Community över prenumerationer",
+        "description": "Vi säljer ingen produkt — vi bygger en gemensam resurs. Att betala 300 kr/mån för en persons chartåsikter är meningslöst när en AI-motor kan serva alla gratis."
       }
     }
   },
@@ -358,8 +358,8 @@
     "view_all": "Visa alla signaler"
   },
   "telegram": {
-    "title": "Gå med i communityn",
-    "description": "Ta emot varje KÖP- och STÄNGD-signal direkt på Telegram och Discord. Gratis, ingen registrering krävs.",
+    "title": "Gå med i betan",
+    "description": "Vi bygger det här tillsammans. Gå med i betan för att ta emot live-signaler, ge feedback och hjälpa till att driva algoritmerna till perfektion. Gratis, ingen registrering krävs.",
     "join": "Gå med på Telegram",
     "join_discord": "Gå med på Discord"
   },

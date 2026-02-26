@@ -12,14 +12,14 @@
     "account": "Account"
   },
   "hero": {
-    "badge": "Autonomiczny handel AI",
+    "badge": "Shared Intelligence",
     "title": "Sygnały krypto napędzane przez AI",
-    "subtitle": "Sygnały handlowe w czasie rzeczywistym generowane przez wielowarstwowe wykrywanie wzorców, walidację AI i zarządzanie ryzykiem na poziomie instytucjonalnym.",
+    "subtitle": "Why should a thousand traders each build their own bot? Cryonix is one AI engine — 10 intelligence layers, 4 AI models, 8 pattern detectors — built once, shared by everyone. The more people who use it, the better the algorithms get.",
     "cta_signals": "Zobacz sygnały",
-    "cta_telegram": "Dołącz do kanału Telegram",
+    "cta_telegram": "Join the Beta",
     "cta_discord": "Dołącz do Discord",
-    "title_line1": "10 Intelligence Layers.",
-    "title_line2": "Zero Cost.",
+    "title_line1": "One Engine.",
+    "title_line2": "Built Together.",
     "pipeline": {
       "scan": "Scan",
       "pattern": "Detect",
@@ -87,8 +87,8 @@
     "view_all": "Zobacz wszystkie sygnały"
   },
   "telegram": {
-    "title": "Dołącz do społeczności",
-    "description": "Otrzymuj każdy sygnał KUP i ZAMKNIJ natychmiast na Telegramie i Discord. Za darmo, bez rejestracji.",
+    "title": "Join the Beta",
+    "description": "We're building this together. Join the beta to receive live signals, give feedback, and help drive the algorithms to perfection. Free, no registration required.",
     "join": "Dołącz do @cryonixsignals",
     "join_discord": "Dołącz do Discord"
   },
@@ -274,7 +274,7 @@
   "comparison": {
     "label": "The Difference",
     "title": "Cryonix vs. VIP Signal Groups",
-    "subtitle": "Most Telegram signal groups charge $50-300/month for a human with a chart. Here's what you get for $0.",
+    "subtitle": "Most Telegram signal groups charge $50-300/month for one person's chart opinions. Here's what a shared AI engine delivers for $0.",
     "feature": "Feature",
     "vip_groups": "VIP Groups",
     "price": "Monthly price",
@@ -292,25 +292,25 @@
     }
   },
   "why_free": {
-    "label": "No Catch",
-    "title": "Why Cryonix is Free",
-    "subtitle": "We believe the best signal service shouldn't cost anything. Here's how.",
+    "label": "The Shared Engine",
+    "title": "Why Build Your Own?",
+    "subtitle": "Everyone needs the same tools: market scanning, pattern detection, AI validation, risk management. Instead of a thousand traders building the same thing separately, we built it once — properly — and opened it for everyone.",
     "reasons": {
       "0": {
-        "title": "Fully Automated",
-        "description": "No humans manually drawing charts. Our engine continuously scans the market and generates signals autonomously. Zero labor cost per signal."
+        "title": "One Engine, Many Traders",
+        "description": "Every crypto trader needs scanning, analysis, and validation. That's thousands of people solving the exact same problem alone. Cryonix is the shared solution — one optimized engine for everyone."
       },
       "1": {
-        "title": "Radical Transparency",
-        "description": "Every trade is logged, every win and loss is public. We don't need to hide behind a VIP paywall because our results speak for themselves."
+        "title": "Collective Intelligence",
+        "description": "More traders means more trades, more data, sharper calibration. Every signal that completes feeds back into the EV model, improving accuracy for everyone. Your results make the system smarter."
       },
       "2": {
-        "title": "Built to Scale",
-        "description": "Lean architecture with no expensive data feeds, no Bloomberg terminal, no team of analysts. Automation keeps overhead near zero."
+        "title": "Radical Transparency",
+        "description": "Every trade is logged, every win and loss is public. No VIP paywall, no cherry-picked screenshots. The full history is open because a shared resource only works if everyone can verify it."
       },
       "3": {
-        "title": "Community First",
-        "description": "We're building a community of informed traders, not a subscription business. The signals are free because better traders make a stronger community."
+        "title": "Community Over Subscriptions",
+        "description": "We're not selling a product — we're building a shared resource. Paying $300/month for one person's chart opinions makes no sense when an AI engine can serve everyone for free."
       }
     }
   },

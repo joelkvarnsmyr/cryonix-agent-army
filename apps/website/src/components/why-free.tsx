@@ -1,9 +1,9 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { Bot, Eye, Server, Heart } from 'lucide-react';
+import { Users, Brain, Eye, HandshakeIcon } from 'lucide-react';
 
-const REASON_ICONS = [Bot, Eye, Server, Heart] as const;
+const REASON_ICONS = [Users, Brain, Eye, HandshakeIcon] as const;
 
 export function WhyFree() {
   const t = useTranslations('why_free');
