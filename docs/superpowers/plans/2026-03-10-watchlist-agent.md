@@ -1229,4 +1229,36 @@ git commit -m "docs: document watchlist_agent.py in CLAUDE.md background workers
 - Real-time symbol add/remove without engine restart
 - UI for watchlist history (watchlist_changes table is queryable via Postgres directly)
 - Per-symbol Coinglass scoring in candidate ranking (follow-up)
+
+## Deployment Notes
+
+### SQL Migration (run on prod before deploy)
+```sql
+CREATE TABLE IF NOT EXISTS watchlist_changes (
+  id SERIAL PRIMARY KEY,
+  run_id VARCHAR(20) NOT NULL,
+  run_at TIMESTAMP DEFAULT NOW(),
+  symbols_before TEXT[] NOT NULL,
+  symbols_after TEXT[] NOT NULL,
+  added TEXT[],
+  removed TEXT[],
+  skipped_removals TEXT[],
+  fear_greed INTEGER,
+  regime VARCHAR(20),
+  grok_reasoning TEXT,
+  status VARCHAR(20) DEFAULT 'applied',
+  error TEXT
+);
+```
+
+### Cron Entry (add to VM crontab)
+```bash
+0 5 * * 2,5 cd ~/cryonix && set -a && source .env && set +a && python3 scripts/strategy-lab/watchlist_agent.py >> logs/watchlist_agent.log 2>&1
+```
+
+### Verify
+```bash
+# Dry run first
+python3 scripts/strategy-lab/watchlist_agent.py --dry-run
+```
 - Grid and scalp position symbol management

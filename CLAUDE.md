@@ -128,6 +128,7 @@ Legacy agent system. Key classes:
 - `scripts/services/telegram-bot.mjs` - Evolution report bot (@cryonixEvolution_bot)
 - `scripts/evolution/copilot-evolution.mjs` - Claude Code CLI autonomous evolution engine (respects baseline freeze)
 - `scripts/strategy-lab/ai_brain.py` - AI Brain autonomous analysis (every 6h + acute trigger, respects baseline freeze)
+- `scripts/strategy-lab/watchlist_agent.py` - Watchlist rotation agent (Tue+Fri 05:00 UTC, twice-weekly symbol rotation via Grok)
 - `scripts/telegram-scraper/scraper.py` - Telegram channel signal scraper (Telethon/Python, Docker)
 
 ## Data Flow
