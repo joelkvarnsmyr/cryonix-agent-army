@@ -38,7 +38,7 @@ function extractItems(xml: string): string[] {
 }
 
 export class NewsIngestionService {
-    private seenHashes = new Set<string>();
+    private seenHashes = new Map<string, number>();
 
     async fetchFeed(
         url: string,
@@ -76,7 +76,7 @@ export class NewsIngestionService {
             if (this.seenHashes.has(urlHash)) continue;
             // Mark URL as seen before age/validity checks so duplicates with different
             // dates cannot slip through when the first occurrence is age-rejected.
-            this.seenHashes.add(urlHash);
+            this.seenHashes.set(urlHash, Date.now());
 
             const publishedAt = pubDateStr ? new Date(pubDateStr) : new Date();
             if (isNaN(publishedAt.getTime())) continue;
@@ -100,6 +100,10 @@ export class NewsIngestionService {
 
     /** Scan all configured RSS feeds and return deduplicated articles. */
     async scanAll(): Promise<RawArticle[]> {
+        const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+        for (const [hash, ts] of this.seenHashes) {
+            if (ts < cutoff) this.seenHashes.delete(hash);
+        }
         const feeds: Array<[string, string, SourceTrust, string]> = [
             ['https://feeds.reuters.com/reuters/businessNews', 'reuters', 'tier1', 'macro'],
             ['https://feeds.reuters.com/reuters/energy', 'reuters', 'tier1', 'energy'],

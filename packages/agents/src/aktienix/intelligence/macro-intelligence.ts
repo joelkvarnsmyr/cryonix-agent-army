@@ -6,6 +6,7 @@ import { SignalMerger } from './signal-merger';
 import { EventLifecycleTracker, LiveEvent } from './event-lifecycle-tracker';
 import { CausalChainEngine } from './causal-chain-engine';
 import { AuditLogger } from './audit-logger';
+import { filterValidTickers } from './ticker-universe';
 import type { MacroSignal } from './news-scanner';
 import type { MergedSignal } from './signal-merger';
 
@@ -89,8 +90,39 @@ export class MacroIntelligence {
     private async validateAndStore(signal: MergedSignal): Promise<void> {
         const steps: { step: string; passed: boolean; reason?: string }[] = [];
 
-        // Step 1: Ticker universe (handled inside classifier — all tickers already validated)
-        steps.push({ step: 'ticker_universe', passed: true });
+        // Step 1: Ticker universe — filter causal_chain tickers against known universe
+        const rawBearish = signal.causal_chain?.immediate?.bearish_tickers ?? [];
+        const rawBullish = signal.causal_chain?.immediate?.bullish_tickers ?? [];
+        const filteredBearish = filterValidTickers(rawBearish);
+        const filteredBullish = filterValidTickers(rawBullish);
+
+        const tickersPassed = filteredBearish.length > 0 || filteredBullish.length > 0;
+        steps.push({
+            step: 'ticker_universe',
+            passed: tickersPassed,
+            reason: tickersPassed
+                ? undefined
+                : `All tickers invalid — bearish: [${rawBearish.join(', ')}], bullish: [${rawBullish.join(', ')}]`,
+        });
+
+        if (!tickersPassed) {
+            await this.audit.log({
+                event_id: signal.event_id,
+                sources: signal.sources,
+                corroboration: signal.corroboration,
+                validation_steps: steps,
+                final_decision: 'rejected',
+                confidence_raw: signal.confidence,
+                confidence_trust_adjusted: signal.confidence,
+                confidence_corroboration_adjusted: signal.confidence,
+                confidence_final: signal.confidence,
+            });
+            return;
+        }
+
+        // Replace with filtered tickers so downstream only sees validated ones
+        signal.causal_chain.immediate.bearish_tickers = filteredBearish;
+        signal.causal_chain.immediate.bullish_tickers = filteredBullish;
 
         // Step 2: Source trust multiplier
         const sourceTrust = (signal as any).sourceTrust ?? 'tier2';
