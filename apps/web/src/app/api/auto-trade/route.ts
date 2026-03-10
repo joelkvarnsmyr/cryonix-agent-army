@@ -329,6 +329,24 @@ async function addDailyPnl(pnl: number): Promise<void> {
   await saveDailyState(dailyState);
 }
 
+async function sendTelegramAlert(message: string): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message.slice(0, 4096),
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      }),
+    });
+  } catch { /* non-critical */ }
+}
+
 function resetDailyStateIfNeeded() {
   const today = new Date().toDateString();
   if (dailyState.date !== today) {
@@ -756,6 +774,51 @@ async function monitorPositions(): Promise<MonitorResult[]> {
           shouldSell = true;
           exitReason = `Trailing stop hit: $${currentPrice.toFixed(4)} <= $${pos.trailingStop.toFixed(4)} (high: $${pos.highWaterMark.toFixed(4)})`;
         }
+      }
+
+      // On-chain alert check — tighten SL (warning) or force close (critical)
+      if (!shouldSell) {
+        try {
+          const baseAsset = pos.symbol.split('/')[0];
+          const alertRaw = await redis.get(`sentiment:alert:${baseAsset}`) as string | null;
+          if (alertRaw) {
+            let severity = 'warning';
+            let reason = alertRaw;
+            let source: string | null = null;
+            try {
+              const parsed = JSON.parse(alertRaw);
+              severity = parsed.severity ?? 'warning';
+              reason = parsed.reason ?? alertRaw;
+              source = parsed.source ?? null;
+            } catch { /* not JSON — treat as warning */ }
+
+            const notifiedKey = `onchain:notified:${pos.symbol}`;
+            const alreadyNotified = await redis.get(notifiedKey);
+
+            if (severity === 'critical') {
+              shouldSell = true;
+              exitReason = `On-chain alert (critical): ${reason}`;
+              if (!alreadyNotified) {
+                await redis.set(notifiedKey, '1', 'EX', 3600);
+                await sendTelegramAlert(
+                  `🚨 <b>Kritisk on-chain varning: ${pos.symbol}</b>\n\nKälla: ${source ?? 'okänd'}\nVarning: ${reason}\nÅtgärd: Position stängd (market sell)`
+                );
+              }
+            } else if (!alreadyNotified) {
+              // warning: tighten SL to breakeven (entry - 0.05% for fees)
+              const newSl = pos.entryPrice * 0.9995;
+              if (newSl > pos.stopLoss) {
+                const oldSl = pos.stopLoss;
+                pos.stopLoss = newSl;
+                await redis.set(notifiedKey, '1', 'EX', 3600);
+                console.log(`[MONITOR] On-chain warning ${pos.symbol}: SL ${oldSl.toFixed(4)} → ${newSl.toFixed(4)}`);
+                await sendTelegramAlert(
+                  `⚠️ <b>On-chain varning: ${pos.symbol}</b>\n\nKälla: ${source ?? 'okänd'}\nVarning: ${reason}\nÅtgärd: Stop-loss dragit till entry (${newSl.toFixed(4)})`
+                );
+              }
+            }
+          }
+        } catch { /* non-critical — never block normal position monitoring */ }
       }
 
       if (shouldSell) {
@@ -1366,12 +1429,17 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
   // X sentiment alert check — reject if breaking negative news
   try {
     const baseAsset = signal.symbol.split('/')[0];
-    const alert = await redis.get(`sentiment:alert:${baseAsset}`);
-    if (alert && signal.action === 'BUY') {
-      const alertLower = (alert as string).toLowerCase();
-      const alertKeywords = TOML?.sentiment.alert_keywords ?? ['hack', 'exploit', 'rug', 'sec', 'crash', 'delist', 'lawsuit', 'ban', 'scam', 'fraud', 'investigation', 'vulnerability'];
+    const alertRaw = await redis.get(`sentiment:alert:${baseAsset}`) as string | null;
+    if (alertRaw && signal.action === 'BUY') {
+      let alertText = alertRaw;
+      try {
+        const parsed = JSON.parse(alertRaw);
+        alertText = parsed.reason ?? alertRaw;
+      } catch { /* not JSON — use as-is */ }
+      const alertLower = alertText.toLowerCase();
+      const alertKeywords = TOML?.sentiment?.alert_keywords ?? ['hack', 'exploit', 'rug', 'sec', 'crash', 'delist', 'lawsuit', 'ban', 'scam', 'fraud', 'investigation', 'vulnerability'];
       if (alertKeywords.some((kw: string) => alertLower.includes(kw))) {
-        return { pass: false, reason: `X alert: ${alert}` };
+        return { pass: false, reason: `X alert: ${alertText}` };
       }
     }
   } catch { }
