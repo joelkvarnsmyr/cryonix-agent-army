@@ -2,12 +2,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { XIngestionService } from './x-ingestion-service';
 
-const mockCreate = vi.fn();
-vi.mock('openai', () => ({
-    default: vi.fn().mockImplementation(() => ({
-        chat: { completions: { create: mockCreate } },
-    })),
-}));
+const mockCreate = vi.hoisted(() => vi.fn());
+
+vi.mock('openai', () => {
+    const MockOpenAI = vi.fn().mockImplementation(function () {
+        return { chat: { completions: { create: mockCreate } } };
+    });
+    return { default: MockOpenAI };
+});
 
 describe('XIngestionService', () => {
     let service: XIngestionService;

@@ -61,21 +61,23 @@ export class EventLifecycleTracker {
     /** Called every 2 hours. Decays confidence and runs Grok re-evaluation. */
     async reEvaluate(): Promise<void> {
         const events = await this.getAll();
-        for (const event of events) {
-            if (event.phase === 'resolved') continue;
+        await Promise.all(events.map(event => this.reEvaluateOne(event)));
+    }
 
-            const newConf = await this.evaluateOne(event);
-            event.confidence = newConf;
-            event.lastEvaluatedAt = new Date().toISOString();
+    private async reEvaluateOne(event: LiveEvent): Promise<void> {
+        if (event.phase === 'resolved') return;
 
-            if (newConf < RESOLVED_THRESHOLD) {
-                event.phase = 'resolved';
-            } else if (newConf < 0.55 && event.phase === 'developing') {
-                event.phase = 'resolving';
-            }
+        const newConf = await this.evaluateOne(event);
+        event.confidence = newConf;
+        event.lastEvaluatedAt = new Date().toISOString();
 
-            await this.upsertEvent(event);
+        if (newConf < RESOLVED_THRESHOLD) {
+            event.phase = 'resolved';
+        } else if (newConf < 0.55 && event.phase === 'developing') {
+            event.phase = 'resolving';
         }
+
+        await this.upsertEvent(event);
     }
 
     private async evaluateOne(event: LiveEvent): Promise<number> {

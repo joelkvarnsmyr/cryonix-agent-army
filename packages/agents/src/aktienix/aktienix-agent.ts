@@ -367,6 +367,7 @@ export class AktienixAgent extends BaseAgent {
 
                 if (action === 'BUY' && macro.impact === 'bullish' && macro.tickers.includes(symbol)) {
                     confidence += intelConfig.macro_confidence_boost;
+                    confidence = Math.min(confidence, 1.0);
                     this.log('info', `MACRO BOOST: ${symbol} is in a BULLISH macro event (${macro.event}). Confidence boosted to ${confidence.toFixed(2)}.`);
                 }
             }

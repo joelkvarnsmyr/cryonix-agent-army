@@ -22,13 +22,7 @@ export class XIngestionService {
 
     constructor(apiKey: string) {
         if (apiKey) {
-            // Use a try/catch to support both real class instantiation and
-            // vi.fn() mock implementations (which may not be constructible).
-            try {
-                this.grok = new OpenAI({ apiKey, baseURL: 'https://api.x.ai/v1' });
-            } catch {
-                this.grok = (OpenAI as any)({ apiKey, baseURL: 'https://api.x.ai/v1' });
-            }
+            this.grok = new OpenAI({ apiKey, baseURL: 'https://api.x.ai/v1' });
         }
     }
 
