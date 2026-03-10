@@ -28,7 +28,7 @@ const NAV_GROUPS = [
       { href: '/',           label: 'Terminal',  icon: Activity,       desc: 'Live crypto trading' },
       { href: '/analytics',  label: 'Analytics', icon: LineChart,      desc: 'Trade journal & performance' },
       { href: '/backtest',   label: 'Backtest',  icon: FlaskConical,   desc: 'Strategy backtesting' },
-      { href: '/legacy',     label: 'Legacy',    icon: BarChart3,      desc: 'Previous dashboard' },
+      { href: '/legacy',     label: 'Monitor',   icon: BarChart3,      desc: 'Full system monitor' },
     ],
   },
   {
