@@ -102,6 +102,24 @@ export interface CryonixConfig {
     global_mc_drop_volatile_pct: number;
     btc_dominance_rise_alt_penalty: number; alt_dominance_penalty: number;
   };
+  coinglass?: {
+    funding_extreme_negative_threshold?: number;
+    funding_negative_threshold?: number;
+    funding_extreme_positive_threshold?: number;
+    funding_positive_threshold?: number;
+    funding_squeeze_boost?: number;
+    funding_bearish_boost?: number;
+    funding_crowded_penalty?: number;
+    funding_positive_penalty?: number;
+    oi_surge_threshold?: number;
+    oi_trend_boost?: number;
+    oi_capitulation_boost?: number;
+    oi_panic_penalty?: number;
+    ls_short_squeeze_threshold?: number;
+    ls_crowded_long_threshold?: number;
+    ls_squeeze_boost?: number;
+    ls_crowded_penalty?: number;
+  };
 }
 
 let _tomlConfig: CryonixConfig | null = null;

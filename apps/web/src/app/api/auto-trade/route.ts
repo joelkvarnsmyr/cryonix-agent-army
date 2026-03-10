@@ -2386,6 +2386,91 @@ export async function POST() {
       } catch { /* CMC data unavailable — skip adjustments */ }
     }
 
+    // STEP 3d: Coinglass derivatives adjustments (funding rate + OI + L/S ratio)
+    // Always runs — CCXT fallback means data is present even without API key.
+    try {
+      for (const p of parsed) {
+        if (p.signal.action !== 'BUY') continue;
+        const base = p.signal.symbol.replace('/USDC', '').replace('/USDT', '');
+
+        // ── Funding Rate ──
+        const fundingRaw = await redis.get(`coinglass:funding:${base}`);
+        if (fundingRaw) {
+          const f = JSON.parse(fundingRaw) as { rate: number };
+          const rate = f.rate;
+          const extremeNeg = TOML?.coinglass?.funding_extreme_negative_threshold ?? -0.0005;
+          const mildNeg    = TOML?.coinglass?.funding_negative_threshold        ?? -0.0002;
+          const extremePos = TOML?.coinglass?.funding_extreme_positive_threshold ?? 0.001;
+          const mildPos    = TOML?.coinglass?.funding_positive_threshold         ?? 0.0005;
+
+          if (rate <= extremeNeg) {
+            const boost = TOML?.coinglass?.funding_squeeze_boost ?? 0.08;
+            p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
+            p.signal.reason += ` | 📉 Funding ${(rate * 100).toFixed(3)}% squeeze +${(boost * 100).toFixed(0)}%`;
+          } else if (rate <= mildNeg) {
+            const boost = TOML?.coinglass?.funding_bearish_boost ?? 0.04;
+            p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
+            p.signal.reason += ` | 📉 Funding ${(rate * 100).toFixed(3)}% bearish +${(boost * 100).toFixed(0)}%`;
+          } else if (rate >= extremePos) {
+            const penalty = TOML?.coinglass?.funding_crowded_penalty ?? 0.08;
+            p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+            p.signal.reason += ` | 📈 Funding ${(rate * 100).toFixed(3)}% crowded -${(penalty * 100).toFixed(0)}%`;
+          } else if (rate >= mildPos) {
+            const penalty = TOML?.coinglass?.funding_positive_penalty ?? 0.04;
+            p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+            p.signal.reason += ` | 📈 Funding ${(rate * 100).toFixed(3)}% long-heavy -${(penalty * 100).toFixed(0)}%`;
+          }
+        }
+
+        // ── Open Interest ──
+        const oiRaw = await redis.get(`coinglass:oi:${base}`);
+        if (oiRaw) {
+          const oi = JSON.parse(oiRaw) as { oi_change_24h_pct: number };
+          const oiChange = oi.oi_change_24h_pct;
+          const surgeThreshold = TOML?.coinglass?.oi_surge_threshold ?? 0.10;
+          const patterns = p.signal.patterns || [];
+          const isDipPattern = patterns.some((pat: string) =>
+            ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'].includes(pat)
+          );
+
+          if (oiChange >= surgeThreshold) {
+            const boost = TOML?.coinglass?.oi_trend_boost ?? 0.05;
+            p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
+            p.signal.reason += ` | 📊 OI +${(oiChange * 100).toFixed(1)}% trend +${(boost * 100).toFixed(0)}%`;
+          } else if (oiChange <= -surgeThreshold) {
+            if (isDipPattern) {
+              const boost = TOML?.coinglass?.oi_capitulation_boost ?? 0.04;
+              p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
+              p.signal.reason += ` | 📊 OI ${(oiChange * 100).toFixed(1)}% capitulation +${(boost * 100).toFixed(0)}%`;
+            } else {
+              const penalty = TOML?.coinglass?.oi_panic_penalty ?? 0.05;
+              p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+              p.signal.reason += ` | 📊 OI ${(oiChange * 100).toFixed(1)}% panic -${(penalty * 100).toFixed(0)}%`;
+            }
+          }
+        }
+
+        // ── Long/Short Ratio (Coinglass API only) ──
+        const lsRaw = await redis.get(`coinglass:ls:${base}`);
+        if (lsRaw) {
+          const ls = JSON.parse(lsRaw) as { ls_ratio: number };
+          const ratio = ls.ls_ratio;
+          const squeezeThreshold = TOML?.coinglass?.ls_short_squeeze_threshold ?? 0.8;
+          const crowdedThreshold = TOML?.coinglass?.ls_crowded_long_threshold ?? 2.5;
+
+          if (ratio <= squeezeThreshold) {
+            const boost = TOML?.coinglass?.ls_squeeze_boost ?? 0.06;
+            p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
+            p.signal.reason += ` | ⚡ L/S ${ratio.toFixed(2)} squeeze +${(boost * 100).toFixed(0)}%`;
+          } else if (ratio >= crowdedThreshold) {
+            const penalty = TOML?.coinglass?.ls_crowded_penalty ?? 0.06;
+            p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+            p.signal.reason += ` | ⚡ L/S ${ratio.toFixed(2)} crowded -${(penalty * 100).toFixed(0)}%`;
+          }
+        }
+      }
+    } catch { /* Coinglass data unavailable — skip adjustments */ }
+
     parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
     const topSignals = parsed.slice(0, 15);
     // Remove low-quality signals we won't process
