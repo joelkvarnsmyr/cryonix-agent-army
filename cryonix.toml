@@ -212,7 +212,7 @@ liquidation_buffer_pct = 0.15
 # 0.65 = 65%. Lower means more trades (more opportunity + more noise).
 # When to change: raise to 0.70-0.75 if too many losing trades,
 # lower to 0.60 if not enough trades are executing.
-min_confidence = 0.70
+min_confidence = 0.55
 
 # Minimum reward-to-risk ratio. Rejects signals where the potential
 # profit (entry to TP) divided by potential loss (entry to SL) is
@@ -220,7 +220,7 @@ min_confidence = 0.70
 # 1.3 means you need $1.30 potential profit for every $1 of risk.
 # When to change: raise to 1.5 for more selective entries, lower
 # to 1.1 if your win rate is high (>60%).
-min_risk_reward = 1.3
+min_risk_reward = 1.5
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -237,14 +237,14 @@ min_risk_reward = 1.3
 # always staying this % below the highest price seen.
 # 3.0 = 3%. Wider = more room to breathe, tighter = locks in profit faster.
 # When to change: widen (4-5%) for volatile coins, tighten (2%) for stable.
-trailing_stop_pct = 3.0
+trailing_stop_pct = 6.0
 
 # Minimum profit % before trailing stop activates.
 # Below this threshold, only the fixed stop-loss is active.
 # 1.5 = 1.5%. Prevents trailing stop from triggering on small noise.
 # When to change: raise to 2-3% if positions are getting stopped out
 # too early on minor pullbacks.
-trailing_activation_pct = 3.0
+trailing_activation_pct = 5.0
 
 # Maximum allowed slippage between signal entry price and current market
 # price when the order is about to execute. Rejects if exceeded.
@@ -268,8 +268,8 @@ orderbook_depth = 5
 #   - Tighter SL (2.5-3.0): fewer large losses, more small stopouts
 #   - Wider TP (6.0-8.0): bigger wins but lower win rate
 #   - The tp/sl ratio should stay above min_risk_reward (1.3)
-sl_atr_multiplier = 3.5
-tp_atr_multiplier = 6.0
+sl_atr_multiplier = 5.0
+tp_atr_multiplier = 12.0
 
 # Deep value crash trades use wider ATR multipliers — crash bounces
 # are sharp but need room to breathe. R:R = 8.0/6.0 = 1.33.
@@ -281,7 +281,7 @@ deep_value_tp_atr = 8.0
 # sell it to free the slot for higher-conviction signals.
 # 8h is conservative — most breakouts happen within 4h of pattern detection.
 # When to change: lower to 6h for faster turnover, raise to 12h for patience.
-stagnation_timeout_hours = 8
+stagnation_timeout_hours = 16
 stagnation_min_pnl_pct = 1.0
 
 # Native Binance stop-loss limit order offset.
@@ -309,7 +309,7 @@ native_sl_limit_offset = 0.005
 # When to change: widen the range (25/75) for fewer signals,
 # narrow (35/65) for more signals.
 rsi_period = 14
-rsi_oversold = 30
+rsi_oversold = 35
 rsi_overbought = 70
 
 # Bollinger Bands — volatility + mean reversion indicator.
@@ -320,7 +320,7 @@ rsi_overbought = 70
 # When to change: lower squeeze_pct (15) for fewer but stronger signals.
 bollinger_period = 20
 bollinger_std = 2.0
-bollinger_squeeze_pct = 20
+bollinger_squeeze_pct = 30
 
 # MACD (Moving Average Convergence Divergence) — trend + momentum.
 # Standard parameters (12, 26, 9) are almost universally used.
@@ -357,7 +357,7 @@ adx_trending_threshold = 25
 #   for consensus boosting. 1.2 = 20% above average.
 # When to change: raise spike to 2.5-3.0 for fewer false signals.
 volume_sma_period = 20
-volume_spike_threshold = 999.0  # Effectively disabled — backtest shows negative edge on INJ/ATOM
+volume_spike_threshold = 1.8  # Effectively disabled — backtest shows negative edge on INJ/ATOM
 volume_confirmation = 1.2
 
 # Minimum candles required before the engine will analyze a symbol.
@@ -380,7 +380,7 @@ min_candles = 50
 # dip_buy_lookback: how many bars back to look for the recent high.
 # dip_buy_max_rsi: RSI must be below this (avoids buying into strength).
 # When to change: raise drawdown to 0.07-0.10 for fewer, deeper dips.
-dip_buy_drawdown = 0.05
+dip_buy_drawdown = 0.03
 dip_buy_lookback = 20
 dip_buy_max_rsi = 50
 
@@ -400,13 +400,13 @@ deep_value_rug_pull_velocity = 20.0
 # Trend-only signals (MACD+EMA without a dip) are rejected.
 # Backtest data: DIP_BUY+DV = 80-100% WR, MACD+EMA alone = 0-25% WR.
 # When to change: set false to return to normal (all patterns allowed).
-dip_focus_mode = true
+dip_focus_mode = false
 
 # Consensus gate: minimum number of confirming patterns required.
 # 2 = require 2+ patterns (strict, fewer signals, higher quality combos)
 # 1 = allow single-pattern signals through (more signals, lower quality)
 # ADR-022 + backtest: consensus_min=2 → 73% WR / +$1.49, consensus_min=1 → 39% WR / -$1.72
-consensus_min_patterns = 2
+consensus_min_patterns = 1
 
 # Patterns considered "value" for dip focus filtering.
 # At least one must be present in a signal when dip_focus_mode = true.
@@ -493,6 +493,13 @@ trending_reserve_pct = 0.15
 # ║  Change when: tuning how much external data influences decisions.      ║
 # ║  Affects: signal confidence before AI validation.                      ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
+
+
+# ── Smart Rotation ───────────────────────────────────────────────────────
+[rotation]
+enabled = true                    # Enable smart position rotation
+min_score_advantage = 15          # Signal must beat weakest position by this many points
+min_hold_minutes = 30             # Minimum hold time before position can be rotated out
 
 [boosting]
 
@@ -661,7 +668,7 @@ reconcile_interval_ms = 600_000
 # re-buy that symbol for this many seconds. Prevents revenge trading.
 # 7200 = 2 hours. Lower to 3600 (1h) if positions turn around quickly,
 # raise to 14400 (4h) if repeated losses on same symbol are a problem.
-loss_cooldown_seconds = 7200
+loss_cooldown_seconds = 1800
 
 # Instance lock prevents multiple environments from trading the same
 # Binance account simultaneously. TTL must be > auto_trader_poll_ms.

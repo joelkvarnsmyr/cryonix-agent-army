@@ -67,6 +67,7 @@ export interface CryonixConfig {
     volatile_signal_pct: number; volatile_grid_pct: number; volatile_reserve_pct: number;
     trending_signal_pct: number; trending_grid_pct: number; trending_reserve_pct: number;
   };
+  rotation: { enabled: boolean; min_score_advantage: number; min_hold_minutes: number };
   boosting: {
     gainer_min_change_pct: number; gainer_confidence_boost: number;
     telegram_window_minutes: number; telegram_boost_enabled: boolean;

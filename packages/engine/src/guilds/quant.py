@@ -666,7 +666,11 @@ class QuantGuild:
         dominant_action = 'BUY' if len(buy_signals) >= len(sell_signals) else 'SELL'
         if buy_signals or sell_signals:
             htf_gate = self._passes_htf_gate(dominant_action, getattr(self, '_current_multi_tf', None))
-            if not htf_gate['allowed']:
+            has_mean_reversion = any(
+                p["pattern"] in self.MEAN_REVERSION_PATTERNS or p["pattern"] == "DIP_BUY"
+                for p in patterns
+            )
+            if not htf_gate["allowed"] and not has_mean_reversion:
                 return {
                     "action": "HOLD",
                     "confidence": 0.3,
@@ -901,6 +905,7 @@ class QuantGuild:
 
             if regime == 'trending':
                 if name in self.MEAN_REVERSION_PATTERNS:
+                    filtered.append(p)
                     continue
                 if name == 'DIP_BUY':
                     if price <= ema21:
@@ -913,7 +918,10 @@ class QuantGuild:
                 filtered.append(p)
 
             elif regime == 'volatile':
-                continue  # Block everything except regime-agnostic (handled above)
+                # Allow mean-reversion in volatile markets (dip opportunities)
+                if name in self.MEAN_REVERSION_PATTERNS or name == "DIP_BUY":
+                    filtered.append(p)
+                continue  # Block trend-following in volatile markets
 
             else:
                 filtered.append(p)

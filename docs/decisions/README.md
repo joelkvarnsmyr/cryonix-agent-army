@@ -9,6 +9,7 @@ Status: `Active` | `Superseded` | `Deferred` | `Reverted`
 
 | ADR | Date | Status | Summary |
 |-----|------|--------|---------|
+| [027](027-grok-analysis-and-rotation.md) | 2026-03-10 | Active | Grok analysis tool, signal hunter (auto-inject), smart position rotation |
 | [026](026-ai-prompt-dip-specialization.md) | 2026-02-25 | Active | Specialized AI prompts for dip vs trend signals (fix 88% dip rejection) |
 | [025](025-trending-exception-adx.md) | 2026-02-25 | Active | Allow trend signals through dip focus when ADX > 30 + HTF aligned |
 | [024](024-x-sentiment-refinement.md) | 2026-02-25 | Active | X sentiment from defensive-only to active confidence boosts |

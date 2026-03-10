@@ -1004,6 +1004,202 @@ async function calculateExpectedValue(signal: Signal, cal?: Record<string, Patte
 // RISK CHECKS
 // ============================================================================
 
+
+// ============================================================================
+// SMART ROTATION — Replace weak positions with stronger signals
+// ============================================================================
+
+function scorePosition(pos: OpenPosition): number {
+  let score = 0;
+  const pnl = pos.pnlPct ?? 0;
+  const ageHours = (Date.now() - new Date(pos.openedAt).getTime()) / 3600000;
+  const hwmDistance = pos.highWaterMark > 0
+    ? ((pos.currentPrice ?? pos.entryPrice) - pos.highWaterMark) / pos.highWaterMark
+    : 0;
+
+  // P&L component (0-40 pts): profitable positions score higher
+  if (pnl > 5) score += 40;
+  else if (pnl > 2) score += 30;
+  else if (pnl > 0) score += 20;
+  else if (pnl > -2) score += 10;
+  else if (pnl > -5) score += 5;
+  // else: 0 pts for heavy losers
+
+  // Momentum component (-15 to +15 pts): how far from high water mark
+  if (hwmDistance > -0.01) score += 15;       // Near or at HWM — strong
+  else if (hwmDistance > -0.03) score += 5;   // Slight pullback
+  else if (hwmDistance > -0.05) score -= 5;   // Fading
+  else score -= 15;                            // Well below HWM — weak
+
+  // Age component (-15 to +15 pts): fresh positions get benefit of doubt
+  if (ageHours < 1) score += 15;              // Just opened — don't rotate
+  else if (ageHours < 4) score += 5;          // Still fresh
+  else if (ageHours < 12) score += 0;         // Neutral
+  else if (ageHours < 24) score -= 5;         // Getting stale
+  else score -= 15;                            // Very old — likely stagnant
+
+  // Confidence component (0-10 pts)
+  score += Math.round((pos.confidence ?? 0.5) * 10);
+
+  // Grid positions are never rotated
+  if (pos.isGridPosition) score += 1000;
+
+  return score;
+}
+
+function scoreSignal(signal: Signal): number {
+  let score = 0;
+  const conf = signal.confidence ?? 0.5;
+
+  // Confidence component (15-45 pts)
+  score += Math.round(conf * 45);
+
+  // Pattern quality bonus
+  const strongPatterns = ['DEEP_VALUE_CRASH', 'VOLUME_SPIKE_UP', 'DIP_BUY'];
+  if (signal.patterns && signal.patterns.some(p => strongPatterns.includes(p))) score += 10;
+
+  // Multi-pattern bonus
+  if (signal.patterns && signal.patterns.length > 1) score += 15;
+
+  // Grok-hunter signals get a bonus (pre-validated by Grok search)
+  if ((signal as any).source === 'grok_signal_hunter') score += 8;
+
+  return score;
+}
+
+async function trySmartRotation(
+  signal: Signal,
+  openPositions: OpenPosition[],
+): Promise<{ shouldRotate: boolean; victim?: OpenPosition; reason?: string }> {
+  const rotationEnabled = TOML?.rotation?.enabled ?? false;
+  if (!rotationEnabled) {
+    return { shouldRotate: false, reason: 'rotation disabled' };
+  }
+
+  const minAdvantage = TOML?.rotation?.min_score_advantage ?? 15;
+  const minHoldMinutes = TOML?.rotation?.min_hold_minutes ?? 30;
+
+  // Score the incoming signal
+  const signalScore = scoreSignal(signal);
+
+  // Score all positions and find the weakest non-grid position
+  const candidates = openPositions
+    .filter(p => !p.isGridPosition && p.pattern !== 'GRID_BUY')
+    .filter(p => {
+      const ageMin = (Date.now() - new Date(p.openedAt).getTime()) / 60000;
+      return ageMin >= minHoldMinutes;
+    })
+    .map(p => ({ position: p, score: scorePosition(p) }))
+    .sort((a, b) => a.score - b.score);
+
+  if (candidates.length === 0) {
+    return { shouldRotate: false, reason: 'no eligible positions to rotate' };
+  }
+
+  const weakest = candidates[0];
+  const advantage = signalScore - weakest.score;
+
+  console.log(`[ROTATION] Signal ${signal.symbol} score=${signalScore} vs weakest ${weakest.position.symbol} score=${weakest.score} (advantage=${advantage}, need=${minAdvantage})`);
+
+  // Check hunter exit recommendations
+  let hunterBoost = 0;
+  try {
+    const exitRec = await redis.get(`hunter:exit:${weakest.position.symbol}`);
+    if (exitRec) {
+      hunterBoost = 10;
+      console.log(`[ROTATION] Hunter recommends exiting ${weakest.position.symbol} (+${hunterBoost} boost)`);
+    }
+  } catch {}
+
+  if (advantage + hunterBoost >= minAdvantage) {
+    return {
+      shouldRotate: true,
+      victim: weakest.position,
+      reason: `Signal ${signal.symbol} (${signalScore}pts) beats ${weakest.position.symbol} (${weakest.score}pts) by ${advantage + hunterBoost}pts`,
+    };
+  }
+
+  return {
+    shouldRotate: false,
+    reason: `Advantage ${advantage + hunterBoost}pts < required ${minAdvantage}pts`,
+  };
+}
+
+async function executeRotationClose(
+  ex: Exchange,
+  victim: OpenPosition,
+  reason: string,
+): Promise<{ success: boolean; pnl: number }> {
+  const currentPrice = victim.currentPrice ?? victim.entryPrice;
+
+  console.log(`[ROTATION] Closing ${victim.symbol} @ ~$${currentPrice} for rotation: ${reason}`);
+
+  try {
+    // Cancel native SL if exists
+    if (victim.nativeSlOrderId) {
+      try {
+        await ex.cancelOrder(victim.nativeSlOrderId, victim.symbol);
+        console.log(`[ROTATION] Cancelled native SL ${victim.nativeSlOrderId}`);
+      } catch (e) {
+        console.warn(`[ROTATION] Native SL cancel failed:`, e instanceof Error ? e.message : '');
+      }
+    }
+
+    // Market sell
+    const closeOrder = await ex.createMarketOrder(
+      victim.symbol,
+      'sell',
+      victim.quantity,
+    );
+
+    const closePrice = closeOrder.average || closeOrder.price || currentPrice;
+    const realizedPnl = (closePrice - victim.entryPrice) * victim.quantity;
+    const exitFee = closeOrder.fee?.cost || 0;
+    const fees = exitFee + (victim.entryFee || 0);
+    const netPnl = realizedPnl - fees;
+
+    // Remove from positions
+    await removePosition(victim.symbol);
+
+    // Loss cooldown if negative
+    if (netPnl < 0) {
+      await redis.set(
+        `cooldown:loss:${victim.symbol}`,
+        Date.now().toString(),
+        'EX',
+        TOML?.timing?.loss_cooldown_seconds ?? 1800,
+      );
+    }
+
+    // Update daily PnL
+    await addDailyPnl(netPnl);
+
+    // Log trade
+    await logTrade({
+      symbol: victim.symbol,
+      side: 'SELL',
+      quantity: String(victim.quantity),
+      entryPrice: String(victim.entryPrice),
+      exitPrice: String(closePrice),
+      pnl: String(netPnl),
+      fees: String(fees),
+      confidence: String(victim.confidence),
+      pattern: victim.pattern,
+      reasoning: `[ROTATION] ${reason}`,
+      status: 'CLOSED',
+      agentId: 'auto-trader',
+      configVersion: getConfigVersion(),
+    });
+
+    console.log(`[ROTATION] ✅ Closed ${victim.symbol}: PnL $${netPnl.toFixed(4)} (${((closePrice - victim.entryPrice) / victim.entryPrice * 100).toFixed(1)}%)`);
+
+    return { success: true, pnl: netPnl };
+  } catch (err) {
+    console.error(`[ROTATION] ❌ Failed to close ${victim.symbol}:`, err);
+    return { success: false, pnl: 0 };
+  }
+}
+
 async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason: string }> {
   await syncDailyState();
   resetDailyStateIfNeeded();
@@ -1034,7 +1230,8 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
   // Check open positions from Redis (persistent)
   const openPositions = await getOpenPositions();
   if (openPositions.length >= CONFIG.MAX_OPEN_POSITIONS) {
-    return { pass: false, reason: `Max positions (${CONFIG.MAX_OPEN_POSITIONS})` };
+    // Don't hard-reject — let the main loop try smart rotation
+    return { pass: false, reason: `Max positions (${CONFIG.MAX_OPEN_POSITIONS}) [rotation-eligible]` };
   }
 
   // Capital allocator: enforce per-strategy budgets
@@ -2149,14 +2346,46 @@ export async function POST() {
       const riskCheck = await passesRiskChecks(signal);
 
       if (!riskCheck.pass) {
-        await redis.lrem('trades:pending', 1, raw);
-        rejected++;
-        buyResults.push({
-          symbol: signal.symbol,
-          status: 'RISK_REJECTED',
-          reason: riskCheck.reason,
-        });
-        continue;
+        // Smart rotation: if rejected due to max positions, try replacing weakest position
+        if (riskCheck.reason.includes('[rotation-eligible]')) {
+          const currentPositions = await getOpenPositions();
+          const rotation = await trySmartRotation(signal, currentPositions);
+          if (rotation.shouldRotate && rotation.victim) {
+            console.log(`[ROTATION] 🔄 Rotating: closing ${rotation.victim.symbol} for ${signal.symbol}`);
+            const rotationEx = getExchange(); await rotationEx.loadMarkets(); const closeResult = await executeRotationClose(rotationEx, rotation.victim, rotation.reason || 'smart rotation');
+            if (closeResult.success) {
+              console.log(`[ROTATION] Slot freed — proceeding with ${signal.symbol}`);
+              // Don't reject — fall through to AI validation + execution
+            } else {
+              await redis.lrem('trades:pending', 1, raw);
+              rejected++;
+              buyResults.push({
+                symbol: signal.symbol,
+                status: 'ROTATION_FAILED',
+                reason: `Failed to close ${rotation.victim.symbol}`,
+              });
+              continue;
+            }
+          } else {
+            await redis.lrem('trades:pending', 1, raw);
+            rejected++;
+            buyResults.push({
+              symbol: signal.symbol,
+              status: 'RISK_REJECTED',
+              reason: `${riskCheck.reason} | rotation: ${rotation.reason}`,
+            });
+            continue;
+          }
+        } else {
+          await redis.lrem('trades:pending', 1, raw);
+          rejected++;
+          buyResults.push({
+            symbol: signal.symbol,
+            status: 'RISK_REJECTED',
+            reason: riskCheck.reason,
+          });
+          continue;
+        }
       }
 
       // STEP 3b: AI Validation (Information Edge)
