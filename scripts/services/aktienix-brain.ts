@@ -90,6 +90,91 @@ async function shouldRun(): Promise<string | null> {
     return null;
 }
 
+interface BrainData {
+    account: Record<string, any> | null;
+    positions: any[] | null;
+    risk: Record<string, any> | null;
+    previousRun: string | null;
+    tradeStats: {
+        overall: { totalTrades: number; winRate: number; totalPnl: number };
+        bySymbol: Array<{ symbol: string; trades: number; winRate: number; avgPnl: number }>;
+    } | null;
+}
+
+async function collectData(): Promise<BrainData> {
+    // Redis (may be null if agent is idle — 5-min TTL)
+    const accountRaw   = await redis.get('aktienix:account').catch(() => null);
+    const positionsRaw = await redis.get('aktienix:positions').catch(() => null);
+    const riskRaw      = await redis.get('aktienix:risk').catch(() => null);
+    const prevRunRaw   = await redis.get('aktienix:brain:last_run').catch(() => null);
+
+    const account   = accountRaw   ? JSON.parse(accountRaw)   : null;
+    const positions = positionsRaw ? JSON.parse(positionsRaw) : null;
+    const risk      = riskRaw      ? JSON.parse(riskRaw)      : null;
+
+    // Format previous run for prompt
+    let previousRun: string | null = null;
+    if (prevRunRaw) {
+        try {
+            const prev = JSON.parse(prevRunRaw);
+            previousRun = `[${prev.timestamp}] ${prev.analysis} Actions: ${(prev.actions ?? []).join(', ')}`;
+        } catch { /* ignore */ }
+    }
+
+    // Postgres: 7-day closed trade stats
+    let tradeStats = null;
+    if (PG_URL) {
+        const db = new PgClient({ connectionString: PG_URL });
+        try {
+            await db.connect();
+
+            const overall = await db.query(`
+                SELECT
+                    COUNT(*) AS total_trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0) AS win_rate,
+                    COALESCE(SUM(realized_pnl), 0) AS total_pnl
+                FROM aktienix_trades
+                WHERE side = 'SELL' AND realized_pnl IS NOT NULL
+                  AND timestamp > NOW() - INTERVAL '7 days'
+            `);
+
+            const bySymbol = await db.query(`
+                SELECT
+                    symbol,
+                    COUNT(*) AS trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0) AS win_rate,
+                    AVG(realized_pnl) AS avg_pnl
+                FROM aktienix_trades
+                WHERE side = 'SELL' AND realized_pnl IS NOT NULL
+                  AND timestamp > NOW() - INTERVAL '7 days'
+                GROUP BY symbol
+                ORDER BY SUM(realized_pnl) ASC
+            `);
+
+            const r = overall.rows[0];
+            tradeStats = {
+                overall: {
+                    totalTrades: parseInt(r.total_trades ?? '0'),
+                    winRate: parseFloat(r.win_rate ?? '0'),
+                    totalPnl: parseFloat(r.total_pnl ?? '0'),
+                },
+                bySymbol: bySymbol.rows.map(row => ({
+                    symbol: row.symbol,
+                    trades: parseInt(row.trades),
+                    winRate: parseFloat(row.win_rate ?? '0'),
+                    avgPnl: parseFloat(row.avg_pnl ?? '0'),
+                })),
+            };
+        } catch (err: any) {
+            console.warn('[aktienix-brain] Postgres unavailable:', err.message);
+        } finally {
+            await db.end().catch(() => {});
+        }
+    }
+
+    return { account, positions, risk, previousRun, tradeStats };
+}
+
 async function runBrain(_triggerReason: string) {
     // TODO in Task 5 — placeholder so the file compiles
     console.log('[aktienix-brain] runBrain() not yet implemented.');
