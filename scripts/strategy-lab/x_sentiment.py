@@ -35,6 +35,7 @@ CACHE_TTL = 900       # 15 min for x-sentiment:latest
 SYMBOL_TTL = 3600     # 1h for individual sentiment:{SYMBOL}
 CONTEXT_TTL = 3600    # 1h for sentiment:context:{SYMBOL} (score + narrative)
 ALERT_TTL = 1800      # 30 min for sentiment:alert:{SYMBOL}
+ONCHAIN_ALERT_TTL = 3600  # 1h for structured on-chain alerts
 
 SYSTEM_PROMPT = (
     'You are a crypto market sentiment analyst with access to real-time X/Twitter data. '
@@ -52,13 +53,22 @@ For each coin, provide:
 2. Volume of discussion (low/medium/high)
 3. Key narrative (one sentence: what are people talking about?)
 4. Any breaking news or events
+5. On-chain warnings: search for suspicious large exchange deposits, whale wallet moves to
+   exchanges, hack/exploit/rug alerts. Check accounts like @lookonchain, @rektfeed,
+   @OnchainLens, @WhalAlert for each coin.
 
 Return JSON only:
 {{
-  "BTC": {{"score": 1, "volume": "high", "narrative": "...", "alert": null}},
-  "ETH": {{"score": -1, "volume": "medium", "narrative": "...", "alert": "hack reported"}},
+  "BTC": {{"score": 1, "volume": "high", "narrative": "...", "alert": null, "onchain_alert": null}},
+  "ETH": {{"score": -1, "volume": "medium", "narrative": "...", "alert": "hack reported",
+           "onchain_alert": {{"severity": "critical", "reason": "Exploit reported", "source": "@rektfeed"}}}},
   ...
 }}
+
+onchain_alert severity rules:
+- "critical": hack, exploit, rug pull, contract vulnerability, funds drained
+- "warning": large exchange deposits, whale moves to exchanges, suspicious transfers
+- null: no on-chain concerns
 
 Only include coins with notable sentiment. Skip coins with no meaningful X activity."""
 
@@ -129,9 +139,29 @@ def write_to_redis(r, sentiment_data: dict, model: str, tokens: int):
             }
             r.setex(f'sentiment:context:{symbol}', CONTEXT_TTL, json.dumps(context))
 
-            # Alert flag for high-priority events
-            if info.get('alert'):
-                r.setex(f'sentiment:alert:{symbol}', ALERT_TTL, str(info['alert']))
+            # Alert flag: on-chain alert (JSON) takes priority over plain alert (string)
+            onchain_alert = info.get('onchain_alert')
+            plain_alert = info.get('alert')
+            if onchain_alert and isinstance(onchain_alert, dict):
+                new_severity = onchain_alert.get('severity', 'warning')
+                # Idempotent: skip if same severity already in Redis (avoid TTL refresh spam)
+                existing_raw = r.get(f'sentiment:alert:{symbol}')
+                if existing_raw:
+                    try:
+                        existing = json.loads(existing_raw)
+                        if existing.get('severity') == new_severity:
+                            continue  # same alert already set, skip
+                    except Exception:
+                        pass  # existing is plain string — overwrite with structured
+                alert_payload = {
+                    'severity': new_severity,
+                    'reason': onchain_alert.get('reason', ''),
+                    'source': onchain_alert.get('source'),
+                    'detected_at': datetime.now(timezone.utc).isoformat(),
+                }
+                r.setex(f'sentiment:alert:{symbol}', ONCHAIN_ALERT_TTL, json.dumps(alert_payload))
+            elif plain_alert:
+                r.setex(f'sentiment:alert:{symbol}', ALERT_TTL, str(plain_alert))
 
 
 def print_summary(sentiment_data: dict, model: str, tokens: int, dry_run: bool):
@@ -179,6 +209,12 @@ def print_summary(sentiment_data: dict, model: str, tokens: int, dry_run: bool):
         print(f'  {symbol:<8} {score_str:>6} {volume:<8} {narrative}')
         if alert:
             print(f'           ALERT: {alert}')
+        onchain = info.get('onchain_alert')
+        if onchain and isinstance(onchain, dict):
+            sev = onchain.get('severity', '?').upper()
+            reason = onchain.get('reason', '')
+            src = onchain.get('source', '')
+            print(f'           ON-CHAIN [{sev}]: {reason} {src}')
 
     # Summary line
     scores = [
@@ -203,6 +239,9 @@ def print_summary(sentiment_data: dict, model: str, tokens: int, dry_run: bool):
             print(f'    sentiment:{symbol:<6}              (TTL {SYMBOL_TTL}s) = {info["score"]}')
             if info.get('alert'):
                 print(f'    sentiment:alert:{symbol:<6}        (TTL {ALERT_TTL}s) = {info["alert"]}')
+            if info.get('onchain_alert') and isinstance(info.get('onchain_alert'), dict):
+                sev = info['onchain_alert'].get('severity', '?')
+                print(f'    sentiment:alert:{symbol:<6} (on-chain [{sev}]) (TTL {ONCHAIN_ALERT_TTL}s)')
 
     print()
 
