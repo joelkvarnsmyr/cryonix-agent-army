@@ -101,7 +101,117 @@ export const MACRO_EVENT_MAP: Record<string, MacroEventMapping> = {
         bearishSectors: ['mega_cap_tech'],
         bullishTickers: [],
         bearishTickers: ['GOOGL', 'AAPL', 'META', 'AMZN']
-    }
+    },
+
+    // ------------------------------------------------------------------------
+    // ENERGY SPECIFIC
+    // ------------------------------------------------------------------------
+    oil_supply_shock: {
+        id: 'oil_supply_shock',
+        description: 'OPEC production cuts, SPR release, or major supply disruption causing oil price spike.',
+        triggerKeywords: ['opec cut', 'spr release', 'oil inventory draw', 'brent spike', 'wti surge', 'crude supply'],
+        bullishSectors: ['energy'],
+        bearishSectors: ['airlines', 'transport', 'consumer_discretionary'],
+        bullishTickers: ['XOM', 'CVX', 'OXY', 'XLE', 'USO', 'SLB', 'COP'],
+        bearishTickers: ['UAL', 'DAL', 'AAL', 'FDX', 'UPS', 'LUV'],
+    },
+    gas_price_surge: {
+        id: 'gas_price_surge',
+        description: 'Natural gas price spike due to supply disruption or extreme weather demand.',
+        triggerKeywords: ['natural gas spike', 'lng shortage', 'henry hub surge', 'gas storage draw'],
+        bullishSectors: ['natural_gas', 'utilities_bearish'],
+        bearishSectors: ['utilities', 'chemicals'],
+        bullishTickers: ['UNG', 'AR', 'LNG', 'EQT'],
+        bearishTickers: ['DOW', 'LYB', 'WEC', 'SO'],
+    },
+
+    // ------------------------------------------------------------------------
+    // TRANSPORT & SHIPPING
+    // ------------------------------------------------------------------------
+    port_strike: {
+        id: 'port_strike',
+        description: 'Major US port strike disrupting import/export supply chains.',
+        triggerKeywords: ['port strike', 'longshoremen', 'dock workers', 'ila strike', 'ilwu strike'],
+        bullishSectors: ['domestic_transport', 'air_freight'],
+        bearishSectors: ['retail', 'consumer_electronics', 'automotive'],
+        bullishTickers: ['FDX', 'UPS', 'XPO', 'JBHT'],
+        bearishTickers: ['WMT', 'TGT', 'HD', 'F', 'GM'],
+    },
+    airline_fuel_shock: {
+        id: 'airline_fuel_shock',
+        description: 'Jet fuel cost surge materially impacting airline profitability guidance.',
+        triggerKeywords: ['jet fuel', 'airline fuel cost', 'kerosene price', 'carrier hedging'],
+        bullishSectors: [],
+        bearishSectors: ['airlines'],
+        bullishTickers: [],
+        bearishTickers: ['UAL', 'DAL', 'AAL', 'LUV', 'JBLU'],
+    },
+
+    // ------------------------------------------------------------------------
+    // HEALTHCARE
+    // ------------------------------------------------------------------------
+    pandemic_fear: {
+        id: 'pandemic_fear',
+        description: 'New pathogen or virus outbreak triggering global health emergency concerns.',
+        triggerKeywords: ['pandemic', 'novel virus', 'who emergency', 'outbreak spreading', 'bird flu', 'h5n1'],
+        bullishSectors: ['healthcare', 'biotech', 'staples'],
+        bearishSectors: ['travel', 'hospitality', 'consumer_discretionary'],
+        bullishTickers: ['PFE', 'MRNA', 'BNTX', 'GILD', 'ABBV', 'XLP'],
+        bearishTickers: ['UAL', 'DAL', 'MAR', 'HLT', 'ABNB', 'MGM'],
+    },
+    drug_approval_major: {
+        id: 'drug_approval_major',
+        description: 'FDA approves or rejects a major blockbuster drug with >$5B market potential.',
+        triggerKeywords: ['fda approved', 'fda approval', 'fda rejected', 'pdufa', 'new drug application'],
+        bullishSectors: ['biotech'],
+        bearishSectors: [],
+        bullishTickers: [],
+        bearishTickers: [],
+    },
+
+    // ------------------------------------------------------------------------
+    // CONSUMER & RETAIL
+    // ------------------------------------------------------------------------
+    consumer_confidence_drop: {
+        id: 'consumer_confidence_drop',
+        description: 'Consumer confidence index falls sharply, signaling reduced discretionary spending.',
+        triggerKeywords: ['consumer confidence miss', 'sentiment plunges', 'michigan sentiment below'],
+        bullishSectors: ['consumer_staples', 'discount_retail'],
+        bearishSectors: ['consumer_discretionary', 'luxury'],
+        bullishTickers: ['WMT', 'COST', 'DG', 'DLTR', 'XLP'],
+        bearishTickers: ['AMZN', 'TGT', 'SBUX', 'NKE', 'BKNG'],
+    },
+    housing_slowdown: {
+        id: 'housing_slowdown',
+        description: 'Housing starts, permits, or existing home sales fall sharply.',
+        triggerKeywords: ['housing starts miss', 'existing home sales drop', 'mortgage rates surge', 'housing permits'],
+        bullishSectors: [],
+        bearishSectors: ['homebuilders', 'real_estate', 'home_improvement'],
+        bullishTickers: [],
+        bearishTickers: ['HD', 'LOW', 'DHI', 'LEN', 'PHM', 'XLRE'],
+    },
+
+    // ------------------------------------------------------------------------
+    // EARNINGS (SECTOR-WIDE)
+    // ------------------------------------------------------------------------
+    sector_earnings_miss: {
+        id: 'sector_earnings_miss',
+        description: 'Multiple companies in the same sector miss earnings, indicating structural sector weakness.',
+        triggerKeywords: ['earnings miss', 'eps below', 'revenue miss', 'guidance cut', 'warns on earnings'],
+        bullishSectors: [],
+        bearishSectors: [],
+        bullishTickers: [],
+        bearishTickers: [],
+    },
+    recession_fear: {
+        id: 'recession_fear',
+        description: 'GDP contraction, yield curve inversion, or major bank forecasts recession.',
+        triggerKeywords: ['recession', 'gdp contraction', 'yield curve inverted', 'soft landing fails', 'hard landing'],
+        bullishSectors: ['consumer_staples', 'utilities', 'healthcare'],
+        bearishSectors: ['financials', 'consumer_discretionary', 'industrials'],
+        bullishTickers: ['XLP', 'XLU', 'XLV', 'GLD', 'TLT'],
+        bearishTickers: ['XLF', 'XLY', 'XLI', 'JPM', 'BAC'],
+    },
 };
 
 /**
