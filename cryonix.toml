@@ -912,3 +912,45 @@ ls_crowded_long_threshold = 2.5    # above this → crowded long trade
 # Confidence adjustments for L/S ratio signals.
 ls_squeeze_boost = 0.06            # +6% when shorts dominant
 ls_crowded_penalty = 0.06          # -6% when longs dominant
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  WATCHLIST ROTATION                                                     ║
+# ║  Autonomous watchlist rotation — see scripts/strategy-lab/watchlist_agent.py
+# ║  Cron: 0 5 * * 2,5 (Tue + Fri 05:00 UTC)                              ║
+# ║  Rotates the symbol_whitelist based on momentum, sector rotation, and  ║
+# ║  Fear & Greed conditions.                                              ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[watchlist]
+
+# Maximum number of symbols to keep in the active watchlist.
+# Default: 15. Matches the standard 15-symbol whitelist.
+max_symbols = 15
+
+# Hard cap — absolute maximum symbols in watchlist (safety limit).
+# 50 = never exceed 50 symbols regardless of scoring.
+max_symbols_hard_cap = 50
+
+# Minimum trades on a symbol before it can be removed from watchlist.
+# 5 = need at least 5 trades on a symbol to have removal history.
+min_trades_before_removal = 5
+
+# Minimum days a symbol must be on watchlist before removal consideration.
+# 14 = 2 weeks. Gives new symbols time to generate enough history.
+min_days_on_watchlist = 14
+
+# Market cap rank limit for candidate pool (CMC integration required).
+# 150 = only consider top 150 coins by market cap.
+# Prevents adding micro-cap / illiquid symbols.
+candidate_pool_cmc_rank_limit = 150
+
+# Minimum trading volume in USD for candidate symbols.
+# 5000000 = $5M USD 24h volume. Ensures liquidity.
+candidate_min_volume_usd = 5000000
+
+# Fear & Greed thresholds for symbol rotation.
+# fear_greed_skip_below: don't rotate when F&G < 15 (extreme fear → hold quality, don't churn)
+# fear_greed_skip_above: don't rotate when F&G > 85 (extreme greed → avoid chasing tops)
+fear_greed_skip_below = 15
+fear_greed_skip_above = 85

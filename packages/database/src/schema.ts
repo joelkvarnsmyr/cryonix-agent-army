@@ -532,3 +532,26 @@ export type AktienixTrade = typeof aktienixTrades.$inferSelect;
 export type NewAktienixTrade = typeof aktienixTrades.$inferInsert;
 export type AktienixSignal = typeof aktienixSignals.$inferSelect;
 export type NewAktienixSignal = typeof aktienixSignals.$inferInsert;
+
+// ============================================================================
+// WATCHLIST CHANGES TABLE
+// ============================================================================
+
+export const watchlistChanges = pgTable('watchlist_changes', {
+  id:              serial('id').primaryKey(),
+  runId:           varchar('run_id', { length: 20 }).notNull(),
+  runAt:           timestamp('run_at').defaultNow(),
+  symbolsBefore:   text('symbols_before').array().notNull(),
+  symbolsAfter:    text('symbols_after').array().notNull(),
+  added:           text('added').array(),
+  removed:         text('removed').array(),
+  skippedRemovals: text('skipped_removals').array(),
+  fearGreed:       integer('fear_greed'),
+  regime:          varchar('regime', { length: 20 }),
+  grokReasoning:   text('grok_reasoning'),
+  status:          varchar('status', { length: 20 }).default('applied'),
+  error:           text('error'),
+});
+
+export type WatchlistChange = typeof watchlistChanges.$inferSelect;
+export type NewWatchlistChange = typeof watchlistChanges.$inferInsert;
