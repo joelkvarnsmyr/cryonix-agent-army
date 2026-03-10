@@ -235,7 +235,11 @@ export class AktienixAgent extends BaseAgent {
                 }
 
                 // 8. Scan for TA signals
-                if (marketResult.canOpenNew && this.signalGenerator) {
+                // Time-gate: only scan for signals every signal_scan_interval_ms
+                if (marketResult.canOpenNew && this.signalGenerator &&
+                    !marketResult.skipSignalScan &&
+                    nowTs - this.lastSignalScanTime >= this.tomlConfig.timing.signal_scan_interval_ms) {
+                    this.lastSignalScanTime = nowTs;
                     const signals = await this.signalGenerator.scan();
                     for (const signal of signals) {
                         await this.evaluateSignal({
