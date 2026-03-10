@@ -33,9 +33,9 @@ async function logTrade(opts: {
         await db.connect();
         await db.query(
             `INSERT INTO aktienix_trades
-             (symbol, qty, fill_price, realized_pnl, side, reasoning, timestamp, exit_reason, broker, paper_trading, order_id)
-             VALUES ($1, $2, $3, $4, 'SELL', 'Brain intervention', NOW(), 'brain_intervention', 'alpaca', $5, $6)`,
-            [opts.symbol, opts.qty, opts.fillPrice, opts.realizedPnl, opts.isPaper, opts.orderId]
+             (symbol, qty, fill_price, avg_entry_price, realized_pnl, side, reasoning, timestamp, exit_reason, broker, paper_trading, order_id)
+             VALUES ($1, $2, $3, $4, $5, 'SELL', 'Brain intervention', NOW(), 'brain_intervention', 'alpaca', $6, $7)`,
+            [opts.symbol, opts.qty, opts.fillPrice, opts.avgEntry, opts.realizedPnl, opts.isPaper, opts.orderId]
         );
         console.log('[close-position] Trade logged to Postgres.');
     } catch (err: any) {
@@ -72,6 +72,10 @@ async function main() {
     }
 
     const qty = Math.abs(parseFloat(position.qty));
+    if (qty === 0) {
+        console.error(`[close-position] Position qty is 0 for ${symbol} — nothing to close.`);
+        process.exit(1);
+    }
     const avgEntry = parseFloat(position.avg_entry_price);
     console.log(`[close-position] Found position: ${qty} shares @ $${avgEntry.toFixed(2)}`);
 
@@ -103,7 +107,9 @@ async function main() {
                 order = updated;
                 console.log(`[close-position] Order filled at $${parseFloat(updated.filled_avg_price).toFixed(2)}`);
             }
-        } catch { /* ignore polling errors */ }
+        } catch (pollErr: any) {
+            console.warn(`[close-position] Poll error (continuing): ${pollErr.message ?? String(pollErr)}`);
+        }
     }
 
     if (!filled) {
