@@ -15,10 +15,26 @@ export class WatchlistCurator {
         return this.lastRefreshDate !== today;
     }
 
+    private getMacroTickers(signals: MacroSignal[]): string[] {
+        const tickers = new Set<string>();
+        for (const signal of signals) {
+            for (const ticker of signal.tickers) {
+                tickers.add(ticker);
+            }
+        }
+        return Array.from(tickers);
+    }
+
     async curate(activeMacroSignals: MacroSignal[]): Promise<string[]> {
-        // TODO: activeMacroSignals will be used in Task 2 to add macro tickers
         const today = new Date().toISOString().slice(0, 10);
+        const combined = new Set<string>(this.fallbackSymbols);
+
+        // Source 3: Macro signal tickers
+        for (const t of this.getMacroTickers(activeMacroSignals)) {
+            combined.add(t);
+        }
+
         this.lastRefreshDate = today;
-        return this.fallbackSymbols;
+        return Array.from(combined);
     }
 }
