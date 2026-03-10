@@ -12,6 +12,9 @@ import { TradeActivity } from '@/components/dashboard/trade-activity';
 import { ProcessViewer } from '@/components/dashboard/process-viewer';
 import { SystemVitals } from '@/components/dashboard/system-vitals';
 import { CostsCard } from '@/components/dashboard/costs-card';
+import { AktienixStatusCard } from '@/components/dashboard/aktienix-status-card';
+import { SolanixStatusCard } from '@/components/dashboard/solanix-status-card';
+import { TelegramSignalsCard } from '@/components/dashboard/telegram-signals-card';
 import { StaggerContainer, FadeUpItem } from '@/components/dashboard/motion-wrappers';
 
 const PriceChart = dynamic(() => import('@/components/dashboard/price-chart').then(mod => mod.PriceChart), {
@@ -45,6 +48,14 @@ export default function LegacyDashboard() {
       <StaggerContainer className="space-y-2 3xl:space-y-1.5">
         <FadeUpItem>
           <SystemVitals />
+        </FadeUpItem>
+        {/* Agent status row: Aktienix + Solanix + Telegram */}
+        <FadeUpItem>
+          <div className="grid grid-cols-12 gap-2.5 3xl:gap-1.5">
+            <div className="col-span-12 lg:col-span-4"><AktienixStatusCard /></div>
+            <div className="col-span-12 lg:col-span-4"><SolanixStatusCard /></div>
+            <div className="col-span-12 lg:col-span-4"><TelegramSignalsCard /></div>
+          </div>
         </FadeUpItem>
         <FadeUpItem className="3xl:hidden">
           <AgentFlow />
