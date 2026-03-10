@@ -12,6 +12,7 @@ import { PositionSizer } from './position-sizer';
 import { ExitMonitor } from './exit-monitor';
 import { RiskManager } from './risk-manager';
 import { StatePublisher } from './state-publisher';
+import { WatchlistCurator } from './watchlist-curator';
 
 export interface AktienixAgentConfig extends AgentConfig {
     tradingConfig: AktienixConfig;
@@ -26,6 +27,8 @@ export class AktienixAgent extends BaseAgent {
     private isTrading = false;
 
     private signalGenerator: StockSignalGenerator | null = null;
+    private watchlistCurator: WatchlistCurator | null = null;
+    private loggerAdapter: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void; debug: (msg: string) => void } | null = null;
     private newsScanner: StockNewsScanner | null = null;
     private activeMacroSignals: MacroSignal[] = [];
     private lastNewsScanTime = 0;
@@ -45,7 +48,7 @@ export class AktienixAgent extends BaseAgent {
     async initialize(): Promise<void> {
         this.log('info', 'Initializing Aktienix Agent (Stock Trading)...');
 
-        const loggerAdapter = {
+        this.loggerAdapter = {
             info: (msg: string) => this.log('info', msg),
             warn: (msg: string) => this.log('warn', msg),
             error: (msg: string) => this.log('error', msg),
@@ -54,7 +57,7 @@ export class AktienixAgent extends BaseAgent {
 
         if (this.tradingConfig.broker === 'ibkr') {
             this.log('info', 'Connecting to IBKR CP Gateway...');
-            this.brokerClient = new IbkrClient(this.tradingConfig, loggerAdapter);
+            this.brokerClient = new IbkrClient(this.tradingConfig, this.loggerAdapter!);
             await this.brokerClient.connect();
             this.accountState = await this.brokerClient.getAccountState();
             this.positions = await this.brokerClient.getPositions();
@@ -62,7 +65,7 @@ export class AktienixAgent extends BaseAgent {
 
         } else if (this.tradingConfig.broker === 'alpaca') {
             this.log('info', 'Connecting to Alpaca...');
-            this.brokerClient = new AlpacaClient(this.tradingConfig, loggerAdapter);
+            this.brokerClient = new AlpacaClient(this.tradingConfig, this.loggerAdapter!);
             await this.brokerClient.connect();
             this.accountState = await this.brokerClient.getAccountState();
             this.positions = await this.brokerClient.getPositions();
@@ -71,12 +74,18 @@ export class AktienixAgent extends BaseAgent {
             this.alpacaInstance = (this.brokerClient as AlpacaClient).getAlpacaInstance();
             this.signalGenerator = new StockSignalGenerator(
                 this.alpacaInstance,
-                loggerAdapter,
+                this.loggerAdapter!,
                 {
                     symbols: this.tomlConfig.watchlist.symbols,
                     timeframe: this.tomlConfig.watchlist.timeframe,
                     barsCount: this.tomlConfig.watchlist.bars_count,
                 },
+            );
+            this.watchlistCurator = new WatchlistCurator(
+                this.alpacaInstance,
+                process.env.XAI_API_KEY ?? null,
+                this.tomlConfig.watchlist.symbols,
+                this.loggerAdapter ?? undefined,
             );
 
         } else if (this.tradingConfig.broker === 'mock') {
@@ -235,6 +244,16 @@ export class AktienixAgent extends BaseAgent {
                     } catch (e: any) {
                         this.log('error', `Macro scan failed: ${e.message}`);
                     }
+                }
+
+                // 7b. Refresh watchlist if new trading day
+                if (this.watchlistCurator?.needsRefresh() && this.signalGenerator && this.loggerAdapter) {
+                    const symbols = await this.watchlistCurator.curate(this.activeMacroSignals);
+                    this.signalGenerator = new StockSignalGenerator(
+                        this.alpacaInstance, this.loggerAdapter,
+                        { symbols, timeframe: config.watchlist.timeframe, barsCount: config.watchlist.bars_count }
+                    );
+                    this.log('info', `Watchlist refreshed: ${symbols.length} symbols`);
                 }
 
                 // 8. Scan for TA signals
