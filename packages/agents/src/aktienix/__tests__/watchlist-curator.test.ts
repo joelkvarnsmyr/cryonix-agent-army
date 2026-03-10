@@ -2,6 +2,17 @@ import { describe, it, expect, vi } from 'vitest';
 import { WatchlistCurator } from '../watchlist-curator';
 import type { MacroSignal } from '../intelligence/news-scanner';
 
+// Module-level variable holds the mock instance returned by new OpenAI()
+// Tests assign to this before calling curate() to control Grok responses.
+let _mockOpenAIInstance: { chat: { completions: { create: ReturnType<typeof vi.fn> } } } | null = null;
+
+// MUST be at file top level — vi.mock() is hoisted by Vitest's transform
+vi.mock('openai', () => ({
+    OpenAI: vi.fn().mockImplementation(function () {
+        return _mockOpenAIInstance;
+    }),
+}));
+
 describe('WatchlistCurator', () => {
     it('returns true on first call (cold start)', () => {
         const curator = new WatchlistCurator(null, null, []);
@@ -109,5 +120,45 @@ describe('WatchlistCurator — Alpaca movers', () => {
         const curator = new WatchlistCurator(null, null, ['QQQ']);
         const symbols = await curator.curate([]);
         expect(symbols).toContain('QQQ');
+    });
+});
+
+describe('WatchlistCurator — Grok picks', () => {
+    it('includes Grok-discovered symbols when XAI key is provided', async () => {
+        const mockGrokResponse = JSON.stringify([
+            { symbol: 'COIN', reason: 'Crypto rally', sector: 'finance', catalyst: 'momentum' },
+            { symbol: 'MRNA', reason: 'FDA catalyst', sector: 'health', catalyst: 'fda' },
+        ]);
+
+        _mockOpenAIInstance = {
+            chat: {
+                completions: {
+                    create: vi.fn().mockResolvedValue({
+                        choices: [{ message: { content: mockGrokResponse } }],
+                    }),
+                },
+            },
+        };
+
+        const curator = new WatchlistCurator(null, 'xai-fake-key', []);
+        const symbols = await curator.curate([]);
+        expect(symbols).toContain('COIN');
+        expect(symbols).toContain('MRNA');
+    });
+
+    it('falls back gracefully when Grok returns malformed JSON', async () => {
+        _mockOpenAIInstance = {
+            chat: {
+                completions: {
+                    create: vi.fn().mockResolvedValue({
+                        choices: [{ message: { content: 'not json at all' } }],
+                    }),
+                },
+            },
+        };
+
+        const curator = new WatchlistCurator(null, 'xai-fake-key', ['SPY']);
+        const symbols = await curator.curate([]);
+        expect(symbols).toContain('SPY'); // fallback preserved
     });
 });
