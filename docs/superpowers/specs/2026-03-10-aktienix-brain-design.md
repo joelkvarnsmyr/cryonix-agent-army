@@ -1,17 +1,19 @@
 # AktienixBrain Design Spec
 
 **Date:** 2026-03-10
-**Status:** Approved
+**Status:** Approved (v2 — Claude Code CLI approach)
 
 ## Goal
 
-Add an autonomous portfolio intelligence layer to Aktienix — a standalone service (`AktienixBrain`) that analyses trading performance via Claude Opus, then autonomously adjusts strategy parameters, modifies the watchlist, and closes underperforming positions.
+Add an autonomous portfolio intelligence layer to Aktienix — a standalone service (`AktienixBrain`) that collects trading data, then delegates all analysis and action to **Claude Code CLI** (`claude -p`). Claude reads the codebase directly, edits `aktienix.toml`, closes positions via helper scripts, and commits changes — exactly like the existing `copilot-evolution.mjs` system.
 
 ## Architecture
 
-AktienixBrain runs as a separate Docker service (`aktienix-brain`) alongside the trading agent. It is a TypeScript script (`scripts/services/aktienix-brain.ts`) using `setInterval` for scheduling. It does NOT run inside the trading agent process — isolation keeps Brain failures from affecting live trading.
+AktienixBrain runs as a separate Docker service (`aktienix-brain`) alongside the trading agent. It is a TypeScript/Node script (`scripts/services/aktienix-brain.ts`) using `setInterval` for scheduling.
 
-**Model:** `claude-opus-4-6` via `@anthropic-ai/sdk`
+**Key design principle:** Brain itself is dumb — it collects data and builds a prompt. Claude Code CLI is the intelligence layer that reads files, makes decisions, edits configs, and runs scripts autonomously.
+
+**No Anthropic SDK required.** Claude Code CLI is already installed on the VM (`claude` binary on PATH). Brain calls it as a subprocess, same as `copilot-evolution.mjs`.
 
 ## Trigger Logic
 
@@ -19,103 +21,165 @@ Two trigger types, checked every 60 seconds:
 
 | Trigger | Condition |
 |---------|-----------|
-| Scheduled | 09:00 ET (market open) + 16:30 ET (market close) daily |
-| Acute | consecutiveLosses >= 2 OR dailyPnlDollar < –3% of portfolio value |
+| Scheduled | 16:30 ET (market close) + 09:00 ET (market open) daily |
+| Acute | `consecutiveLosses >= 2` OR `dailyPnlDollar < -(portfolioValue * 0.03)` |
 
-**Cooldown:** Maximum one Brain run per hour regardless of trigger type. Last run timestamp stored in Redis `aktienix:brain:last_run`.
+**Cooldown:** Maximum one Brain run per hour. Last run timestamp stored in Redis `aktienix:brain:last_run`.
+
+**Acute trigger computation:** Both values read from Redis `aktienix:risk`. The threshold for daily loss is computed as `portfolioValue * 0.03` where `portfolioValue` comes from Redis `aktienix:account`. These are separate Redis keys — both must be fetched before evaluating the acute condition.
 
 ## Data Collection
 
-Brain reads the following before calling Claude:
+Brain reads the following before building the Claude prompt:
 
 **From Redis:**
 - `aktienix:account` — portfolioValue, buyingPower, settledCash, isPatternDayTrader
 - `aktienix:positions` — all open positions (symbol, qty, avgEntryPrice, unrealizedPl, marketValue)
 - `aktienix:risk` — canTrade, dailyPnlDollar, weeklyPnlDollar, consecutiveLosses, tradesToday, dayTradesThisWeek
-- `aktienix:signals` — last 24h signals (symbol, action, confidence, reasoning, timestamp)
-- `aktienix:brain:last_run` — previous Brain summary (for continuity)
+- `aktienix:brain:last_run` — previous Brain summary for context continuity
 
-**From Postgres (`aktienix_trades`, last 7 days):**
-- Per-symbol: trade count, win rate, average realized P&L, average confidence
-- Overall: total trades, overall win rate, total P&L 7d
+**From Postgres (`aktienix_trades`, last 7 days) — filter `side = 'SELL' AND realized_pnl IS NOT NULL`:**
+- Per-symbol: trade count, win rate, average realized P&L
+- Overall: total closed trades, overall win rate, total P&L 7d
 
 **From disk:**
-- `aktienix.toml` — current config values (broker, capital, risk, exits, watchlist, timing, intelligence)
+- `aktienix.toml` — current config (read by Brain for context; Claude will re-read it directly via Read tool)
 
-## Claude Opus Analysis
+## Claude Code CLI Invocation
 
-Brain sends a structured prompt with all collected data and requests a JSON response:
+Brain writes the prompt to a temp file and pipes it to Claude Code CLI — identical to `copilot-evolution.mjs`:
 
-```
-System: You are AktienixBrain, an autonomous portfolio analyst for US equity swing trading.
-        You have full authority to adjust strategy parameters within the defined safety bounds.
+```typescript
+const prompt = buildBrainPrompt(collectedData);
+const promptPath = join(tmpdir(), `brain-${runId}.md`);
+await writeFile(promptPath, prompt);
 
-User: [JSON blob of all collected data]
-      Analyse performance, identify patterns, and return a JSON action plan.
-
-Response format:
-{
-  "analysis": "concise narrative analysis (2-4 paragraphs)",
-  "actions": [
-    { "type": "adjust_param", "param": "risk.min_confidence", "old": 0.38, "new": 0.45, "reason": "..." },
-    { "type": "add_symbol", "symbol": "NVDA", "reason": "..." },
-    { "type": "remove_symbol", "symbol": "CRSP", "reason": "..." },
-    { "type": "close_position", "symbol": "MRNA", "reason": "..." }
-  ]
-}
+const result = await execCommand(
+    `cat ${promptPath} | CLAUDECODE= claude -p ` +
+    `--model claude-opus-4-6 ` +
+    `--allowedTools 'Edit,Read,Glob,Grep,` +
+    `Bash(npx tsx scripts/aktienix/close-position.ts),` +
+    `Bash(docker restart aktienix),` +
+    `Bash(git add -A),Bash(git commit)' ` +
+    `--max-budget-usd 3`,
+    { timeout: 300_000, cwd: PROJECT_ROOT }
+);
 ```
 
-## Actions and Safety Bounds
+**Allowed tools for Claude:**
+- `Edit` / `Read` / `Glob` / `Grep` — read and edit `aktienix.toml`, read code
+- `Bash(npx tsx scripts/aktienix/close-position.ts <SYMBOL>)` — close a specific position
+- `Bash(docker restart aktienix)` — reload the trading agent after config changes (picks up new toml immediately, no hot-reload complexity)
+- `Bash(git add -A)` + `Bash(git commit)` — commit changes
 
-Brain validates every action against hard bounds before applying:
+**Hot-reload via restart:** Claude edits `aktienix.toml`, then runs `docker restart aktienix`. The Docker volume mount makes the edited file immediately visible to the new process. This is simpler and more reliable than a cache-invalidation approach.
 
-| Action type | Parameter | Allowed range / condition |
-|-------------|-----------|--------------------------|
-| `adjust_param` | `risk.min_confidence` | 0.30 – 0.75 |
-| `adjust_param` | `limits.max_position_slots` | 1 – 8 |
-| `adjust_param` | `capital.max_position_pct` | 0.05 – 0.25 |
-| `adjust_param` | `exits.stop_loss_pct` | ±20% of current value |
-| `adjust_param` | `exits.take_profit_pct` | ±20% of current value |
-| `add_symbol` | watchlist | max 10 additions per run |
-| `remove_symbol` | watchlist | only if no open position in that symbol |
-| `close_position` | any open position | only if unrealizedPl% < –5% OR position age > 5 days |
+## Prompt Structure
 
-Any action violating its bounds is logged and skipped — never silently mutated to fit.
+Brain's prompt tells Claude exactly what it can and cannot do:
 
-## Applying Actions
+```markdown
+# AktienixBrain — Portfolio Analysis Run
 
-### Parameter adjustments
-Brain reads `aktienix.toml` as text, applies changes via the `@iarna/toml` parser (already a dependency), and writes the file back. AktienixAgent calls `loadAktienixConfig()` at the top of every trading loop iteration, so new values take effect on the next poll without restart.
+You are AktienixBrain, an autonomous portfolio analyst for Aktienix (US stock trading).
+Today is {date}. Run ID: {runId}.
 
-### Watchlist changes
-Add/remove symbols from `[[watchlist.symbols]]` in `aktienix.toml`. Same file write as above.
+## Current State
 
-### Position closing
-Brain instantiates an `AlpacaClient` (paper or live, same credentials from env) and submits a SELL MARKET order. The fill is logged to `aktienix_trades` with `exit_reason = 'brain_intervention'`.
+### Account
+{accountState JSON}
 
-## Telegram Report
+### Open Positions
+{positions JSON}
 
-Sent after every Brain run regardless of whether actions were taken:
+### Risk State
+{riskState JSON}
 
+### Trade Performance (7 days, closed trades only)
+{tradeStats JSON — per symbol + overall}
+
+### Previous Brain Run
+{previousSummary or "First run"}
+
+## Your Job
+
+Analyse trading performance and take autonomous corrective actions.
+
+### Config File
+Read `aktienix.toml` — that is the live config. Edit it directly if changes are needed.
+
+### What You CAN Change in aktienix.toml:
+
+| Parameter | Allowed range |
+|-----------|--------------|
+| `risk.min_confidence` | 0.30 – 0.75 |
+| `limits.max_open_positions` | 1 – 8 |
+| `capital.max_capital_per_trade_pct` | 0.05 – 0.25 |
+| `exits.stop_loss_pct` | current ±20% |
+| `exits.take_profit_pct` | current ±20% |
+| symbols in `[watchlist]` section | add up to 10, remove if no open position |
+
+### What You CAN Do:
+
+- Edit `aktienix.toml` to adjust the parameters above
+- Run `npx tsx scripts/aktienix/close-position.ts SYMBOL` to close a specific position
+  - Only close if: unrealizedPl% < –5% OR position held > 5 days
+- Run `docker restart aktienix` AFTER editing aktienix.toml (so changes take effect)
+- Run `git add -A && git commit -m "brain({runId}): <brief description>"` to commit changes
+
+### What You CANNOT Do:
+
+- Open new positions
+- Change `intelligence.*` settings
+- Change `broker.*` settings
+- Exceed the parameter bounds above
+
+## Output
+
+After completing your analysis and actions, print a brief summary:
+
+```
+BRAIN_SUMMARY_START
+Trigger: [scheduled/acute]
+Actions: [list of what you did]
+Analysis: [2-3 sentences]
+BRAIN_SUMMARY_END
+```
+```
+
+## Helper Script: close-position.ts
+
+A new script `scripts/aktienix/close-position.ts` must be created as part of this implementation. It:
+
+1. Reads Alpaca credentials from environment
+2. Connects to Alpaca (paper or live based on `ALPACA_PAPER_API_KEY` presence)
+3. Submits SELL MARKET order for the given symbol + full qty from current position
+4. Polls order status until filled (max 30s)
+5. Logs the trade to `aktienix_trades` in Postgres with `exit_reason = 'brain_intervention'`
+6. Exits 0 on success, 1 on failure
+
+## Post-Run: Parse and Report
+
+After Claude finishes, Brain:
+1. Extracts the `BRAIN_SUMMARY_START...BRAIN_SUMMARY_END` block from Claude's output
+2. Checks `git diff --stat` to list changed files
+3. Stores summary in Redis `aktienix:brain:last_run` (JSON, 48h TTL)
+4. Sends Telegram report
+
+**Telegram format:**
 ```
 🧠 AktienixBrain — [Scheduled / Acute] Report
 
-📊 Portfolio: $X (+$Y today, +Z%)
-🏆 Win rate 7d: W% (N/M trades)
-⚠️  Trigger: [Scheduled market close | Acute: 2 consecutive losses]
+📊 Portfolio: $X (+$Y today)
+⚠️  Trigger: [reason]
 
-[analysis narrative from Claude]
+[analysis from Brain summary]
 
-Actions taken:
-✅ min_confidence: 0.38 → 0.45
-✅ Removed from watchlist: CRSP, BMRN
-✅ Closed MRNA: –$234 (held 6 days)
-— No position changes required
+Actions: [list from Brain summary]
+Files changed: aktienix.toml
 
-Next scheduled run: [datetime ET]
+Next scheduled: [datetime ET]
 ```
-
-If no actions are taken, report shows `— No changes made` with analysis only.
 
 ## Docker Deployment
 
@@ -127,18 +191,19 @@ aktienix-brain:
   restart: unless-stopped
   command: ["npx", "tsx", "scripts/services/aktienix-brain.ts"]
   volumes:
-    - ./aktienix.toml:/app/aktienix.toml  # read-write (Brain modifies config)
+    - ./aktienix.toml:/app/aktienix.toml  # read-write (Brain edits config)
+    - /var/run/docker.sock:/var/run/docker.sock  # for docker restart aktienix
   environment:
-    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    - ALPACA_PAPER_API_KEY=${ALPACA_PAPER_API_KEY}
-    - ALPACA_PAPER_API_SECRET=${ALPACA_PAPER_API_SECRET}
-    - ALPACA_API_KEY=${ALPACA_API_KEY:-}
-    - ALPACA_API_SECRET=${ALPACA_API_SECRET:-}
+    - NODE_ENV=production
     - KV_URL=redis://redis:6379
     - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
     - TELEGRAM_BOT_TOKEN=${TELEGRAM_INTERACTIVE_BOT_TOKEN}
     - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-    - XAI_API_KEY=${XAI_API_KEY:-}
+    - ALPACA_PAPER_API_KEY=${ALPACA_PAPER_API_KEY}
+    - ALPACA_PAPER_API_SECRET=${ALPACA_PAPER_API_SECRET}
+    - ALPACA_API_KEY=${ALPACA_API_KEY:-}
+    - ALPACA_API_SECRET=${ALPACA_API_SECRET:-}
+    - PROJECT_ROOT=/app
   networks:
     - cryonix-net
   depends_on:
@@ -148,18 +213,30 @@ aktienix-brain:
       condition: service_healthy
 ```
 
-**Note:** `aktienix.toml` is mounted read-write for Brain. The trading agent mounts it `:ro` — this is intentional. Only Brain writes to the config file.
+**Notes:**
+- `aktienix.toml` mounted read-write. Trading agent mounts it `:ro` — intentional.
+- Docker socket mounted so Brain can restart the trading agent after config changes.
+- No `ANTHROPIC_API_KEY` needed — `claude` CLI uses its own auth (already configured on VM).
 
 ## Error Handling
 
-- Claude API failure → log error, skip all actions, send minimal Telegram alert, retry at next scheduled run
-- Alpaca close-position failure → log error, keep position, note in Telegram report
-- TOML write failure → log error, do not partially apply changes, alert via Telegram
-- Redis read failure → abort run entirely, do not call Claude with incomplete data
+| Failure | Response |
+|---------|----------|
+| Claude CLI exits non-zero | Log error, skip Telegram actions list, send alert |
+| Claude makes no file changes | Log warning ("no actions taken"), still send report |
+| `close-position.ts` exits 1 | Log error, note in Telegram report, do not crash Brain |
+| Redis read fails | Abort run entirely, do not call Claude with incomplete data |
+| Postgres read fails | Proceed with "no trade data available" in prompt |
+| Git commit fails | Log warning, continue (config change still took effect) |
+
+## New Required Env Var
+
+`ANTHROPIC_API_KEY` is **not** needed — Claude Code CLI handles auth separately.
+`TELEGRAM_BOT_TOKEN` must be added to `.env` on the VM if not already present (it is — same token as `TELEGRAM_INTERACTIVE_BOT_TOKEN`).
 
 ## Out of Scope
 
 - Brain does not open new positions (only closes)
-- Brain does not adjust per-symbol stop-loss overrides (only global exits config)
-- Brain does not interact with IBKR (Alpaca only for now)
-- Brain does not modify `intelligence.*` config keys (Grok scan settings)
+- Brain does not modify IBKR settings (Alpaca only)
+- Brain does not modify `intelligence.*` config keys
+- Brain does not interact with the trading agent process directly (only via Docker restart + Redis)
