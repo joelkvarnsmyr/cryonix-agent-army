@@ -69,8 +69,10 @@ export class SolanaAgent extends BaseAgent {
         // StatePublisher (optional — requires KV_URL)
         const kvUrl = process.env.KV_URL;
         if (kvUrl) {
-            // Task 8 will add namespace support; for now use base constructor
-            this.statePublisher = new StatePublisher(kvUrl);
+            this.statePublisher = new StatePublisher(
+                kvUrl,
+                'solanix',
+            );
             this.log('info', 'StatePublisher initialized.');
         } else {
             this.log('warn', 'KV_URL not set — state will not be published to Redis.');
@@ -351,9 +353,8 @@ export class SolanaAgent extends BaseAgent {
      * Gracefully returns false if Redis is unavailable.
      */
     private async isCircuitBreakerOpen(): Promise<boolean> {
-        if (!this.statePublisher?.isConnected()) return false;
-        // We can only read via statePublisher indirectly; skip check if not connected.
-        // Full implementation in Task 8 once namespace + GET is supported.
-        return false;
+        if (!this.statePublisher) return false;
+        const value = await this.statePublisher.get('solanix:circuit_breaker');
+        return value === '1' || value === 'true';
     }
 }

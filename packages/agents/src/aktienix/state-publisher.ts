@@ -201,9 +201,11 @@ export interface PublishableSignal {
 export class StatePublisher {
     private client: RespClient;
     private connecting: Promise<void> | null = null;
+    private readonly ns: string;
 
-    constructor(kvUrl: string) {
+    constructor(kvUrl: string, namespace: string = 'aktienix') {
         this.client = new RespClient(kvUrl);
+        this.ns = namespace;
     }
 
     // -----------------------------------------------------------------------
@@ -231,7 +233,7 @@ export class StatePublisher {
     async publishPositions(positions: StockPosition[]): Promise<void> {
         try {
             await this.ensureConnected();
-            await this.client.send('SET', 'aktienix:positions', JSON.stringify(positions), 'EX', TTL);
+            await this.client.send('SET', `${this.ns}:positions`, JSON.stringify(positions), 'EX', TTL);
         } catch (err) {
             console.error('[StatePublisher] publishPositions error:', err);
         }
@@ -240,7 +242,7 @@ export class StatePublisher {
     async publishAccount(account: AccountState): Promise<void> {
         try {
             await this.ensureConnected();
-            await this.client.send('SET', 'aktienix:account', JSON.stringify(account), 'EX', TTL);
+            await this.client.send('SET', `${this.ns}:account`, JSON.stringify(account), 'EX', TTL);
         } catch (err) {
             console.error('[StatePublisher] publishAccount error:', err);
         }
@@ -256,7 +258,7 @@ export class StatePublisher {
     }): Promise<void> {
         try {
             await this.ensureConnected();
-            await this.client.send('SET', 'aktienix:risk', JSON.stringify(risk), 'EX', TTL);
+            await this.client.send('SET', `${this.ns}:risk`, JSON.stringify(risk), 'EX', TTL);
         } catch (err) {
             console.error('[StatePublisher] publishRisk error:', err);
         }
@@ -269,9 +271,9 @@ export class StatePublisher {
     async addSignal(signal: PublishableSignal): Promise<void> {
         try {
             await this.ensureConnected();
-            await this.client.send('LPUSH', 'aktienix:signals', JSON.stringify(signal));
-            await this.client.send('LTRIM', 'aktienix:signals', 0, MAX_SIGNALS - 1);
-            await this.client.send('EXPIRE', 'aktienix:signals', TTL);
+            await this.client.send('LPUSH', `${this.ns}:signals`, JSON.stringify(signal));
+            await this.client.send('LTRIM', `${this.ns}:signals`, 0, MAX_SIGNALS - 1);
+            await this.client.send('EXPIRE', `${this.ns}:signals`, TTL);
         } catch (err) {
             console.error('[StatePublisher] addSignal error:', err);
         }
@@ -280,9 +282,24 @@ export class StatePublisher {
     async publishStatus(status: 'running' | 'paused' | 'stopped'): Promise<void> {
         try {
             await this.ensureConnected();
-            await this.client.send('SET', 'aktienix:status', status, 'EX', TTL);
+            await this.client.send('SET', `${this.ns}:status`, status, 'EX', TTL);
         } catch (err) {
             console.error('[StatePublisher] publishStatus error:', err);
+        }
+    }
+
+    /**
+     * Read an arbitrary key from Redis.
+     * Returns null if the key does not exist or if Redis is unavailable.
+     */
+    async get(key: string): Promise<string | null> {
+        try {
+            await this.ensureConnected();
+            const value = await this.client.send('GET', key);
+            return typeof value === 'string' ? value : null;
+        } catch (err) {
+            console.error('[StatePublisher] get error:', err);
+            return null;
         }
     }
 
