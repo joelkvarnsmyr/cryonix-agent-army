@@ -24,10 +24,10 @@ export function AktienixStatusCard() {
   const { data: portfolio } = useAktienixPortfolio(30_000);
   const { positions }       = useAktienixPositions(30_000);
 
-  const phase        = status?.market.phase    ?? 'closed';
-  const etTime       = status?.market.localTime ?? '--:-- ET';
-  const agentRunning = status?.agent.running   ?? false;
-  const broker       = status?.agent.broker    ?? '—';
+  const phase        = status?.market?.phase    ?? 'closed';
+  const etTime       = status?.market?.localTime ?? '--:-- ET';
+  const agentRunning = status?.agent?.running   ?? false;
+  const broker       = status?.agent?.broker    ?? '—';
   const portfolioVal = portfolio?.portfolioValue ?? 0;
   const buyingPower  = portfolio?.buyingPower    ?? 0;
   const posCount     = positions.length;

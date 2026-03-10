@@ -11,6 +11,8 @@ from src.guilds.quant import quant
 from src.core.config import get_toml
 
 
+from src.core.timing_utils import calculate_market_eta
+
 class MarketScoutTank(BaseTank):
     """
     The 'Scout' Tank - Eyes of the Trading System.
@@ -288,6 +290,43 @@ class MarketScoutTank(BaseTank):
             # Calculate confidence
             confidence = 0.72  # Base for momentum signal
 
+            # --- MARKET-VALIDATED ETA CALCULATION ---
+            # 1. Base ETA (ATR-based)
+            atr_pct = indicators.get('atr_percent', 1.0)
+            entry_price = indicators.get('price', 0)
+            target_price = entry_price * (1 + 0.02) # Placeholder if target not yet set
+            
+            # Use real target if available from strategy
+            tp_pct = 2.0 # Default 2% TP
+            distance_pct = tp_pct
+            
+            # Base minutes (ATR represents 15m volatility)
+            base_eta_mins = (distance_pct / max(0.1, atr_pct)) * 15
+            
+            # 2. Validation Factors
+            intensity_multiplier = 1.0
+            
+            # ADX Factor: Stronger trend = faster arrival
+            adx = indicators.get('adx', 0)
+            if adx > 30: intensity_multiplier *= 0.75
+            elif adx > 25: intensity_multiplier *= 0.85
+            elif adx < 15: intensity_multiplier *= 1.30 # Weak trend takes longer
+            
+            # Volume Factor: High volume = higher velocity
+            vol_ratio = indicators.get('volume_ratio', 1.0)
+            if vol_ratio > 2.0: intensity_multiplier *= 0.80
+            elif vol_ratio > 1.5: intensity_multiplier *= 0.90
+            elif vol_ratio < 0.8: intensity_multiplier *= 1.20 # Low interest = slow
+            
+            # RSI Direction Factor (Slope)
+            # If RSI is rising from oversold, it's a "rocket" start
+            if rsi < 45: intensity_multiplier *= 0.90
+            
+            validated_eta_mins = round(base_eta_mins * intensity_multiplier)
+            # Ensure sane limits (5 min to 12 hours)
+            validated_eta_mins = max(5, min(720, validated_eta_mins))
+
+            # --- CONFIDENCE ADJUSTMENTS ---
             # Stronger momentum = higher confidence
             if change_1h >= 5.0:
                 confidence += 0.06

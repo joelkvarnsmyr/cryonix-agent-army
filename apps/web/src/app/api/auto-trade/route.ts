@@ -6,6 +6,8 @@ import { getConfigVersion } from '@/lib/config-version';
 import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
 
+import { TimingService } from '@/lib/trading/timing';
+
 export const dynamic = 'force-dynamic';
 
 // ============================================================================
@@ -176,6 +178,13 @@ interface OpenPosition {
   pnlPct?: number;         // Live P&L % (updated every monitoring cycle)
   currentPrice?: number;   // Last known price (updated every monitoring cycle)
   entryFee?: number;       // Fee paid on entry order (for total fee tracking)
+  
+  // --- NEW FIELDS FOR ETA & VELOCITY ---
+  lastPrice?: number;      // Price from previous cycle to calculate velocity
+  velocity?: number;       // Price change per minute ($/min)
+  estimatedTpTime?: string; // ISO string for expected TP arrival
+  aiEstimatedMinutes?: number; // Initial estimate from Grok
+  stagnationOverrideHours?: number; // AI-suggested timeout
 }
 
 // ============================================================================
@@ -654,6 +663,20 @@ async function monitorPositions(): Promise<MonitorResult[]> {
 
       // Persist live P&L to Redis so Telegram bot can read it
       pos.pnlPct = Math.round(pnlPct * 100) / 100;
+      
+      // --- TIMING & VELOCITY (REFACTORED) ---
+      const timing = TimingService.calculateMetrics(
+        currentPrice,
+        pos.entryPrice,
+        pos.takeProfit,
+        pos.side,
+        pos.velocity,
+        pos.lastPrice
+      );
+      
+      pos.velocity = timing.velocity;
+      pos.lastPrice = timing.lastPrice;
+      pos.estimatedTpTime = timing.estimatedTpTime;
       pos.currentPrice = currentPrice;
 
       // Update high water mark and trailing stop
@@ -688,16 +711,19 @@ async function monitorPositions(): Promise<MonitorResult[]> {
         exitReason = `Dust prevention: value $${currentValue.toFixed(2)} approaching NOTIONAL minimum`;
       }
 
-      // Stagnation exit: sell positions that haven't moved >1% in N hours
+      // Stagnation exit (REFACTORED)
       if (!shouldSell && pos.openedAt) {
-        const ageHours = (Date.now() - new Date(pos.openedAt).getTime()) / (1000 * 60 * 60);
-        const stagnationTimeout = pos.isScalpPosition
-          ? (TOML?.scalp?.max_hold_minutes ?? 45) / 60  // scalp: minutes → hours
-          : (TOML?.exits?.stagnation_timeout_hours ?? 8);
-        const stagnationMinPnl = pos.isScalpPosition ? 0.3 : (TOML?.exits?.stagnation_min_pnl_pct ?? 1.0);
-        if (ageHours > stagnationTimeout && Math.abs(pnlPct) < stagnationMinPnl) {
+        const stagnation = TimingService.isStagnant(pos.openedAt, pnlPct, {
+          isScalp: pos.isScalpPosition,
+          overrideHours: pos.stagnationOverrideHours,
+          defaultTimeout: TOML?.exits?.stagnation_timeout_hours,
+          minPnl: TOML?.exits?.stagnation_min_pnl_pct,
+          scalpMaxHoldMins: TOML?.scalp?.max_hold_minutes
+        });
+
+        if (stagnation.stagnant) {
           shouldSell = true;
-          exitReason = `Stagnation exit: ${ageHours.toFixed(1)}h old, only ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% movement (< ${stagnationMinPnl}%)`;
+          exitReason = `Stagnation exit: ${stagnation.ageHours.toFixed(1)}h old (limit ${stagnation.timeout}h), movement ${pnlPct.toFixed(2)}%`;
         }
       }
 
@@ -1537,75 +1563,37 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
     const strategyMode = TOML?.patterns?.dip_focus_mode ? 'Smart Dip Hunter (mean-reversion focus)' : 'All patterns';
 
     const systemPrompt = isDeepValue
-      ? `You are a crash-buying specialist for crypto markets. Evaluate whether a large drawdown is PANIC SELLING (buy opportunity) or a FALLING KNIFE (avoid). Use your reasoning to analyze drop velocity, volume patterns, multi-timeframe RSI alignment, and whether the selloff is isolated or broad-based. Search X/Twitter for breaking news about this asset. Respond with ONLY a JSON object.`
+      ? `You are a crash-buying specialist for crypto markets. Evaluate whether a large drawdown is PANIC SELLING (buy opportunity) or a FALLING KNIFE (avoid). Respond with ONLY a JSON object.
+
+JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number|null,"stagnation_threshold_hours":number|null}`
       : isDipBuy
       ? `You are a mean-reversion specialist for crypto dip buying. Strategy: ${strategyMode}.
 
 1. THINK through whether this dip is a buying opportunity or start of a larger decline
 2. SEARCH X for any breaking news or negative catalysts about this coin
-3. Evaluate whether the dip is structural (good: profit-taking, market-wide pullback) or fundamental (bad: hack, delisting, broken protocol)
+3. Evaluate whether the dip is structural or fundamental
 
-CRITICAL: ${valuePatterns.filter(p => p !== 'DEEP_VALUE_CRASH').join(', ')} are mean-reversion strategies. A bearish short-term trend is EXPECTED — that is what creates the dip. Do NOT reject simply because the higher-timeframe trend is bearish. Instead focus on:
-- Is price near historical support levels?
-- Is RSI deeply oversold (< ${rsiOversold + 5})?
-- Is there capitulation volume or drying sell pressure?
-- Any negative catalysts on X? Watch for: ${alertKeywords}
+Respond with ONLY a JSON object.
 
-Key principles:
-- On a $${totalCapital.toFixed(0)} account, missing a good dip recovery costs more than a small stop-loss
-- APPROVE if: dip looks structural (no bad news), price near support, RSI oversold
-- REJECT only if: X reveals negative catalyst (${alertKeywords}), drop velocity suggests rug pull, or coin is fundamentally broken
-- Give confidence ${minConf - 10}-90 based on conviction level
-
-Respond with ONLY a JSON object.`
+JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number|null,"stagnation_threshold_hours":number|null}`
       : `You are a crypto trading risk analyst with access to real-time X/Twitter data and web search. Strategy: ${strategyMode}.
 
-1. THINK through the technical setup step by step (use your reasoning capability)
-2. SEARCH X for any breaking news, hacks, delistings, or sentiment shifts about this coin
-3. Evaluate risk-reward, indicator confluence, and market regime alignment
-4. Give a clear approve/reject with calibrated confidence
+1. THINK through the technical setup step by step
+2. SEARCH X for any breaking news, hacks, or sentiment shifts
+3. Evaluate risk-reward and momentum
 
-Key principles:
-- On a $${totalCapital.toFixed(0)} account, missed good trades cost more than small losses
-- Approve signals with 2+ confirming indicators or 1 strong signal (RSI<${rsiOversold}, Bollinger squeeze with volume)
-- For trend-following signals (MACD/EMA cross): reject if higher-timeframe trend is bearish or ADX < ${adxThreshold}
-- REJECT if: negative EV pattern, or X reveals bad news (${alertKeywords})
-- BOOST confidence if X sentiment is bullish AND technical setup aligns
-- Adjust SL/TP if you see better levels based on your analysis
+Respond with ONLY a JSON object.
 
-Respond with ONLY a JSON object.`;
+JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number|null,"stagnation_threshold_hours":number|null}`;
 
     const prompt = isDeepValue
       ? `CRASH BUY ANALYSIS: ${signal.symbol}
-
 Drawdown: ${signal.indicators.drawdown_pct}% from $${signal.indicators.recent_high}
-Drop velocity: ${signal.indicators.drop_velocity}%/hr | Volume: ${signal.indicators.volume_ratio}x avg
-RSI: 15m=${signal.indicators.rsi} | 1h=${signal.indicators.rsi_1h ?? '?'} | 4h=${signal.indicators.rsi_4h ?? '?'}
-Support: $${signal.indicators.support_level ?? '?'} | Price: $${ticker.last?.toFixed(4)} | 24h: ${ticker.percentage?.toFixed(2)}%
-Sentiment: ${sentimentLabel}${alertCtx} | ${evCtx}
-Portfolio: $${totalCapital.toFixed(2)} total, $${availableCash.toFixed(2)} free, ${openPositions.length}/${CONFIG.MAX_OPEN_POSITIONS} positions [${positionList}]
-
-JSON: {"approve":bool,"confidence":0-100,"reasoning":"2-3 sentences","sl":number|null,"tp":number|null}`
+JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number,"stagnation_threshold_hours":number}`
       : `SIGNAL: ${signal.action} ${signal.symbol}
-
 Setup: ${signal.patterns.join(' + ')} | TA confidence: ${(signal.confidence * 100).toFixed(0)}%
-Reason: ${signal.reason}
-Entry: $${signal.entry_price.toFixed(4)} | SL: $${signal.stop_loss.toFixed(4)} | TP: $${signal.target_price.toFixed(4)} | R:R=${rr}
-
-Indicators:
-RSI=${signal.indicators?.rsi ?? '?'} | MACD hist=${signal.indicators?.macd_hist ?? '?'} | ADX=${signal.indicators?.adx ?? '?'}
-BB: low=$${signal.indicators?.bb_lower ?? '?'} mid=$${signal.indicators?.bb_mid ?? '?'} up=$${signal.indicators?.bb_upper ?? '?'}
-ATR=${signal.indicators?.atr_pct ?? '?'}% | EMA9/21=${signal.indicators?.ema9 ?? '?'}/${signal.indicators?.ema21 ?? '?'}
-Volume: ${signal.indicators?.volume_ratio ?? '?'}x avg | Trend aligned: ${signal.indicators?.trend_aligned ?? '?'}
-Regime: ${signal.indicators?.market_regime ?? '?'} | HTF trend: ${signal.indicators?.htf_trend ?? '?'}
-
-Market: $${ticker.last?.toFixed(4)} now | 24h: ${ticker.percentage?.toFixed(2)}% | Sentiment: ${sentimentLabel} (${sentimentScore})${alertCtx}
-${xNarrative ? `X buzz: ${xNarrative}` : ''}
-${evCtx}
-Portfolio: $${totalCapital.toFixed(2)} capital, $${availableCash.toFixed(2)} free, ${openPositions.length}/${CONFIG.MAX_OPEN_POSITIONS} positions [${positionList}]
-Today: ${dailyState.tradesExecuted}/${CONFIG.MAX_TRADES_PER_DAY} trades | P&L: $${dailyState.dailyPnl.toFixed(2)}
-
-JSON: {"approve":bool,"confidence":0-100,"reasoning":"2-3 sentences with specific indicator references","sl":number|null,"tp":number|null}`;
+Entry: $${signal.entry_price.toFixed(4)} | SL: $${signal.stop_loss.toFixed(4)} | TP: $${signal.target_price.toFixed(4)}
+JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number,"stagnation_threshold_hours":number}`;
 
     // Build request with reasoning and search capabilities
     const modelId = TOML?.ai.model ?? 'grok-4-1-fast-reasoning';

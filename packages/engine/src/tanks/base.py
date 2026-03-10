@@ -202,6 +202,7 @@ class BaseTank:
                     "trend_aligned": bool(signal.get("trend_aligned", False)),
                     "volume_confirmed": bool(signal.get("volume_confirmed", False)),
                     "htf_trend": signal.get("htf_trend"),
+                    "validated_eta": signal.get("validated_eta_mins"), # New field
                 }
                 # Remove None values to keep it clean
                 metadata = {k: v for k, v in metadata.items() if v is not None}
@@ -215,6 +216,7 @@ class BaseTank:
                 "entryPrice": str(signal.get("entry_price", 0)),
                 "targetPrice": str(signal.get("target_price", 0)),
                 "stopLoss": str(signal.get("stop_loss", 0)),
+                "estimatedMinutes": signal.get("validated_eta_mins"), # Map to common field
                 "timeframe": "15m",
                 "agentId": self.name,
                 "executed": False,
