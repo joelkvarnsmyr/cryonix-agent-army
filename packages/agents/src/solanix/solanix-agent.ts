@@ -173,7 +173,8 @@ export class SolanaAgent extends BaseAgent {
         // 4. Risk gate
         const riskCheck = this.riskManager.canTrade(
             this.accountState?.portfolioValue ?? 0,
-            config.risk,
+            // Solanix has no settled-cash concept; pass 0 so the check always passes
+            { ...config.risk, min_settled_cash: 0 },
             // Adapt Solanix limits to the shape RiskManager expects
             {
                 max_open_positions: config.limits.max_open_positions,
@@ -276,7 +277,8 @@ export class SolanaAgent extends BaseAgent {
         // Risk gate
         const riskCheck = this.riskManager.canTrade(
             this.accountState.portfolioValue,
-            config.risk,
+            // Solanix has no settled-cash concept; pass 0 so the check always passes
+            { ...config.risk, min_settled_cash: 0 },
             { max_open_positions: config.limits.max_open_positions, max_trades_per_day: config.limits.max_trades_per_day, max_day_trades_per_5d: 999 },
         );
         if (!riskCheck.canTrade) {
