@@ -1,4 +1,5 @@
 // packages/agents/src/aktienix/intelligence/x-ingestion-service.ts
+import * as crypto from 'crypto';
 import OpenAI from 'openai';
 import type { RawArticle, SourceTrust } from './news-ingestion-service';
 
@@ -38,19 +39,30 @@ export class XIngestionService {
                 model: 'grok-3-mini',
                 messages: [{
                     role: 'user',
-                    content: `Search X for breaking financial/macro news from these accounts in the last 2 hours.
-Query: (${fromQuery}) OR ("breaking" AND ("market" OR "fed" OR "oil" OR "rate"))
+                    content: `Search X for breaking financial/macro news from these accounts posted in the last 2 hours.
+
+Accounts: ${CURATED_ACCOUNTS.join(', ')}
+
+Also search for: "breaking" AND ("market" OR "fed" OR "oil" OR "rate" OR "tariff" OR "earnings")
 Date range: ${twoHoursAgo} to ${now}
 
-Return a JSON array of market-moving posts only (ignore opinions/analysis). For each:
+RULES:
+- Only include posts about FACTS (data releases, official statements, breaking developments)
+- EXCLUDE opinions, analysis, predictions, retweets of old news
+- EXCLUDE posts older than 2 hours
+- If a post links to an article, summarize the article content, not the tweet text
+- Return [] if nothing is market-moving (would cause >1% sector move)
+
+For each market-moving post return:
 {
-  "headline": "one-line summary of what happened",
-  "url": "https://x.com/...",
-  "summary": "2-3 sentence context",
+  "headline": "one-line factual summary of what happened (not the tweet text)",
+  "url": "direct link to the X post",
+  "summary": "2-3 sentence context explaining market impact",
   "account": "@handle",
-  "publishedAt": "ISO8601"
+  "publishedAt": "ISO8601 timestamp of the post"
 }
-Return [] if nothing market-moving. JSON only, no markdown.`,
+
+Return JSON array only, no markdown fences.`,
                 }],
                 temperature: 0.1,
                 search: { mode: 'on', from_date: twoHoursAgo, to_date: now },
@@ -87,7 +99,7 @@ Return [] if nothing market-moving. JSON only, no markdown.`,
                 const trust: SourceTrust = TIER1_ACCOUNTS.has(handle) ? 'tier1' : 'tier2';
                 return {
                     url: item.url,
-                    urlHash: Buffer.from(item.url).toString('base64').slice(0, 16),
+                    urlHash: crypto.createHash('sha256').update(item.url).digest('hex').slice(0, 16),
                     headline: item.headline.slice(0, 200),
                     summary: item.summary?.slice(0, 300) ?? '',
                     source: `x_${item.account ?? 'unknown'}`,

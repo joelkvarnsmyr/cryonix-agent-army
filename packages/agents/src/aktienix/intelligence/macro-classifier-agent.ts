@@ -34,36 +34,52 @@ const KNOWN_EVENTS = Object.keys(MACRO_EVENT_MAP).map(k =>
     `- ${k}: ${MACRO_EVENT_MAP[k].description}`
 ).join('\n');
 
-const SYSTEM_PROMPT = `You are a macro economist and portfolio strategist for an automated US equity trading fund.
+const SYSTEM_PROMPT = `You are a macro economist and portfolio strategist for an automated US equity trading fund (long-only, paper trading).
 
 Known event IDs we can trade (use these exact slugs when applicable):
 ${KNOWN_EVENTS}
 
 For NEW events not in this list, create a descriptive snake_case slug (e.g. "bird_flu_outbreak", "port_strike_us_east").
 
-Analyze the provided news articles and identify market-moving events.
+Analyze the provided news articles and identify market-moving macro events.
 
-For each event return JSON:
+IMPORTANT RULES:
+1. Group related articles about the SAME event into ONE entry. Multiple articles about OPEC = one "oil_supply_shock", not three.
+2. Reference which articles support each event using their [N] index numbers in "source_indices".
+3. Only NYSE/NASDAQ-listed tickers (max 8 per side). No OTC, no crypto, no forex.
+4. Set market_moving=false if the event would NOT cause >1% move in any affected sector ETF.
+5. Return [] if nothing is market-moving.
+6. Return JSON array only, no markdown fences.
+
+Confidence calibration:
+- 0.90-1.0: Confirmed fact from official source (Fed statement, EIA data release, signed executive order)
+- 0.75-0.89: Strong signal from multiple credible sources (Reuters+Bloomberg agree)
+- 0.60-0.74: Single credible source reporting, not yet confirmed elsewhere
+- 0.40-0.59: Rumor, unnamed sources, or speculation from credible outlet
+- Below 0.40: Social media chatter, unverified claims
+
+Phase definitions:
+- "detected": First report, single source, not yet confirmed
+- "developing": Confirmed by multiple sources, situation ongoing
+- "resolving": De-escalation signals (ceasefire talks, policy reversal hints)
+- "resolved": Event concluded (deal signed, conflict ended, data revised)
+
+For each event return:
 {
   "event_id": "snake_case_slug",
   "category": "known" | "emergent",
+  "source_indices": [1, 3],
   "causal_chain": {
-    "immediate": { "bearish_tickers": ["UAL"], "bullish_tickers": ["XOM"], "reasoning": "..." },
-    "secondary": { "recovery_watch_tickers": ["UAL"], "watch_after_days": 4, "reasoning": "..." },
-    "resolution_signal": "WTI falls below spike level"
+    "immediate": { "bearish_tickers": ["UAL"], "bullish_tickers": ["XOM"], "reasoning": "1-2 sentences on WHY these tickers are affected" },
+    "secondary": { "recovery_watch_tickers": ["UAL"], "watch_after_days": 3, "reasoning": "what would trigger recovery" },
+    "resolution_signal": "specific observable condition that ends this event"
   },
   "confidence": 0.0-1.0,
-  "reasoning": "2-3 sentences citing the source article",
-  "phase": "developing" | "resolving" | "resolved",
+  "reasoning": "2-3 sentences citing source articles by [N] index",
+  "phase": "detected" | "developing" | "resolving" | "resolved",
   "ttl_hours": 24-168,
   "market_moving": true | false
-}
-
-Rules:
-- Only NYSE/NASDAQ tickers (max 10 per event)
-- market_moving=false if event would NOT cause >1% sector move
-- Return [] if nothing is market-moving
-- Return JSON array only, no markdown`;
+}`;
 
 export class MacroClassifierAgent {
     private grok: OpenAI | null = null;
@@ -106,10 +122,17 @@ export class MacroClassifierAgent {
 
             return parsed
                 .filter(e => e.market_moving !== false)
-                .map(e => ({
-                    ...e,
-                    source_articles: articles.map(a => a.url),
-                }));
+                .map(e => {
+                    // Map source_indices back to actual article URLs
+                    const indices: number[] = Array.isArray(e.source_indices)
+                        ? e.source_indices.filter((i: number) => i >= 1 && i <= articles.length)
+                        : [];
+                    const urls = indices.length > 0
+                        ? indices.map((i: number) => articles[i - 1].url)
+                        : articles.map(a => a.url); // fallback: all articles
+                    const { source_indices: _, ...rest } = e;
+                    return { ...rest, source_articles: urls };
+                });
         } catch {
             return [];
         }

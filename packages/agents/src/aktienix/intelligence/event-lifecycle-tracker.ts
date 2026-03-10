@@ -87,18 +87,38 @@ export class EventLifecycleTracker {
             const hoursAgo = Math.round(
                 (Date.now() - new Date(event.detectedAt).getTime()) / 3_600_000
             );
+            const bearish = event.causal_chain.immediate.bearish_tickers.join(', ');
+            const bullish = event.causal_chain.immediate.bullish_tickers.join(', ');
+
             const response = await (this.grok.chat.completions.create as any)({
                 model: 'grok-3-mini',
                 messages: [{
                     role: 'user',
-                    content: `Current event: ${event.event_id}
-Detected ${hoursAgo} hours ago with confidence ${event.confidence.toFixed(2)}.
-Original reasoning: ${event.causal_chain.resolution_signal}
+                    content: `Re-evaluate this macro event for a US equity trading system.
 
-Search X and recent news for evidence of this event status.
-Is it still developing, starting to resolve, or over?
+Event: ${event.event_id}
+Current phase: ${event.phase}
+Detected: ${hoursAgo} hours ago
+Current confidence: ${event.confidence.toFixed(2)}
+Bearish tickers: [${bearish}]
+Bullish tickers: [${bullish}]
+Resolution signal: ${event.causal_chain.resolution_signal}
 
-Return JSON only: { "phase": "developing"|"resolving"|"resolved", "evidence": "...", "confidence": 0.0-1.0 }`,
+Search X and recent news for the LATEST developments on this event.
+
+Evidence to look for:
+- DEVELOPING: new reports confirming/escalating the situation, official statements, data releases
+- RESOLVING: ceasefire talks, policy reversal hints, de-escalation signals, contradicting reports
+- RESOLVED: official resolution (deal signed, conflict ended, data revised, policy reversed)
+
+Confidence calibration:
+- 0.90+: Multiple sources confirm, situation intensifying
+- 0.70-0.89: Still active but stable, no new escalation
+- 0.50-0.69: Mixed signals, some de-escalation evidence
+- 0.30-0.49: Strong de-escalation, likely resolving
+- Below 0.30: Event appears over
+
+Return JSON only: { "phase": "developing"|"resolving"|"resolved", "evidence": "2-3 sentences citing what you found", "confidence": 0.0-1.0 }`,
                 }],
                 temperature: 0.1,
                 search: { mode: 'on' },

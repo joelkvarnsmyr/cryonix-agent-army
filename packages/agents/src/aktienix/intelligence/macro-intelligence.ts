@@ -125,9 +125,13 @@ export class MacroIntelligence {
         signal.causal_chain.immediate.bullish_tickers = filteredBullish;
 
         // Step 2: Source trust multiplier
-        const sourceTrust = (signal as any).sourceTrust ?? 'tier2';
-        const trustMultiplier = sourceTrust === 'tier1' ? 1.0
-            : sourceTrust === 'tier2' ? 0.90 : 0.75;
+        // MergedSignal doesn't carry sourceTrust — infer from corroboration:
+        // confirmed/confirmed_weak means tier1 sources corroborated, rss_only likely tier1 RSS,
+        // social_only is tier2. Default to tier2 for safety.
+        const trustMultiplier = signal.corroboration === 'confirmed' ? 1.0
+            : signal.corroboration === 'confirmed_weak' ? 0.95
+            : signal.corroboration === 'rss_only' ? 0.90
+            : 0.80; // social_only or conflicting
         const confAfterTrust = signal.confidence * trustMultiplier;
         steps.push({ step: 'source_trust', passed: true });
 

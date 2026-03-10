@@ -105,14 +105,20 @@ export class NewsIngestionService {
             if (ts < cutoff) this.seenHashes.delete(hash);
         }
         const feeds: Array<[string, string, SourceTrust, string]> = [
-            ['https://feeds.reuters.com/reuters/businessNews', 'reuters', 'tier1', 'macro'],
-            ['https://feeds.reuters.com/reuters/energy', 'reuters', 'tier1', 'energy'],
-            ['https://www.eia.gov/rss/press_rss.xml', 'eia', 'tier1', 'energy'],
-            ['https://www.federalreserve.gov/feeds/press_all.xml', 'fed', 'tier1', 'fed'],
-            ['https://feeds.reuters.com/reuters/technologyNews', 'reuters', 'tier1', 'tech'],
-            ['https://feeds.reuters.com/Reuters/worldNews', 'reuters', 'tier1', 'geopolitics'],
-            ['https://feeds.reuters.com/reuters/healthNews', 'reuters', 'tier1', 'healthcare'],
+            // Macro / business
+            ['https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362', 'cnbc', 'tier1', 'macro'],
             ['https://feeds.marketwatch.com/marketwatch/topstories', 'marketwatch', 'tier2', 'macro'],
+            // Energy
+            ['https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19836768', 'cnbc', 'tier1', 'energy'],
+            ['https://www.eia.gov/rss/press_rss.xml', 'eia', 'tier1', 'energy'],
+            // Fed / monetary policy
+            ['https://www.federalreserve.gov/feeds/press_all.xml', 'fed', 'tier1', 'fed'],
+            // Tech
+            ['https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910', 'cnbc', 'tier1', 'tech'],
+            // Geopolitics
+            ['https://feeds.bbci.co.uk/news/world/rss.xml', 'bbc', 'tier1', 'geopolitics'],
+            // Healthcare
+            ['https://feeds.bbci.co.uk/news/health/rss.xml', 'bbc', 'tier1', 'healthcare'],
         ];
 
         const results = await Promise.all(
