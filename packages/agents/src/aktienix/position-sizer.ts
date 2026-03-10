@@ -13,6 +13,7 @@ export class PositionSizer {
      */
     static calc(price: number, settledCash: number, config: CapitalConfig): number {
         if (price <= 0) return 0;
+        if (!isFinite(settledCash) || settledCash < 0) return 0;
 
         const maxDollar = Math.min(
             config.max_position_size_usd,

@@ -33,10 +33,12 @@ describe('PositionSizer', () => {
         expect(PositionSizer.calc(-50, 1000, config)).toBe(0);
     });
 
-    it('rounds to 6 decimal places for fractional shares', () => {
-        // $173.33 stock, $500 settled cash
-        const qty = PositionSizer.calc(173.33, 500, config);
-        const expected = Math.min(1000, 500 * 0.95) / 173.33;
-        expect(qty).toBeCloseTo(expected, 4);
+    it('rounds result to at most 6 decimal places', () => {
+        // $3 stock, $10 settled cash: 10 * 0.95 = 9.50, 9.50/3 = 3.1666... → should be 3.166667
+        const qty = PositionSizer.calc(3, 10, config);
+        expect(qty).toBe(3.166667);
+        // Verify it's not more precise than 6 decimal places
+        const decimals = qty.toString().split('.')[1]?.length ?? 0;
+        expect(decimals).toBeLessThanOrEqual(6);
     });
 });
