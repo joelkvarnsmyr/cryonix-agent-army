@@ -32,11 +32,10 @@ export class MarketHours {
                 const closeMs = new Date(clock.next_close).getTime();
                 const minutesUntilClose = isOpen ? Math.max(0, (closeMs - nowMs) / 60_000) : 0;
 
-                // Minutes since market opened (only meaningful when open)
-                const lastOpenMs = isOpen ? (closeMs - 390 * 60_000) : 0; // 390 min = 6.5h trading day
-                const minutesSinceOpen = isOpen ? Math.max(0, (nowMs - lastOpenMs) / 60_000) : 0;
-
-                const skipSignalScan = isOpen && minutesSinceOpen < config.skip_first_minutes;
+                // Use ET math for skipSignalScan — back-calculating open time from
+                // next_close breaks on early-close days (e.g. day before Thanksgiving).
+                const etFallback = MarketHours.checkFromDate(new Date(), config);
+                const skipSignalScan = isOpen && etFallback.skipSignalScan;
                 const canOpenNew = isOpen && minutesUntilClose > config.no_new_orders_before_close_min;
                 const shouldClosePositions = config.close_before_eod === true
                     && isOpen
