@@ -47,4 +47,17 @@ describe('MarketHours', () => {
         const result = MarketHours.checkFromDate(oneHourBefore, defaultConfig);
         expect(result.minutesUntilClose).toBeCloseTo(60, 0);
     });
+
+    it('sets shouldClosePositions when close_before_eod is true and near close', () => {
+        const eodConfig = {
+            regular_hours_only: true,
+            skip_first_minutes: 15,
+            close_before_eod: true,
+            no_new_orders_before_close_min: 30,
+        };
+        // 15:40 ET = 19:40 UTC — 20 min before close (within the 30-min gate)
+        const nearClose = new Date('2026-03-10T19:40:00Z');
+        const result = MarketHours.checkFromDate(nearClose, eodConfig);
+        expect(result.shouldClosePositions).toBe(true);
+    });
 });

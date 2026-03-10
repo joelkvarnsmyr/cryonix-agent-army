@@ -5,6 +5,7 @@ export interface MarketHoursResult {
     canOpenNew: boolean;
     skipSignalScan: boolean;
     minutesUntilClose: number;
+    shouldClosePositions: boolean;
 }
 
 type MarketHoursConfig = AktienixTomlConfig['market_hours'];
@@ -19,7 +20,7 @@ export class MarketHours {
         config: MarketHoursConfig,
     ): Promise<MarketHoursResult> {
         if (!config.regular_hours_only) {
-            return { isOpen: true, canOpenNew: true, skipSignalScan: false, minutesUntilClose: 9999 };
+            return { isOpen: true, canOpenNew: true, skipSignalScan: false, minutesUntilClose: 9999, shouldClosePositions: false };
         }
 
         if (alpaca) {
@@ -37,8 +38,11 @@ export class MarketHours {
 
                 const skipSignalScan = isOpen && minutesSinceOpen < config.skip_first_minutes;
                 const canOpenNew = isOpen && minutesUntilClose > config.no_new_orders_before_close_min;
+                const shouldClosePositions = config.close_before_eod === true
+                    && isOpen
+                    && minutesUntilClose <= config.no_new_orders_before_close_min;
 
-                return { isOpen, canOpenNew, skipSignalScan, minutesUntilClose };
+                return { isOpen, canOpenNew, skipSignalScan, minutesUntilClose, shouldClosePositions };
             } catch {
                 // Fall through to ET math on API error
             }
@@ -54,7 +58,7 @@ export class MarketHours {
      */
     static checkFromDate(now: Date, config: MarketHoursConfig): MarketHoursResult {
         if (!config.regular_hours_only) {
-            return { isOpen: true, canOpenNew: true, skipSignalScan: false, minutesUntilClose: 9999 };
+            return { isOpen: true, canOpenNew: true, skipSignalScan: false, minutesUntilClose: 9999, shouldClosePositions: false };
         }
 
         const ET_OFFSET_HOURS = MarketHours._getEasternOffsetHours(now.getTime());
@@ -74,8 +78,11 @@ export class MarketHours {
 
         const skipSignalScan = isOpen && minutesSinceOpen < config.skip_first_minutes;
         const canOpenNew = isOpen && minutesUntilClose > config.no_new_orders_before_close_min;
+        const shouldClosePositions = config.close_before_eod === true
+            && isOpen
+            && minutesUntilClose <= config.no_new_orders_before_close_min;
 
-        return { isOpen, canOpenNew, skipSignalScan, minutesUntilClose };
+        return { isOpen, canOpenNew, skipSignalScan, minutesUntilClose, shouldClosePositions };
     }
 
     /** Returns -4 (EDT) or -5 (EST) based on US DST rules for the given UTC timestamp. */
