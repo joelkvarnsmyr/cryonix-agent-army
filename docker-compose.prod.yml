@@ -63,6 +63,7 @@ services:
       - MARGIN_TYPE=${MARGIN_TYPE:-cross}
       - DEFAULT_LEVERAGE=${DEFAULT_LEVERAGE:-3}
       - CMC_API_KEY=${CMC_API_KEY:-}
+      - COINGLASS_API_KEY=${COINGLASS_API_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
     networks:
       - cryonix-net
