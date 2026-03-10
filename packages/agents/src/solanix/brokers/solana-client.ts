@@ -149,19 +149,16 @@ export class SolanaClient implements BrokerClient {
     // -------------------------------------------------------------------------
 
     /**
-     * Fetch a Jupiter quote for 1 USDC (1_000_000 micro-USDC) → outputMint.
-     * Returns price per token in USDC.
-     *
-     * For SELL we quote the reverse (token → USDC) using 1 USDC worth of tokens
-     * to get an equivalent price.
+     * Fetch token price in USD.
+     * Tries Jupiter first; falls back to DexScreener if Jupiter is unavailable.
      */
     private async fetchJupiterPrice(
         mint: string,
         _side: 'BUY' | 'SELL',
         _usdcAmount: number,
     ): Promise<{ success: boolean; price?: number; message?: string }> {
+        // 1. Try Jupiter
         try {
-            // Always quote USDC → token to get a stable price reference
             const url =
                 `${JUPITER_QUOTE_URL}` +
                 `?inputMint=${USDC_MINT}` +
@@ -169,26 +166,35 @@ export class SolanaClient implements BrokerClient {
                 `&amount=1000000` +
                 `&slippageBps=50`;
 
-            const res = await fetch(url);
-            if (!res.ok) {
-                return {
-                    success: false,
-                    message: `Jupiter quote request failed with status ${res.status}`,
-                };
+            const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+            if (res.ok) {
+                const data = (await res.json()) as { outAmount: string };
+                const tokensPerUsdc = Number(data.outAmount) / 1_000_000;
+                if (tokensPerUsdc > 0) {
+                    return { success: true, price: 1 / tokensPerUsdc };
+                }
             }
+        } catch {
+            // Jupiter unreachable — fall through to DexScreener
+        }
 
-            const data = (await res.json()) as { outAmount: string };
-            // outAmount = tokens received for 1 USDC (6 decimals → divide by 1_000_000)
-            const tokensPerUsdc = Number(data.outAmount) / 1_000_000;
-            if (!tokensPerUsdc || tokensPerUsdc <= 0) {
-                return { success: false, message: 'Jupiter quote returned zero outAmount' };
+        // 2. Fallback: DexScreener priceUsd
+        try {
+            const res = await fetch(
+                `https://api.dexscreener.com/latest/dex/tokens/${mint}`,
+                { signal: AbortSignal.timeout(8_000) },
+            );
+            if (!res.ok) return { success: false, message: `DexScreener returned ${res.status}` };
+
+            const data = (await res.json()) as { pairs?: { priceUsd?: string; chainId?: string }[] };
+            const solPair = data.pairs?.find(p => p.chainId === 'solana' && p.priceUsd);
+            if (solPair?.priceUsd) {
+                return { success: true, price: parseFloat(solPair.priceUsd) };
             }
-
-            const pricePerToken = 1 / tokensPerUsdc;
-            return { success: true, price: pricePerToken };
+            return { success: false, message: 'No Solana pair found on DexScreener' };
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            return { success: false, message: `Jupiter quote error: ${msg}` };
+            return { success: false, message: `Price fetch failed: ${msg}` };
         }
     }
 
