@@ -857,3 +857,58 @@ global_mc_drop_volatile_pct = 3.0
 # 2.0 = 2% dominance increase (e.g., 52% -> 54%).
 btc_dominance_rise_alt_penalty = 2.0
 alt_dominance_penalty = 0.05
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  COINGLASS — Derivatives market intelligence                           ║
+# ║  Provides funding rates, open interest, and long/short ratio.          ║
+# ║  Fallback: CCXT Binance futures (funding + OI, no L/S ratio).          ║
+# ║  Full data: requires COINGLASS_API_KEY in .env + enabled = true.       ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[coinglass]
+
+# Master switch. When false, CoinglassScout uses CCXT Binance futures
+# for funding rates + OI. Set true after adding COINGLASS_API_KEY to .env.
+enabled = false
+
+# Poll interval in seconds.
+# CCXT fallback: 600 (10 min) — no API cost, all 45 symbols.
+# Coinglass API (enabled=true): set to 21600 (6h) — free tier is ~100 req/day,
+# so 4 cycles/day x 15 symbols x 3 endpoints = 180 req/day fits within limits.
+poll_interval_seconds = 600
+
+# ── Funding Rate Thresholds ────────────────────────────────────────────
+# Funding rate is paid every 8 hours between longs and shorts.
+# Negative = shorts pay longs (bearish positioning → squeeze potential).
+# Positive = longs pay shorts (bullish crowding → dump risk).
+#
+# Rates are expressed as decimals (e.g. -0.0005 = -0.05% per 8h).
+funding_extreme_negative_threshold = -0.0005   # -0.05% → strong squeeze signal
+funding_negative_threshold = -0.0002           # -0.02% → mild squeeze signal
+funding_extreme_positive_threshold = 0.001     # +0.10% → crowded long warning
+funding_positive_threshold = 0.0005            # +0.05% → mild crowding
+
+# Confidence adjustments for funding rate signals.
+funding_squeeze_boost = 0.08       # +8% when funding extremely negative
+funding_bearish_boost = 0.04       # +4% when funding mildly negative
+funding_crowded_penalty = 0.08     # -8% when funding extremely positive
+funding_positive_penalty = 0.04    # -4% when funding mildly positive
+
+# ── Open Interest Thresholds ──────────────────────────────────────────
+# OI 24h change as a decimal (0.10 = 10% rise in 24h).
+oi_surge_threshold = 0.10          # 10% OI increase
+
+# Confidence adjustments for OI changes.
+oi_trend_boost = 0.05              # +5% OI surge + rising price (trend confirmation)
+oi_capitulation_boost = 0.04       # +4% OI drop (capitulation → potential bottom for dip patterns)
+oi_panic_penalty = 0.05            # -5% OI drop + falling price (panic exit, not a dip)
+
+# ── Long/Short Ratio Thresholds (Coinglass API only) ──────────────────
+# Ratio of long accounts to short accounts on perpetual futures.
+# < 1.0 means more short accounts than long accounts.
+ls_short_squeeze_threshold = 0.8   # below this → squeeze setup
+ls_crowded_long_threshold = 2.5    # above this → crowded long trade
+
+# Confidence adjustments for L/S ratio signals.
+ls_squeeze_boost = 0.06            # +6% when shorts dominant
+ls_crowded_penalty = 0.06          # -6% when longs dominant
