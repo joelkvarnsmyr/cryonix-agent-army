@@ -268,6 +268,12 @@ export class SolanaAgent extends BaseAgent {
             return;
         }
 
+        // Already holding this symbol — skip re-entry
+        if (this.positions.some(p => p.symbol === symbol)) {
+            this.log('info', `Already holding ${symbol} — skipping re-entry.`);
+            return;
+        }
+
         // Max positions gate
         if (this.positions.length >= config.limits.max_open_positions) {
             this.log('warn', `Max open positions (${config.limits.max_open_positions}) reached. Skipping ${symbol}.`);
