@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  ibkr-cp-gateway:
+    # We use a widely adopted community image for the IBKR CP Gateway.
+    # The official IBKR zip requires manual building, this is more plug-and-play.
+    image: voyz/ibeam:latest
+    container_name: ibkr_gateway
+    ports:
+      - "5000:5000"
+    environment:
+      # These variables configure how the gateway behaves.
+      # Because this is local dev we turn off strict SSL validation on the gateway end.
+      - IBEAM_GATEWAY_REQUIRE_SSL=false
+      
+      # NOTE: For security reasons, NEVER commit your actual IBKR credentials here.
+      # You should pass them in via an .env file or rely on the manual web login.
+      # For manual login testing, we leave these empty so the gateway prompts you.
+      - IBEAM_ACCOUNT=${IBKR_ACCOUNT:-}
+      - IBEAM_PASSWORD=${IBKR_PASSWORD:-}
+      
+      # Useful for paper trading environments.
+      - IBEAM_PAPER_TRADING=true
+      
+      # Log levels
+      - IBEAM_LOG_LEVEL=INFO
+    
+    restart: unless-stopped
+    # Depending on OS, you might need extra privileges or network modes, 
+    # but for an initial sanity check, standard bridge networking is fine.

@@ -30,8 +30,10 @@ let redis: Redis;
 async function main() {
     console.log('[aktienix-brain] Starting AktienixBrain...');
     redis = new Redis(REDIS_URL);
+    redis.on('error', err => console.error('[aktienix-brain] Redis error:', err.message));
 
     setInterval(checkAndRun, CHECK_INTERVAL_MS);
+    checkAndRun(); // Also check immediately on startup
     console.log('[aktienix-brain] Trigger loop started. Checking every 60s.');
 }
 
@@ -46,6 +48,15 @@ async function checkAndRun() {
         await runBrain(triggerReason);
     } finally {
         isRunning = false;
+        // Write cooldown timestamp so shouldRun() won't fire again within 1h
+        // (runBrain in Task 5 will write the full last_run JSON with actions/analysis)
+        const existing = await redis.get('aktienix:brain:last_run').catch(() => null);
+        if (!existing) {
+            await redis.set('aktienix:brain:last_run',
+                JSON.stringify({ timestamp: new Date().toISOString() }),
+                'EX', 172800
+            ).catch(() => {});
+        }
     }
 }
 
@@ -62,7 +73,7 @@ async function shouldRun(): Promise<string | null> {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const h = nowET.getHours();
     const m = nowET.getMinutes();
-    const isScheduled = (h === 9 && m === 0) || (h === 16 && m >= 30 && m < 35);
+    const isScheduled = (h === 9 && m >= 0 && m < 5) || (h === 16 && m >= 30 && m < 35);
     if (isScheduled) return 'scheduled';
 
     // Acute trigger: consecutive losses or daily loss > 3%

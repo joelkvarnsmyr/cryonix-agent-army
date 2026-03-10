@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { parse } from '@iarna/toml';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +30,17 @@ function getMarketHours(): { phase: MarketPhase; isOpen: boolean; localTime: str
   return { phase: 'closed', isOpen: false, localTime };
 }
 
+function getBrokerFromConfig(): string {
+  try {
+    const filePath = join(process.cwd(), '..', '..', 'aktienix.toml');
+    const raw = readFileSync(filePath, 'utf-8');
+    const parsed = parse(raw) as any;
+    return parsed.broker?.provider || 'alpaca';
+  } catch (e) {
+    return 'alpaca';
+  }
+}
+
 interface AccountState {
   buyingPower: number;
   settledCash: number;
@@ -43,6 +57,7 @@ interface RiskState {
 
 export async function GET() {
   const marketHours = getMarketHours();
+  const broker = getBrokerFromConfig();
 
   let agentStatus: string | null = null;
   let account: AccountState | null = null;
@@ -70,6 +85,11 @@ export async function GET() {
 
   return NextResponse.json({
     status: agentStatus,
+    agent: {
+      running: agentStatus === 'running',
+      broker: broker,
+      lastPoll: new Date().toISOString()
+    },
     account,
     risk,
     market: marketHours,

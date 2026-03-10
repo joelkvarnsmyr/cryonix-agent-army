@@ -64,10 +64,10 @@ export default function AktienixPage() {
     });
   })();
 
-  const phase        = status?.market.phase    ?? 'closed';
-  const isOpen       = status?.market.isOpen   ?? false;
-  const brokerLabel  = status?.agent.broker    ?? '—';
-  const agentRunning = status?.agent.running   ?? false;
+  const phase        = status?.market?.phase    ?? 'closed';
+  const isOpen       = status?.market?.isOpen   ?? false;
+  const brokerLabel  = status?.agent?.broker    ?? '—';
+  const agentRunning = status?.agent?.running   ?? false;
   const paperTrading = brokerLabel === 'paper' || brokerLabel === 'alpaca-paper';
 
   const portfolioValue = portfolio?.portfolioValue ?? 0;
