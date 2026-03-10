@@ -18,3 +18,8 @@
 - Keep CLAUDE.md (root) as the primary AI context — most important to maintain
 - API.md should match actual routes in apps/web/src/app/api/
 - Architecture changes should be reflected in both ARCHITECTURE.md and CLAUDE.md
+
+
+<claude-mem-context>
+
+</claude-mem-context>

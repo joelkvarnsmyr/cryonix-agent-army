@@ -74,16 +74,60 @@ no_new_orders_before_close_min = 30
 [watchlist]
 
 symbols = [
-    # Tech — Highest liquidity, tightest spreads, fractional-friendly
+    # Mega-cap Tech
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
 
-    # Broad Market ETFs — trade "the market" with minimal stock-picking risk
+    # AI & Semis — unicorn territory
+    "AMD",   # AI chips, NVDA rival
+    "ARM",   # CPU architecture, AI edge
+    "SMCI",  # AI server supercycle
+    "PLTR",  # AI/defence data platform
+    "SNOW",  # AI data cloud
+    "CRWD",  # Cybersecurity AI
+
+    # Fintech disruptors
+    "COIN",  # Crypto exchange (high beta to BTC)
+    "HOOD",  # Retail trading platform
+    "SOFI",  # Digital bank
+    "AFRM",  # Buy-now-pay-later
+    "SQ",    # Block / payments
+
+    # EV & Clean Energy
+    "RIVN",  # EV — high volatility
+    "LCID",  # EV — speculative
+    "NIO",   # Chinese EV
+    "ENPH",  # Solar inverters
+
+    # Biotech — moonshots
+    "MRNA",  # mRNA platform, volatile
+    "BNTX",  # BioNTech, pipeline plays
+    "RXRX",  # AI drug discovery
+
+    # Consumer & e-commerce
+    "SHOP",  # E-commerce infrastructure
+    "ETSY",  # Marketplace
+    "ABNB",  # Airbnb, travel recovery plays
+
+    # Gaming & Metaverse
+    "RBLX",  # Roblox — Gen Z platform
+    "U",     # Unity — game engine
+
+    # Meme & high-volatility
+    "GME",   # GameStop — squeeze potential
+    "AMC",   # AMC — volatile
+
+    # Broad ETFs
     "SPY",   # S&P 500
     "QQQ",   # NASDAQ 100
+    "ARKK",  # Cathie Wood innovation ETF — amplified moves
+    "IWM",   # Russell 2000 small caps
 
-    # Blue Chips — diversify sectors
+    # Blue chips / diversification
     "JPM",   # Financials
-    "JNJ",   # Healthcare
+    "GS",    # Goldman Sachs
+    "JNJ",   # Healthcare defensive
+    "UNH",   # Health insurance
+    "XOM",   # Oil — macro hedge
 ]
 
 # "1Day"  — Daily bars. Default for swing trading. One bar = one trading day.
@@ -214,7 +258,7 @@ counter_trend_penalty = 0.50
 
 # Minimum confidence to execute. Stock signals are subtler than crypto,
 # so 0.60 is appropriate. Crypto uses 0.65+ due to higher noise.
-min_confidence = 0.60
+min_confidence = 0.38  # Lowered for paper trading exploration (was 0.60)
 
 # T+1 safety: never trade with less than $1 settled cash.
 # In a cash account, unsettled funds from yesterday's sale CANNOT

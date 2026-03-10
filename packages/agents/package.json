@@ -8,6 +8,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@alpacahq/alpaca-trade-api": "^3.1.3",
     "@cryonix/database": "workspace:*",
     "@cryonix/types": "workspace:*",
     "@solana/web3.js": "^1.95.3",

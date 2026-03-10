@@ -8,17 +8,15 @@ export interface AktienixTrade {
   id?: number;
   symbol: string;
   qty: number;
-  entryPrice: number;
-  exitPrice: number | null;
-  pnl: number | null;
-  pnlPct: number | null;
+  fillPrice: number;
+  realizedPnl: number | null;
   side: 'BUY' | 'SELL';
-  signal: string | null;
-  openedAt: string;
-  closedAt: string | null;
+  reasoning: string | null;
+  timestamp: string;
   exitReason: string | null;
   broker?: string;
   paperTrading?: boolean;
+  orderId?: string | null;
 }
 
 export async function GET(req: Request) {
@@ -40,7 +38,7 @@ export async function GET(req: Request) {
     const countResult = await db.execute(
       sql.raw(`SELECT COUNT(*) AS total FROM aktienix_trades ${whereClause}`)
     );
-    const total = parseInt((countResult.rows[0] as { total: string }).total, 10) || 0;
+    const total = parseInt(((Array.from(countResult)[0]) as { total: string }).total, 10) || 0;
 
     const rows = await db.execute(
       sql.raw(`
@@ -48,27 +46,38 @@ export async function GET(req: Request) {
           id,
           symbol,
           qty,
-          entry_price  AS "entryPrice",
-          exit_price   AS "exitPrice",
-          pnl,
-          pnl_pct      AS "pnlPct",
+          fill_price    AS "fillPrice",
+          realized_pnl  AS "realizedPnl",
           side,
-          signal,
-          opened_at    AS "openedAt",
-          closed_at    AS "closedAt",
-          exit_reason  AS "exitReason",
+          reasoning,
+          "timestamp",
+          exit_reason   AS "exitReason",
           broker,
-          paper_trading AS "paperTrading"
+          paper_trading AS "paperTrading",
+          order_id      AS "orderId"
         FROM aktienix_trades
         ${whereClause}
-        ORDER BY opened_at DESC
+        ORDER BY "timestamp" DESC
         LIMIT ${limit}
       `)
     );
 
+    const trades = Array.from(rows) as unknown as AktienixTrade[];
+
+    // Summary: SELL trades with realized P&L are "closed" trades
+    const closedTrades = trades.filter(t => t.side === 'SELL' && t.realizedPnl !== null);
+    const wins = closedTrades.filter(t => (t.realizedPnl ?? 0) > 0).length;
+    const totalPnl = closedTrades.reduce((sum, t) => sum + (t.realizedPnl ?? 0), 0);
+    const winRate = closedTrades.length > 0 ? wins / closedTrades.length : 0;
+
     return NextResponse.json({
-      trades: rows.rows as AktienixTrade[],
+      trades,
       total,
+      summary: {
+        total: closedTrades.length,
+        winRate,
+        totalPnl,
+      },
     });
   } catch (error) {
     console.error('[aktienix/trades] DB error:', error);

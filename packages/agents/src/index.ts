@@ -7,14 +7,16 @@ import { RiskManagerAgent } from './risk-manager';
 import { BacktesterAgent } from './backtester';
 import { SignalValidator } from './signal-validator';
 import { ExecutorAgent } from './executor';
+import { AktienixAgent, type AktienixAgentConfig } from './aktienix';
 
 // Re-export agents
-export { BaseAgent, OrchestratorAgent, MarketScoutAgent, ClaudeAssistantAgent, RiskManagerAgent, BacktesterAgent, SignalValidator, ExecutorAgent };
+export { BaseAgent, OrchestratorAgent, MarketScoutAgent, ClaudeAssistantAgent, RiskManagerAgent, BacktesterAgent, SignalValidator, ExecutorAgent, AktienixAgent };
 export type { RiskCheckRequest, RiskCheckResult } from './risk-manager';
 export * from './backtester';
 export * from './signal-validator';
 export * from './executor';
 export * from './utils';
+export * from './aktienix/types';
 
 // Agent factory
 export class AgentFactory {
@@ -40,5 +42,9 @@ export class AgentFactory {
 
   static createExecutor(config?: any) {
     return new ExecutorAgent(config);
+  }
+
+  static createAktienix(config: AktienixAgentConfig) {
+    return new AktienixAgent(config);
   }
 }

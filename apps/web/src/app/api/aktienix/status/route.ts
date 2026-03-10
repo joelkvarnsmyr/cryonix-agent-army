@@ -27,18 +27,52 @@ function getMarketHours(): { phase: MarketPhase; isOpen: boolean; localTime: str
   return { phase: 'closed', isOpen: false, localTime };
 }
 
+interface AccountState {
+  buyingPower: number;
+  settledCash: number;
+  portfolioValue: number;
+  isPatternDayTrader: boolean;
+}
+
+interface RiskState {
+  canTrade: boolean;
+  dailyPnl: number;
+  consecutiveLosses: number;
+  tradesToday: number;
+}
+
 export async function GET() {
   const marketHours = getMarketHours();
 
-  let agentStatus: Record<string, unknown> | null = null;
+  let agentStatus: string | null = null;
+  let account: AccountState | null = null;
+  let risk: RiskState | null = null;
+
   try {
-    const raw = await redis.get('aktienix:agent:status');
-    if (raw) agentStatus = JSON.parse(raw as string);
-  } catch { /* redis unavailable */ }
+    const [statusRaw, accountRaw, riskRaw] = await Promise.all([
+      redis.get('aktienix:status'),
+      redis.get('aktienix:account'),
+      redis.get('aktienix:risk'),
+    ]);
+
+    agentStatus = (statusRaw as string) ?? null;
+
+    if (accountRaw) {
+      try { account = JSON.parse(accountRaw as string); } catch { /* ignore malformed */ }
+    }
+
+    if (riskRaw) {
+      try { risk = JSON.parse(riskRaw as string); } catch { /* ignore malformed */ }
+    }
+  } catch (error) {
+    console.error('[aktienix/status] Redis error:', error);
+  }
 
   return NextResponse.json({
+    status: agentStatus,
+    account,
+    risk,
     market: marketHours,
-    agent: agentStatus ?? { running: false, broker: 'unknown', lastPoll: null },
     timestamp: new Date().toISOString(),
   });
 }

@@ -400,6 +400,85 @@ export const telegramChannels = pgTable('telegram_channels', {
 });
 
 // ============================================================================
+// AKTIENIX POSITIONS TABLE
+// ============================================================================
+
+export const aktienixPositions = pgTable('aktienix_positions', {
+  id: serial('id').primaryKey(),
+  symbol: varchar('symbol', { length: 20 }).notNull(),
+  qty: decimal('qty', { precision: 20, scale: 6 }).notNull(),        // Fractional shares (6 decimals)
+  avgEntryPrice: decimal('avg_entry_price', { precision: 20, scale: 8 }).notNull(),
+  currentPrice: decimal('current_price', { precision: 20, scale: 8 }),
+  marketValue: decimal('market_value', { precision: 20, scale: 8 }),
+  unrealizedPl: decimal('unrealized_pl', { precision: 20, scale: 8 }),
+  realizedPl: decimal('realized_pl', { precision: 20, scale: 8 }),
+  highWatermark: decimal('high_watermark', { precision: 20, scale: 8 }), // For trailing stop
+  openedAt: timestamp('opened_at').defaultNow().notNull(),
+  closedAt: timestamp('closed_at'),
+  closeReason: varchar('close_reason', { length: 30 }),  // 'take_profit' | 'stop_loss' | 'trailing_stop' | 'stagnation' | 'eod_close' | 'manual'
+  status: varchar('status', { length: 10 }).default('OPEN').notNull(), // 'OPEN' | 'CLOSED'
+  broker: varchar('broker', { length: 20 }).default('alpaca').notNull(),  // 'alpaca' | 'ibkr' | 'mock'
+  paperTrading: boolean('paper_trading').default(true).notNull(),
+  tradingDaysHeld: integer('trading_days_held').default(0),
+  metadata: jsonb('metadata'),
+}, (table) => [
+  index('aktienix_positions_status_idx').on(table.status),
+  index('aktienix_positions_symbol_idx').on(table.symbol),
+  index('aktienix_positions_opened_at_idx').on(table.openedAt),
+]);
+
+// ============================================================================
+// AKTIENIX TRADES TABLE
+// ============================================================================
+
+export const aktienixTrades = pgTable('aktienix_trades', {
+  id: serial('id').primaryKey(),
+  timestamp: timestamp('timestamp').defaultNow().notNull(),
+  symbol: varchar('symbol', { length: 20 }).notNull(),
+  side: varchar('side', { length: 4 }).notNull(),           // 'BUY' | 'SELL'
+  qty: decimal('qty', { precision: 20, scale: 6 }).notNull(),
+  fillPrice: decimal('fill_price', { precision: 20, scale: 8 }),
+  dollarAmount: decimal('dollar_amount', { precision: 20, scale: 2 }),
+  realizedPnl: decimal('realized_pnl', { precision: 20, scale: 8 }),  // Null on BUY, set on SELL
+  confidence: decimal('confidence', { precision: 5, scale: 4 }),
+  reasoning: text('reasoning'),
+  exitReason: varchar('exit_reason', { length: 30 }),       // Null on BUY; 'take_profit' etc. on SELL
+  broker: varchar('broker', { length: 20 }).default('alpaca').notNull(),
+  paperTrading: boolean('paper_trading').default(true).notNull(),
+  isDayTrade: boolean('is_day_trade').default(false),
+  orderId: varchar('order_id', { length: 64 }),             // Broker order ID
+  positionId: integer('position_id').references(() => aktienixPositions.id),
+  metadata: jsonb('metadata'),
+}, (table) => [
+  index('aktienix_trades_timestamp_idx').on(table.timestamp),
+  index('aktienix_trades_symbol_idx').on(table.symbol),
+  index('aktienix_trades_side_idx').on(table.side),
+]);
+
+// ============================================================================
+// AKTIENIX SIGNALS TABLE
+// ============================================================================
+
+export const aktienixSignals = pgTable('aktienix_signals', {
+  id: serial('id').primaryKey(),
+  timestamp: timestamp('timestamp').defaultNow().notNull(),
+  symbol: varchar('symbol', { length: 20 }).notNull(),
+  action: varchar('action', { length: 4 }).notNull(),       // 'BUY' | 'SELL' | 'WAIT'
+  confidence: decimal('confidence', { precision: 5, scale: 4 }),
+  reasoning: text('reasoning'),
+  macroBoost: decimal('macro_boost', { precision: 5, scale: 4 }),   // How much confidence was boosted by macro
+  macroBlocked: boolean('macro_blocked').default(false),             // Was this signal blocked by macro?
+  macroEvent: varchar('macro_event', { length: 50 }),               // Which macro event caused the boost/block
+  indicators: jsonb('indicators'),                                   // RSI, MACD, Bollinger etc.
+  source: varchar('source', { length: 10 }).default('ta'),          // 'ta' | 'macro' | 'external'
+  executed: boolean('executed').default(false),
+}, (table) => [
+  index('aktienix_signals_timestamp_idx').on(table.timestamp),
+  index('aktienix_signals_symbol_idx').on(table.symbol),
+  index('aktienix_signals_executed_idx').on(table.executed),
+]);
+
+// ============================================================================
 // EXPORT TYPES
 // ============================================================================
 
@@ -446,3 +525,10 @@ export type NewCalibrationHistoryRow = typeof calibrationHistory.$inferInsert;
 
 export type AutopilotAction = typeof autopilotActions.$inferSelect;
 export type NewAutopilotAction = typeof autopilotActions.$inferInsert;
+
+export type AktienixPosition = typeof aktienixPositions.$inferSelect;
+export type NewAktienixPosition = typeof aktienixPositions.$inferInsert;
+export type AktienixTrade = typeof aktienixTrades.$inferSelect;
+export type NewAktienixTrade = typeof aktienixTrades.$inferInsert;
+export type AktienixSignal = typeof aktienixSignals.$inferSelect;
+export type NewAktienixSignal = typeof aktienixSignals.$inferInsert;

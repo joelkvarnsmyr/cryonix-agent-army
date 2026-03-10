@@ -226,6 +226,9 @@ export class AktienixAgent extends BaseAgent {
 
                         if (this.activeMacroSignals.length > 0) {
                             this.log('info', `Detected ${this.activeMacroSignals.length} active macro events:`);
+                            for (const m of this.activeMacroSignals) {
+                                this.log('info', `  [${m.impact.toUpperCase()}] ${m.event} → tickers: ${m.tickers.join(', ')}`);
+                            }
                         } else {
                             this.log('info', 'No major actionable macro events detected.');
                         }

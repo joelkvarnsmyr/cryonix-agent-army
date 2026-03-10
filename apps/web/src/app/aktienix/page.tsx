@@ -47,13 +47,13 @@ export default function AktienixPage() {
     return () => clearInterval(id);
   }, []);
 
-  // Build a cumulative equity curve from closed trades
+  // Build a cumulative equity curve from SELL trades with realized P&L
   const equityData = (() => {
     if (trades.length === 0) return [];
     let cum = 0;
-    return [...trades].reverse().map(t => {
-      cum += t.pnl ?? 0;
-      return { time: t.closedAt, cumulative: cum };
+    return [...trades].filter(t => t.side === 'SELL').reverse().map(t => {
+      cum += t.realizedPnl ?? 0;
+      return { time: t.timestamp, cumulative: cum };
     });
   })();
 
@@ -192,17 +192,19 @@ export default function AktienixPage() {
           ) : (
             <div className="space-y-1.5">
               {trades.slice(0, 8).map((t) => (
-                <div key={`${t.symbol}-${t.closedAt}`} className="flex items-center justify-between text-sm">
+                <div key={`${t.symbol}-${t.timestamp}`} className="flex items-center justify-between text-sm">
                   <div className="flex items-center gap-2">
+                    <span className={`font-mono text-xs w-8 ${t.side === 'BUY' ? 'text-emerald-400' : 'text-amber-400'}`}>{t.side}</span>
                     <span className="font-mono text-xs text-muted-foreground w-12">{t.symbol}</span>
-                    {t.signal && <span className="text-xs text-muted-foreground/60">{t.signal}</span>}
                     {t.exitReason && <span className="text-xs text-muted-foreground/40">{t.exitReason}</span>}
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className={(t.pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                      {(t.pnl ?? 0) >= 0 ? '+' : ''}${(t.pnl ?? 0).toFixed(2)}
-                    </span>
-                    <span className="text-xs text-muted-foreground w-14 text-right">{timeAgo(t.closedAt ?? '')}</span>
+                    {t.side === 'SELL' && (
+                      <span className={(t.realizedPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                        {(t.realizedPnl ?? 0) >= 0 ? '+' : ''}${(t.realizedPnl ?? 0).toFixed(2)}
+                      </span>
+                    )}
+                    <span className="text-xs text-muted-foreground w-14 text-right">{timeAgo(t.timestamp)}</span>
                   </div>
                 </div>
               ))}
