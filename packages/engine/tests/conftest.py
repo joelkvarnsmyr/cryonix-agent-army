@@ -7,6 +7,14 @@ import os
 # Add engine src to path so imports work
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+# Python 3.10 shim: tomllib was added in 3.11; use tomli backport if needed
+if sys.version_info < (3, 11):
+    try:
+        import tomli as tomllib_shim
+        sys.modules.setdefault("tomllib", tomllib_shim)
+    except ImportError:
+        pass
+
 
 @pytest.fixture
 def make_ohlcv():
