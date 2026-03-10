@@ -74,60 +74,30 @@ no_new_orders_before_close_min = 30
 [watchlist]
 
 symbols = [
-    # Mega-cap Tech
+    # Tech — Highest liquidity, tightest spreads, fractional-friendly
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
 
-    # AI & Semis — unicorn territory
-    "AMD",   # AI chips, NVDA rival
-    "ARM",   # CPU architecture, AI edge
-    "SMCI",  # AI server supercycle
-    "PLTR",  # AI/defence data platform
-    "SNOW",  # AI data cloud
-    "CRWD",  # Cybersecurity AI
-
-    # Fintech disruptors
-    "COIN",  # Crypto exchange (high beta to BTC)
-    "HOOD",  # Retail trading platform
-    "SOFI",  # Digital bank
-    "AFRM",  # Buy-now-pay-later
-    "SQ",    # Block / payments
-
-    # EV & Clean Energy
-    "RIVN",  # EV — high volatility
-    "LCID",  # EV — speculative
-    "NIO",   # Chinese EV
-    "ENPH",  # Solar inverters
-
-    # Biotech — moonshots
-    "MRNA",  # mRNA platform, volatile
-    "BNTX",  # BioNTech, pipeline plays
-    "RXRX",  # AI drug discovery
-
-    # Consumer & e-commerce
-    "SHOP",  # E-commerce infrastructure
-    "ETSY",  # Marketplace
-    "ABNB",  # Airbnb, travel recovery plays
-
-    # Gaming & Metaverse
-    "RBLX",  # Roblox — Gen Z platform
-    "U",     # Unity — game engine
-
-    # Meme & high-volatility
-    "GME",   # GameStop — squeeze potential
-    "AMC",   # AMC — volatile
-
-    # Broad ETFs
+    # Broad Market ETFs
     "SPY",   # S&P 500
     "QQQ",   # NASDAQ 100
-    "ARKK",  # Cathie Wood innovation ETF — amplified moves
-    "IWM",   # Russell 2000 small caps
 
-    # Blue chips / diversification
+    # Blue Chips — sector diversification
     "JPM",   # Financials
-    "GS",    # Goldman Sachs
-    "JNJ",   # Healthcare defensive
-    "UNH",   # Health insurance
-    "XOM",   # Oil — macro hedge
+    "JNJ",   # Healthcare
+
+    # Energy — benefits from oil price rises (oil_supply_shock bullish tickers)
+    "XOM",   # ExxonMobil — largest US E&P
+    "CVX",   # Chevron
+    "XLE",   # Energy Select SPDR ETF
+    "USO",   # Oil ETF
+
+    # Airlines — recovery plays after oil/fuel shocks (oil_supply_shock secondary)
+    "UAL",   # United Airlines
+    "DAL",   # Delta Air Lines
+
+    # Logistics — affected by port strikes and shipping disruptions
+    "FDX",   # FedEx
+    "UPS",   # UPS
 ]
 
 # "1Day"  — Daily bars. Default for swing trading. One bar = one trading day.
