@@ -15,6 +15,9 @@ import { CostsCard } from '@/components/dashboard/costs-card';
 import { AktienixStatusCard } from '@/components/dashboard/aktienix-status-card';
 import { SolanixStatusCard } from '@/components/dashboard/solanix-status-card';
 import { TelegramSignalsCard } from '@/components/dashboard/telegram-signals-card';
+import { MacroMetricsCard } from '@/components/dashboard/macro-metrics-card';
+import { SentimentCard } from '@/components/dashboard/sentiment-card';
+import { AiBrainCard } from '@/components/dashboard/ai-brain-card';
 import { StaggerContainer, FadeUpItem } from '@/components/dashboard/motion-wrappers';
 
 const PriceChart = dynamic(() => import('@/components/dashboard/price-chart').then(mod => mod.PriceChart), {
@@ -55,6 +58,14 @@ export default function LegacyDashboard() {
             <div className="col-span-12 lg:col-span-4"><AktienixStatusCard /></div>
             <div className="col-span-12 lg:col-span-4"><SolanixStatusCard /></div>
             <div className="col-span-12 lg:col-span-4"><TelegramSignalsCard /></div>
+          </div>
+        </FadeUpItem>
+        {/* Intelligence row: Macro + Sentiment + AI Brain */}
+        <FadeUpItem>
+          <div className="grid grid-cols-12 gap-2.5 3xl:gap-1.5">
+            <div className="col-span-12 lg:col-span-4"><MacroMetricsCard /></div>
+            <div className="col-span-12 lg:col-span-4"><SentimentCard /></div>
+            <div className="col-span-12 lg:col-span-4"><AiBrainCard /></div>
           </div>
         </FadeUpItem>
         <FadeUpItem className="3xl:hidden">
