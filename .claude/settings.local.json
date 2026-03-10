@@ -9,7 +9,11 @@
       "Bash(pnpm test:*)",
       "Bash(netstat:*)",
       "mcp__claude_ai_Crypto_com__get_ticker",
-      "mcp__claude_ai_Crypto_com__get_tickers"
+      "mcp__claude_ai_Crypto_com__get_tickers",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_console_messages",
+      "Skill(code-review:code-review)",
+      "mcp__claude_ai_Vercel__web_fetch_vercel_url"
     ]
   }
 }
