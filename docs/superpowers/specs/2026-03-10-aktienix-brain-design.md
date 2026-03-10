@@ -197,9 +197,14 @@ Next scheduled: [datetime ET]
 
 ## Docker Deployment
 
-New service in `docker-compose.prod.yml`:
+New service in `docker-compose.prod.yml`. Also add `container_name: aktienix` to the existing `aktienix` trading agent service (required so `docker restart aktienix` resolves):
 
 ```yaml
+# Existing aktienix service — add this line:
+aktienix:
+  container_name: aktienix   # required — brain uses `docker restart aktienix`
+  # ... rest of existing service definition unchanged
+
 aktienix-brain:
   build: { context: ., dockerfile: Dockerfile.scripts }
   restart: unless-stopped
@@ -239,7 +244,7 @@ aktienix-brain:
 | Claude CLI exits non-zero | Log error, skip Telegram actions list, send alert |
 | Claude makes no file changes | Log warning ("no actions taken"), still send report |
 | `close-position.ts` exits 1 | Log error, note in Telegram report, do not crash Brain |
-| Redis read fails | Abort run entirely, do not call Claude with incomplete data |
+| Redis connection fails | Abort run entirely, do not call Claude with incomplete data |
 | Postgres read fails | Proceed with "no trade data available" in prompt |
 | Git commit fails | Log warning, continue (config change still took effect) |
 
