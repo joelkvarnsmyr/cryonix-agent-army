@@ -151,6 +151,35 @@ def test_no_alert_writes_nothing():
     }
     write_to_redis(r, sentiment_data, 'grok-3-mini', 100)
     assert 'sentiment:alert:BTC' not in r.calls
+
+
+def test_onchain_alert_idempotent_same_severity():
+    """If same severity already exists in Redis, do not overwrite (idempotent)."""
+    from x_sentiment import write_to_redis
+    r = make_redis_mock()
+    existing_payload = json.dumps({
+        'severity': 'warning',
+        'reason': 'Old reason',
+        'source': '@old',
+        'detected_at': '2026-03-10T00:00:00+00:00',
+    })
+    r.get = MagicMock(return_value=existing_payload)
+    sentiment_data = {
+        'BTC': {
+            'score': 0,
+            'volume': 'low',
+            'narrative': 'neutral',
+            'alert': None,
+            'onchain_alert': {
+                'severity': 'warning',
+                'reason': 'New reason',
+                'source': '@new',
+            }
+        }
+    }
+    write_to_redis(r, sentiment_data, 'grok-3-mini', 100)
+    # setex should NOT have been called — same severity already in Redis
+    assert 'sentiment:alert:BTC' not in r.calls
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -207,8 +236,18 @@ Only include coins with notable sentiment. Skip coins with no meaningful X activ
             onchain_alert = info.get('onchain_alert')
             plain_alert = info.get('alert')
             if onchain_alert and isinstance(onchain_alert, dict):
+                new_severity = onchain_alert.get('severity', 'warning')
+                # Idempotent: skip if same severity already in Redis (avoid TTL refresh spam)
+                existing_raw = r.get(f'sentiment:alert:{symbol}')
+                if existing_raw:
+                    try:
+                        existing = json.loads(existing_raw)
+                        if existing.get('severity') == new_severity:
+                            continue  # same alert already set, skip
+                    except Exception:
+                        pass  # existing is plain string — overwrite with structured
                 alert_payload = {
-                    'severity': onchain_alert.get('severity', 'warning'),
+                    'severity': new_severity,
                     'reason': onchain_alert.get('reason', ''),
                     'source': onchain_alert.get('source'),
                     'detected_at': datetime.now(timezone.utc).isoformat(),
@@ -360,6 +399,11 @@ Find the position monitoring loop. After the trailing stop check block (the `els
 ```
 
 **Important:** The `if (!shouldSell)` guard prevents the alert check from interfering with a forced close that's already in progress.
+
+**Logging notes:**
+- **Force-close (critical):** `shouldSell = true` + `exitReason = "On-chain alert (critical): ..."` → the existing close path at line ~790 calls `logTrade()` and `archivePosition()` automatically. The `reasoning` field in the trade record will contain the on-chain alert reason. No extra DB write needed.
+- **SL tighten (warning):** The `console.log` line above produces a searchable log entry. The `onchain:notified:{SYMBOL}` Redis key serves as the audit trail. The `agent_actions` table is not actively written to in auto-trade — `logTrade()` / `archivePosition()` are the canonical records.
+- **Force-close failure:** If the Binance API throws in the existing `try { ... } catch (closeError)` block (line ~857), the existing error handler logs the error. The on-chain trigger is already captured in `exitReason` so post-mortems can identify the cause.
 
 - [ ] **Step 4: TypeScript type-check**
 
