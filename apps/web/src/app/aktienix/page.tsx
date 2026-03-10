@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import {
@@ -51,7 +52,7 @@ export default function AktienixPage() {
     if (trades.length === 0) return [];
     let cum = 0;
     return [...trades].reverse().map(t => {
-      cum += t.pnl;
+      cum += t.pnl ?? 0;
       return { time: t.closedAt, cumulative: cum };
     });
   })();
@@ -75,6 +76,7 @@ export default function AktienixPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <Link href="/" className="font-mono text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors">← Crypto</Link>
             <span className="font-mono text-sm font-bold tracking-wider text-muted-foreground">AKTIENIX</span>
             <span className={`text-xs font-mono ${PHASE_COLOR[phase]}`}>
               {PHASE_LABEL[phase]}
@@ -153,7 +155,7 @@ export default function AktienixPage() {
                     </div>
                     <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
                       <div>${pos.avgEntryPrice.toFixed(2)} &rarr; ${pos.currentPrice.toFixed(2)}</div>
-                      <div>SL ${pos.stopLoss.toFixed(2)} · TP ${pos.takeProfit.toFixed(2)}</div>
+                      <div>SL ${pos.stopLoss?.toFixed(2) ?? '—'} · TP ${pos.takeProfit?.toFixed(2) ?? '—'}</div>
                       <div className={plColor}>
                         {pos.unrealizedPl >= 0 ? '+' : ''}${pos.unrealizedPl.toFixed(2)}
                       </div>
@@ -197,10 +199,10 @@ export default function AktienixPage() {
                     {t.exitReason && <span className="text-xs text-muted-foreground/40">{t.exitReason}</span>}
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className={t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                      {t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}
+                    <span className={(t.pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                      {(t.pnl ?? 0) >= 0 ? '+' : ''}${(t.pnl ?? 0).toFixed(2)}
                     </span>
-                    <span className="text-xs text-muted-foreground w-14 text-right">{timeAgo(t.closedAt)}</span>
+                    <span className="text-xs text-muted-foreground w-14 text-right">{timeAgo(t.closedAt ?? '')}</span>
                   </div>
                 </div>
               ))}

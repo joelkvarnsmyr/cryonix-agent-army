@@ -1,5 +1,6 @@
 "use client";
 
+import Link from 'next/link';
 import { usePortfolio } from '@/hooks/useMarketData';
 import { useAutoTrade } from '@/hooks/useAutoTrade';
 import { useSystemHealth } from '@/hooks/useSystemHealth';
@@ -72,7 +73,10 @@ export default function HomePage() {
 
         {/* Header */}
         <div className="flex items-center justify-between">
-          <span className="font-mono text-sm font-bold tracking-wider text-muted-foreground">CRYONIX</span>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-sm font-bold tracking-wider text-muted-foreground">CRYONIX</span>
+            <Link href="/aktienix" className="font-mono text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors">Stocks →</Link>
+          </div>
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <span className={`w-2 h-2 rounded-full ${allHealthy ? 'bg-emerald-400 animate-pulse' : health?.status === 'degraded' ? 'bg-amber-400' : 'bg-red-400'}`} />
