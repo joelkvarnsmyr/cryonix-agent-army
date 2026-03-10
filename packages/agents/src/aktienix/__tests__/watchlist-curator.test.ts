@@ -74,3 +74,40 @@ describe('WatchlistCurator — macro tickers', () => {
         expect(aaplCount).toBe(1);
     });
 });
+
+describe('WatchlistCurator — Alpaca movers', () => {
+    it('includes top-volume symbols from Alpaca when available', async () => {
+        const mockAlpaca = {
+            data: {
+                getMostActiveStocks: vi.fn().mockResolvedValue([
+                    { symbol: 'PLTR', volume: 90_000_000 },
+                    { symbol: 'RIVN', volume: 75_000_000 },
+                    { symbol: 'HOOD', volume: 60_000_000 },
+                ]),
+            },
+        };
+        const curator = new WatchlistCurator(mockAlpaca, null, []);
+        const symbols = await curator.curate([]);
+        expect(symbols).toContain('PLTR');
+        expect(symbols).toContain('RIVN');
+        expect(symbols).toContain('HOOD');
+    });
+
+    it('falls back gracefully when Alpaca movers call fails', async () => {
+        const mockAlpaca = {
+            data: {
+                getMostActiveStocks: vi.fn().mockRejectedValue(new Error('API unavailable')),
+            },
+        };
+        const curator = new WatchlistCurator(mockAlpaca, null, ['SPY']);
+        const symbols = await curator.curate([]);
+        // Should not throw, should return fallback
+        expect(symbols).toContain('SPY');
+    });
+
+    it('falls back gracefully when alpacaInstance is null', async () => {
+        const curator = new WatchlistCurator(null, null, ['QQQ']);
+        const symbols = await curator.curate([]);
+        expect(symbols).toContain('QQQ');
+    });
+});

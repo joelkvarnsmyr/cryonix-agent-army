@@ -15,6 +15,16 @@ export class WatchlistCurator {
         return this.lastRefreshDate !== today;
     }
 
+    private async getAlpacaMovers(): Promise<string[]> {
+        if (!this.alpaca) return [];
+        try {
+            const actives = await this.alpaca.data.getMostActiveStocks({ by: 'volume', top: 30 });
+            return actives.map((s: { symbol: string }) => s.symbol);
+        } catch {
+            return [];
+        }
+    }
+
     private getMacroTickers(signals: MacroSignal[]): string[] {
         const tickers = new Set<string>();
         for (const signal of signals) {
@@ -29,12 +39,13 @@ export class WatchlistCurator {
         const today = new Date().toISOString().slice(0, 10);
         const combined = new Set<string>(this.fallbackSymbols);
 
+        // Source 1: Alpaca volume movers
+        for (const t of await this.getAlpacaMovers()) combined.add(t);
+
         // Source 3: Macro signal tickers
-        for (const t of this.getMacroTickers(activeMacroSignals)) {
-            combined.add(t);
-        }
+        for (const t of this.getMacroTickers(activeMacroSignals)) combined.add(t);
 
         this.lastRefreshDate = today;
-        return Array.from(combined);
+        return Array.from(combined).slice(0, 60);
     }
 }
