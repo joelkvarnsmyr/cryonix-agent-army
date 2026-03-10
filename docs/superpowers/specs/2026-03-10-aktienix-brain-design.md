@@ -32,11 +32,13 @@ Two trigger types, checked every 60 seconds:
 
 Brain reads the following before building the Claude prompt:
 
-**From Redis:**
+**From Redis (all keys have 5-minute TTL — may be null if agent is idle at market close):**
 - `aktienix:account` — portfolioValue, buyingPower, settledCash, isPatternDayTrader
 - `aktienix:positions` — all open positions (symbol, qty, avgEntryPrice, unrealizedPl, marketValue)
 - `aktienix:risk` — canTrade, dailyPnlDollar, weeklyPnlDollar, consecutiveLosses, tradesToday, dayTradesThisWeek
-- `aktienix:brain:last_run` — previous Brain summary for context continuity
+- `aktienix:brain:last_run` — previous Brain summary (JSON, see structure below)
+
+**Stale Redis handling:** If `aktienix:account` is null (trading agent idle, keys expired), Brain proceeds with Postgres data only. In the prompt, account/position/risk sections are replaced with `"[not available — agent idle]"`. Claude will still analyse trade performance and adjust config, but skips position-specific actions (cannot close positions without current position data). This is the expected behaviour for scheduled market-close runs when the agent has been idle.
 
 **From Postgres (`aktienix_trades`, last 7 days) — filter `side = 'SELL' AND realized_pnl IS NOT NULL`:**
 - Per-symbol: trade count, win rate, average realized P&L
@@ -60,7 +62,7 @@ const result = await execCommand(
     `--allowedTools 'Edit,Read,Glob,Grep,` +
     `Bash(npx tsx scripts/aktienix/close-position.ts),` +
     `Bash(docker restart aktienix),` +
-    `Bash(git add -A),Bash(git commit)' ` +
+    `Bash(git add aktienix.toml),Bash(git commit)' ` +
     `--max-budget-usd 3`,
     { timeout: 300_000, cwd: PROJECT_ROOT }
 );
@@ -70,9 +72,11 @@ const result = await execCommand(
 - `Edit` / `Read` / `Glob` / `Grep` — read and edit `aktienix.toml`, read code
 - `Bash(npx tsx scripts/aktienix/close-position.ts <SYMBOL>)` — close a specific position
 - `Bash(docker restart aktienix)` — reload the trading agent after config changes (picks up new toml immediately, no hot-reload complexity)
-- `Bash(git add -A)` + `Bash(git commit)` — commit changes
+- `Bash(git add aktienix.toml)` + `Bash(git commit)` — commit config changes only (not `git add -A` — avoids staging unrelated files)
 
 **Hot-reload via restart:** Claude edits `aktienix.toml`, then runs `docker restart aktienix`. The Docker volume mount makes the edited file immediately visible to the new process. This is simpler and more reliable than a cache-invalidation approach.
+
+**Container name:** The `aktienix` service must have `container_name: aktienix` set in `docker-compose.prod.yml` so `docker restart aktienix` resolves correctly. Without it, Docker Compose auto-names the container `cryonix-aktienix-1` and the restart command fails. Adding `container_name: aktienix` to the service definition is required as part of this implementation.
 
 ## Prompt Structure
 
@@ -125,7 +129,7 @@ Read `aktienix.toml` — that is the live config. Edit it directly if changes ar
 - Run `npx tsx scripts/aktienix/close-position.ts SYMBOL` to close a specific position
   - Only close if: unrealizedPl% < –5% OR position held > 5 days
 - Run `docker restart aktienix` AFTER editing aktienix.toml (so changes take effect)
-- Run `git add -A && git commit -m "brain({runId}): <brief description>"` to commit changes
+- Run `git add aktienix.toml && git commit -m "brain({runId}): <brief description>"` to commit config changes
 
 ### What You CANNOT Do:
 
@@ -163,7 +167,17 @@ A new script `scripts/aktienix/close-position.ts` must be created as part of thi
 After Claude finishes, Brain:
 1. Extracts the `BRAIN_SUMMARY_START...BRAIN_SUMMARY_END` block from Claude's output
 2. Checks `git diff --stat` to list changed files
-3. Stores summary in Redis `aktienix:brain:last_run` (JSON, 48h TTL)
+3. Stores summary in Redis `aktienix:brain:last_run` (JSON, 48h TTL) with this structure:
+   ```json
+   {
+     "runId": "brain_1741650000000",
+     "trigger": "scheduled",
+     "timestamp": "2026-03-10T21:30:00Z",
+     "analysis": "2-3 sentence summary from Claude",
+     "actions": ["min_confidence: 0.38 → 0.45", "Closed MRNA: -$234"]
+   }
+   ```
+   In subsequent prompts, `previousSummary` is rendered as: `"[{timestamp}] {analysis} Actions: {actions.join(', ')}"`
 4. Sends Telegram report
 
 **Telegram format:**
