@@ -69,7 +69,7 @@ export const VALID_TICKERS = new Set<string>([
     'NOW', 'WDAY', 'SNOW', 'DDOG', 'NET', 'ZS', 'CRWD', 'PANW', 'FTNT',
     'OKTA', 'MDB', 'ESTC', 'CFLT', 'HCP', 'GTLB',
     // ── Fintech ───────────────────────────────────────────────────
-    'PYPL', 'SQ', 'AFRM', 'UPST', 'SOFI', 'NU', 'HOOD', 'COIN',
+    'PYPL', 'SQ', 'AFRM', 'UPST', 'SOFI', 'NU', 'HOOD', 'COIN', 'PLTR',
     // ── EV / Clean Energy ─────────────────────────────────────────
     'TSLA', 'ENPH', 'SEDG', 'FSLR', 'RUN', 'PLUG', 'BLDP', 'HYZN',
     // ── Homebuilders ──────────────────────────────────────────────

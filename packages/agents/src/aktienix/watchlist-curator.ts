@@ -1,5 +1,6 @@
 import { OpenAI } from 'openai';
 import type { MacroSignal } from './intelligence/news-scanner';
+import { isValidTicker } from './intelligence/ticker-universe';
 
 export class WatchlistCurator {
     private lastRefreshDate: string | null = null;
@@ -17,10 +18,15 @@ export class WatchlistCurator {
         return this.lastRefreshDate !== today;
     }
 
+    /** Mark today as refreshed (used when curate() throws to suppress retry-every-poll behavior) */
+    markRefreshed(): void {
+        this.lastRefreshDate = new Date().toISOString().slice(0, 10);
+    }
+
     private async getAlpacaMovers(): Promise<string[]> {
         if (!this.alpaca) return [];
         try {
-            const actives = await this.alpaca.data.getMostActiveStocks({ by: 'volume', top: 30 });
+            const actives = await this.alpaca.data.getStocksMostActives({ by: 'volume', top: 30 });
             return actives.map((s: { symbol: string }) => s.symbol);
         } catch {
             return [];
@@ -97,9 +103,11 @@ US stocks only. Max 20 entries.`,
         for (const t of macroTickers) combined.add(t);
         const macroCount = macroTickers.length;
 
-        const result = Array.from(combined).slice(0, 60);
+        const fallbackSet = new Set(this.fallbackSymbols);
+        const validated = Array.from(combined).filter(s => fallbackSet.has(s) || isValidTicker(s));
+        const result = validated.slice(0, 60);
         this.logger?.info(
-            `WatchlistCurator: ${combined.size} total symbols (fallback: ${this.fallbackSymbols.length}, movers: ${alpacaCount}, grok: ${grokCount}, macro: ${macroCount}) → capped at ${result.length}`
+            `WatchlistCurator: ${combined.size} total symbols (fallback: ${this.fallbackSymbols.length}, movers: ${alpacaCount}, grok: ${grokCount}, macro: ${macroCount}) → ${validated.length} after validation → capped at ${result.length}`
         );
 
         this.lastRefreshDate = today;

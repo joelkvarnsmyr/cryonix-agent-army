@@ -90,7 +90,7 @@ describe('WatchlistCurator — Alpaca movers', () => {
     it('includes top-volume symbols from Alpaca when available', async () => {
         const mockAlpaca = {
             data: {
-                getMostActiveStocks: vi.fn().mockResolvedValue([
+                getStocksMostActives: vi.fn().mockResolvedValue([
                     { symbol: 'PLTR', volume: 90_000_000 },
                     { symbol: 'RIVN', volume: 75_000_000 },
                     { symbol: 'HOOD', volume: 60_000_000 },
@@ -107,7 +107,7 @@ describe('WatchlistCurator — Alpaca movers', () => {
     it('falls back gracefully when Alpaca movers call fails', async () => {
         const mockAlpaca = {
             data: {
-                getMostActiveStocks: vi.fn().mockRejectedValue(new Error('API unavailable')),
+                getStocksMostActives: vi.fn().mockRejectedValue(new Error('API unavailable')),
             },
         };
         const curator = new WatchlistCurator(mockAlpaca, null, ['SPY']);

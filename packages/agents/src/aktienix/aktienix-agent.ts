@@ -248,12 +248,18 @@ export class AktienixAgent extends BaseAgent {
 
                 // 7b. Refresh watchlist if new trading day
                 if (this.watchlistCurator?.needsRefresh() && this.signalGenerator && this.loggerAdapter) {
-                    const symbols = await this.watchlistCurator.curate(this.activeMacroSignals);
-                    this.signalGenerator = new StockSignalGenerator(
-                        this.alpacaInstance, this.loggerAdapter,
-                        { symbols, timeframe: config.watchlist.timeframe, barsCount: config.watchlist.bars_count }
-                    );
-                    this.log('info', `Watchlist refreshed: ${symbols.length} symbols`);
+                    try {
+                        const symbols = await this.watchlistCurator.curate(this.activeMacroSignals);
+                        this.signalGenerator = new StockSignalGenerator(
+                            this.alpacaInstance, this.loggerAdapter,
+                            { symbols, timeframe: config.watchlist.timeframe, barsCount: config.watchlist.bars_count }
+                        );
+                        this.log('info', `Watchlist refreshed: ${symbols.length} symbols`);
+                    } catch (e: any) {
+                        this.log('error', `WatchlistCurator failed: ${e.message} — keeping existing watchlist, retry tomorrow`);
+                        // Force lastRefreshDate to today so we don't retry every poll cycle
+                        this.watchlistCurator.markRefreshed();
+                    }
                 }
 
                 // 8. Scan for TA signals
