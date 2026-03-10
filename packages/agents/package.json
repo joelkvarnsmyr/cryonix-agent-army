@@ -8,13 +8,14 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@cryonix/types": "workspace:*",
     "@cryonix/database": "workspace:*",
+    "@cryonix/types": "workspace:*",
+    "@solana/web3.js": "^1.95.3",
     "ccxt": "^4.4.50",
     "openai": "^4.77.3",
     "technicalindicators": "^3.1.0",
-    "zod": "^3.25.76",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

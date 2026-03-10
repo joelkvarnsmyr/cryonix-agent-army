@@ -3,7 +3,7 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Activity, BarChart3, LineChart, Settings, Wifi, WifiOff, FlaskConical, TrendingUp } from 'lucide-react';
+import { Activity, BarChart3, LineChart, Settings, Wifi, WifiOff, FlaskConical, TrendingUp, CircleDollarSign } from 'lucide-react';
 import { Button } from '@cryonix/ui';
 import { useSystemHealth } from '@/hooks/useSystemHealth';
 import { useWebSocket } from '@/hooks/use-websocket';
@@ -59,6 +59,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     { href: '/analytics', label: 'Analytics', icon: LineChart },
     { href: '/backtest', label: 'Backtest', icon: FlaskConical },
     { href: '/aktienix', label: 'Stocks', icon: TrendingUp },
+    { href: '/solanix', label: 'Solanix', icon: CircleDollarSign },
   ];
 
   const services = health?.services || [];
