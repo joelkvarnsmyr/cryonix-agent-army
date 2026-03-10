@@ -14,6 +14,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
 } from '@cryonix/ui';
 
 interface JournalTrade {
@@ -97,6 +100,8 @@ export default function AnalyticsPage() {
               <button
                 key={d}
                 onClick={() => setDays(d)}
+                aria-label={`Filter by ${d} days`}
+                aria-current={days === d ? 'page' : undefined}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                   days === d
                     ? 'bg-primary text-primary-foreground shadow-sm'
@@ -127,10 +132,11 @@ export default function AnalyticsPage() {
           <>
             {/* Summary Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <SummaryCard label="Total Trades" value={String(data.summary.total_trades)} />
+              <SummaryCard label="Total Trades" value={String(data.summary.total_trades)} hint="Number of closed trades in the selected period" />
               <SummaryCard
                 label="Win Rate"
                 value={data.summary.win_rate != null ? `${data.summary.win_rate}%` : '-'}
+                hint="Percentage of trades that closed with positive P&L"
                 color={
                   data.summary.win_rate != null
                     ? Number(data.summary.win_rate) >= 50
@@ -142,6 +148,7 @@ export default function AnalyticsPage() {
               <SummaryCard
                 label="Total P&L"
                 value={data.summary.total_pnl != null ? `$${Number(data.summary.total_pnl).toFixed(2)}` : '-'}
+                hint="Sum of all realized profits and losses (USD)"
                 color={
                   data.summary.total_pnl != null
                     ? Number(data.summary.total_pnl) >= 0
@@ -153,6 +160,7 @@ export default function AnalyticsPage() {
               <SummaryCard
                 label="Avg Holding"
                 value={data.summary.avg_holding_h != null ? `${data.summary.avg_holding_h}h` : '-'}
+                hint="Average time a position was held before closing"
               />
             </div>
 
@@ -303,11 +311,29 @@ export default function AnalyticsPage() {
   );
 }
 
-function SummaryCard({ label, value, color }: { label: string; value: string; color?: string }) {
+function SummaryCard({ label, value, color, hint }: { label: string; value: string; color?: string; hint?: string }) {
+  const labelEl = (
+    <p className="text-[10px] text-muted-foreground uppercase tracking-widest">{label}</p>
+  );
+
   return (
     <Card className="border-border/40 bg-card/50 backdrop-blur-sm">
       <CardContent className="p-4">
-        <p className="text-[10px] text-muted-foreground uppercase tracking-widest">{label}</p>
+        {hint ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="cursor-help inline-flex items-center gap-1">
+                {labelEl}
+                <span className="text-muted-foreground/40 text-[9px]">ⓘ</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-[200px] text-xs">
+              {hint}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          labelEl
+        )}
         <p className={`text-xl font-bold mt-1 tabular-nums ${color || 'text-card-foreground'}`}>{value}</p>
       </CardContent>
     </Card>

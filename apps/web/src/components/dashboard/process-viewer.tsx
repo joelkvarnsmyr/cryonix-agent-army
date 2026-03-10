@@ -286,7 +286,7 @@ export function ProcessViewer() {
                 {events.length} events
               </span>
             </div>
-            <button onClick={refresh} className="text-muted-foreground hover:text-foreground transition-colors">
+            <button onClick={refresh} className="text-muted-foreground hover:text-foreground transition-colors" aria-label="Refresh process status">
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>

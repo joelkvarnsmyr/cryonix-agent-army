@@ -74,6 +74,7 @@ export function PortfolioSummary() {
             onClick={refresh}
             className="p-1 hover:bg-muted rounded"
             title="Refresh"
+            aria-label="Refresh portfolio summary"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>

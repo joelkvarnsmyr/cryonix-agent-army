@@ -23,7 +23,7 @@ export function HealthGrid() {
             <Activity className="h-4 w-4 text-primary/70" />
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">System Health</span>
           </div>
-          <button onClick={refresh} className="text-muted-foreground hover:text-foreground transition-colors">
+          <button onClick={refresh} className="text-muted-foreground hover:text-foreground transition-colors" aria-label="Refresh health status">
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>

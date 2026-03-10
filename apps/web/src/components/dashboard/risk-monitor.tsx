@@ -227,7 +227,7 @@ export function RiskMonitor({
               <CardDescription>Real-time portfolio risk tracking</CardDescription>
             </div>
           </div>
-          <Button variant="outline" size="icon" onClick={handleRefresh}>
+          <Button variant="outline" size="icon" onClick={handleRefresh} aria-label="Refresh risk monitor">
             <RefreshCw className="h-4 w-4" />
           </Button>
         </div>

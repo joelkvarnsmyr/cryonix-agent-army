@@ -13,6 +13,7 @@ export { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/select';
 export { Separator } from './components/separator';
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/tooltip';
+export { Command, CommandDialog, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem, CommandShortcut, CommandSeparator } from './components/command';
 export { ScrollArea, ScrollBar } from './components/scroll-area';
 export { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './components/table';
 export { useToast, toast } from './components/use-toast';

@@ -204,7 +204,7 @@ export function PositionManager({
             <div className={`text-sm font-semibold ${totalPnL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
               Total: {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
             </div>
-            <Button variant="outline" size="icon" onClick={handleRefresh}>
+            <Button variant="outline" size="icon" onClick={handleRefresh} aria-label="Refresh positions">
               <RefreshCw className="h-4 w-4" />
             </Button>
           </div>

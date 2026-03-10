@@ -56,7 +56,7 @@ export function CostsCard() {
             <DollarSign className="h-4 w-4 text-violet-400/70" />
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">AI Costs</span>
           </div>
-          <button onClick={refresh} className="text-muted-foreground hover:text-foreground transition-colors">
+          <button onClick={refresh} className="text-muted-foreground hover:text-foreground transition-colors" aria-label="Refresh costs">
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>

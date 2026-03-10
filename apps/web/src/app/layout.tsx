@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Outfit, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
-import { Toaster } from "@cryonix/ui";
+import { CommandPalette } from "@/components/command-palette";
+import { Toaster, TooltipProvider } from "@cryonix/ui";
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -33,7 +34,10 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <TooltipProvider delayDuration={300}>
+            {children}
+            <CommandPalette />
+          </TooltipProvider>
           <Toaster />
         </ThemeProvider>
       </body>

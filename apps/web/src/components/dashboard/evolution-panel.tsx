@@ -85,7 +85,7 @@ export function EvolutionPanel() {
                 </span>
               )}
             </div>
-            <button onClick={fetchData} className="text-muted-foreground hover:text-foreground transition-colors">
+            <button onClick={fetchData} className="text-muted-foreground hover:text-foreground transition-colors" aria-label="Refresh evolution data">
               <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>

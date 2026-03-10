@@ -3,10 +3,11 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Activity, BarChart3, LineChart, Settings, Wifi, WifiOff } from 'lucide-react';
+import { Activity, BarChart3, LineChart, Settings, Wifi, WifiOff, FlaskConical } from 'lucide-react';
 import { Button } from '@cryonix/ui';
 import { useSystemHealth } from '@/hooks/useSystemHealth';
 import { useWebSocket } from '@/hooks/use-websocket';
+import { NotificationCenter } from '@/components/notification-center';
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -55,6 +56,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const navItems = [
     { href: '/', label: 'Terminal', icon: Activity },
     { href: '/legacy', label: 'Legacy', icon: BarChart3 },
+    { href: '/analytics', label: 'Analytics', icon: LineChart },
+    { href: '/backtest', label: 'Backtest', icon: FlaskConical },
   ];
 
   const services = health?.services || [];
@@ -94,7 +97,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <div className="flex items-center gap-0.5 bg-muted/30 rounded-lg p-0.5">
               {navItems.map((item) => {
                 const Icon = item.icon;
-                const isActive = pathname === item.href;
+                const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
                 return (
                   <Link key={item.href} href={item.href}>
                     <button
@@ -135,6 +138,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             {/* Separator */}
             <div className="h-4 w-px bg-border/20" />
 
+            {/* Cmd+K hint */}
+            <button
+              onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
+              className="hidden md:flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/20 hover:bg-muted/40 transition-colors"
+              aria-label="Open command palette"
+            >
+              <span className="text-[9px] font-mono text-muted-foreground/60">⌘K</span>
+            </button>
+
             {/* WS Status */}
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/20">
               {isConnected
@@ -149,8 +161,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             {/* Clock */}
             <LiveClock />
 
+            {/* Notifications */}
+            <NotificationCenter />
+
             {/* Settings */}
-            <Button variant="ghost" size="icon" className="h-7 w-7">
+            <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Settings">
               <Settings className="h-3.5 w-3.5" />
             </Button>
           </div>
