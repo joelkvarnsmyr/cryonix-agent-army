@@ -8,6 +8,7 @@ export class WatchlistCurator {
         private readonly alpaca: any | null, // raw Alpaca SDK instance (same type as AktienixAgent.alpacaInstance)
         private readonly xaiApiKey: string | null,
         private readonly fallbackSymbols: string[],
+        private readonly logger?: { info: (msg: string) => void },
     ) {}
 
     needsRefresh(): boolean {
@@ -77,19 +78,31 @@ US stocks only. Max 20 entries.`,
     }
 
     async curate(activeMacroSignals: MacroSignal[]): Promise<string[]> {
+        // TODO: UTC date — for NYSE accuracy this should use America/New_York timezone
         const today = new Date().toISOString().slice(0, 10);
         const combined = new Set<string>(this.fallbackSymbols);
 
         // Source 1: Alpaca volume movers
-        for (const t of await this.getAlpacaMovers()) combined.add(t);
+        const alpacaMovers = await this.getAlpacaMovers();
+        for (const t of alpacaMovers) combined.add(t);
+        const alpacaCount = alpacaMovers.length;
 
         // Source 2: Grok thematic picks
-        for (const t of await this.getGrokPicks()) combined.add(t);
+        const grokPicks = await this.getGrokPicks();
+        for (const t of grokPicks) combined.add(t);
+        const grokCount = grokPicks.length;
 
         // Source 3: Macro signal tickers
-        for (const t of this.getMacroTickers(activeMacroSignals)) combined.add(t);
+        const macroTickers = this.getMacroTickers(activeMacroSignals);
+        for (const t of macroTickers) combined.add(t);
+        const macroCount = macroTickers.length;
+
+        const result = Array.from(combined).slice(0, 60);
+        this.logger?.info(
+            `WatchlistCurator: ${combined.size} total symbols (fallback: ${this.fallbackSymbols.length}, movers: ${alpacaCount}, grok: ${grokCount}, macro: ${macroCount}) → capped at ${result.length}`
+        );
 
         this.lastRefreshDate = today;
-        return Array.from(combined).slice(0, 60);
+        return result;
     }
 }

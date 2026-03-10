@@ -123,6 +123,23 @@ describe('WatchlistCurator — Alpaca movers', () => {
     });
 });
 
+describe('WatchlistCurator — cap and dedup', () => {
+    it('never returns more than 60 symbols', async () => {
+        // Provide 80 fallback symbols
+        const bigList = Array.from({ length: 80 }, (_, i) => `SYM${i}`);
+        const curator = new WatchlistCurator(null, null, bigList);
+        const symbols = await curator.curate([]);
+        expect(symbols.length).toBeLessThanOrEqual(60);
+    });
+
+    it('always includes fallback symbols at the start (priority seed)', async () => {
+        const curator = new WatchlistCurator(null, null, ['SPY', 'QQQ']);
+        const symbols = await curator.curate([]);
+        expect(symbols).toContain('SPY');
+        expect(symbols).toContain('QQQ');
+    });
+});
+
 describe('WatchlistCurator — Grok picks', () => {
     it('includes Grok-discovered symbols when XAI key is provided', async () => {
         const mockGrokResponse = JSON.stringify([
