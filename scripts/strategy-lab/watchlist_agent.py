@@ -324,5 +324,364 @@ def get_valid_binance_symbols() -> set:
         return set()
 
 
+# ── Grok ─────────────────────────────────────────────────────────────────────
+
+def build_grok_prompt(
+    current_symbols: list,
+    symbol_stats: dict,
+    candidates: list,
+    wl_cfg: dict,
+    fear_greed: int,
+    regime: str,
+) -> str:
+    max_sym  = wl_cfg['max_symbols']
+    hard_cap = wl_cfg['max_symbols_hard_cap']
+
+    stat_rows = []
+    for sym in current_symbols:
+        s = symbol_stats.get(sym, {})
+        eligible = 'yes' if s.get('removal_eligible') else 'no'
+        stat_rows.append(
+            f"  {sym:<20} | trades={s.get('trades',0):>3} "
+            f"| wr={s.get('win_rate',0)*100:>5.1f}% "
+            f"| pnl=${s.get('total_pnl_usd',0):>+7.2f} "
+            f"| eligible={eligible}"
+        )
+
+    cand_rows = []
+    for c in candidates:
+        cand_rows.append(
+            f"  {c['symbol']:<20} | rank={c['rank']:>4} "
+            f"| vol=${c['volume_24h']/1e6:>6.1f}M "
+            f"| fdv_mc={c['fdv_mc_ratio']:.1f} "
+            f"| 7d={c['percent_change_7d']:>+6.1f}% "
+            f"| score={c['score']:.0f}"
+        )
+
+    return f"""WATCHLIST AGENT
+Market: regime={regime}, fear_greed={fear_greed}
+
+CURRENT SYMBOLS ({len(current_symbols)}):
+{chr(10).join(stat_rows)}
+
+CANDIDATES (not on watchlist, ranked by score):
+{chr(10).join(cand_rows) if cand_rows else '  (no candidates found)'}
+
+RULES:
+- Target {max_sym} symbols, hard cap {hard_cap}
+- Max 5 changes this run (adds + removes combined)
+- Only remove symbols where eligible=yes AND (win_rate < 40% OR pnl < -2 USD)
+- Prefer candidates: high volume, low FDV/MC ratio, top-100 CMC rank, score >= 30
+- Do not add a symbol if its score < 30
+
+Respond with JSON only (no markdown, no explanation outside JSON):
+{{"add": ["X/USDC"], "remove": ["Y/USDC"], "reasoning": "one paragraph explaining decisions"}}"""
+
+
+def call_grok(prompt: str) -> dict:
+    """Call Grok with 3 retries (30s backoff). Returns parsed JSON or raises RuntimeError."""
+    if not XAI_API_KEY:
+        raise RuntimeError('XAI_API_KEY not set')
+
+    for attempt in range(1, 4):
+        try:
+            resp = httpx.post(
+                GROK_API_URL,
+                headers={'Authorization': f'Bearer {XAI_API_KEY}', 'Content-Type': 'application/json'},
+                json={
+                    'model': GROK_MODEL,
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'temperature': 0.2,
+                    'max_tokens': 1000,
+                },
+                timeout=60,
+            )
+            resp.raise_for_status()
+            content = resp.json()['choices'][0]['message']['content'].strip()
+
+            # Strip markdown code fences if present
+            if content.startswith('```'):
+                content = content.split('```')[1]
+                if content.startswith('json'):
+                    content = content[4:]
+
+            parsed = json.loads(content)
+            if not isinstance(parsed.get('add'), list) or not isinstance(parsed.get('remove'), list):
+                raise ValueError('Missing add/remove arrays in Grok response')
+            return parsed
+
+        except Exception as e:
+            print(f'[WATCHLIST] Grok attempt {attempt}/3 failed: {e}')
+            if attempt < 3:
+                time.sleep(30 * attempt)
+
+    raise RuntimeError('Grok call failed after 3 attempts')
+
+
+# ── Apply changes ─────────────────────────────────────────────────────────────
+
+def write_toml_whitelist(new_symbols: list) -> None:
+    """Write new symbol_whitelist to cryonix.toml using tomlkit (preserves formatting)."""
+    cfg, _ = load_toml()
+    arr = tomlkit.array()
+    arr.multiline(True)
+    for sym in sorted(new_symbols):
+        arr.append(sym)
+    cfg['trading']['symbol_whitelist'] = arr
+    with open(TOML_PATH, 'w') as f:
+        f.write(tomlkit.dumps(cfg))
+
+
+def git_commit(added: list, removed: list) -> None:
+    """Stage cryonix.toml and commit."""
+    subprocess.run(['git', '-C', PROJECT_ROOT, 'add', 'cryonix.toml'], check=True)
+    added_str   = ', '.join(added)   if added   else 'none'
+    removed_str = ', '.join(removed) if removed else 'none'
+    msg = (
+        f'feat(watchlist): rotate symbols [+{len(added)}/-{len(removed)}]\n\n'
+        f'Added: {added_str}\n'
+        f'Removed: {removed_str}\n\n'
+        f'Co-Authored-By: Claude <noreply@anthropic.com>'
+    )
+    subprocess.run(['git', '-C', PROJECT_ROOT, 'commit', '-m', msg], check=True)
+
+
+def restart_engine() -> None:
+    """Restart the engine Docker container."""
+    subprocess.run(
+        ['docker', 'compose', '-f', DOCKER_COMPOSE_FILE, 'restart', 'engine'],
+        cwd=PROJECT_ROOT, check=True,
+    )
+
+
+def log_to_postgres(pg, run_id: str, data: dict) -> None:
+    """Insert a watchlist_changes row."""
+    cur = pg.cursor()
+    cur.execute("""
+        INSERT INTO watchlist_changes
+          (run_id, symbols_before, symbols_after, added, removed,
+           skipped_removals, fear_greed, regime, grok_reasoning, status, error)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (
+        run_id,
+        data['symbols_before'],
+        data['symbols_after'],
+        data.get('added', []) or [],
+        data.get('removed', []) or [],
+        data.get('skipped_removals', []) or [],
+        data.get('fear_greed'),
+        data.get('regime'),
+        data.get('grok_reasoning'),
+        data['status'],
+        data.get('error'),
+    ))
+    pg.commit()
+
+
+def telegram_send(text: str) -> None:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print(f'[TELEGRAM] Skipping (no token): {text[:80]}')
+        return
+    try:
+        httpx.post(
+            f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage',
+            json={'chat_id': TELEGRAM_CHAT_ID, 'text': text[:4096],
+                  'parse_mode': 'HTML', 'disable_web_page_preview': True},
+            timeout=10,
+        )
+    except Exception as e:
+        print(f'[TELEGRAM] Failed: {e}')
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(description='Watchlist Agent')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Compute changes but do not write TOML or restart engine')
+    args = parser.parse_args()
+
+    run_id = f'wl_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")}'
+    print(f'[WATCHLIST] Starting run {run_id} (dry_run={args.dry_run})')
+
+    # Load config
+    cfg, _ = load_toml()
+
+    # Baseline freeze check (same pattern as ai_brain.py)
+    lock_file = os.path.join(PROJECT_ROOT, '.baseline-frozen')
+    if os.path.exists(lock_file) or cfg.get('baseline', {}).get('frozen', False):
+        baseline_id = cfg.get('baseline', {}).get('baseline_id', '?')
+        print(f'[WATCHLIST] FROZEN — baseline {baseline_id} active. Skipping run.')
+        return
+
+    wl_cfg = get_watchlist_config(cfg)
+    current_symbols = list(cfg.get('trading', {}).get('symbol_whitelist', []))
+
+    pg = get_pg()
+    r  = get_redis()
+
+    try:
+        # Check market conditions
+        fear_greed = get_fear_greed(r)
+        regime     = get_market_regime(r)
+        print(f'[WATCHLIST] Fear/Greed={fear_greed}, Regime={regime}')
+
+        if fear_greed < wl_cfg['fear_greed_skip_below'] or fear_greed > wl_cfg['fear_greed_skip_above']:
+            print(f'[WATCHLIST] Market conditions extreme — skipping run')
+            msg = format_telegram_message(
+                status='skipped', added=[], removed=[], skipped=[],
+                symbols_after=current_symbols, fear_greed=fear_greed,
+                regime=regime, reasoning='',
+            )
+            telegram_send(msg)
+            log_to_postgres(pg, run_id, {
+                'status': 'skipped', 'symbols_before': current_symbols,
+                'symbols_after': current_symbols, 'fear_greed': fear_greed,
+                'regime': regime,
+            })
+            return
+
+        # Collect symbol performance data
+        print('[WATCHLIST] Collecting symbol stats...')
+        symbol_stats = {}
+        try:
+            symbol_stats = collect_symbol_stats(pg, current_symbols, wl_cfg)
+        except Exception as e:
+            print(f'[WATCHLIST] WARNING: symbol stats query failed: {e} — proceeding in add-only mode')
+            for sym in current_symbols:
+                symbol_stats[sym] = {
+                    'symbol': sym, 'trades': 0, 'win_rate': 0.0,
+                    'total_pnl_usd': 0.0, 'avg_pnl_pct': 0.0,
+                    'days_on_watchlist': 0, 'removal_eligible': False,
+                }
+
+        # Discover candidates
+        print('[WATCHLIST] Discovering candidates...')
+        candidates = discover_candidates(r, current_symbols, wl_cfg)
+        print(f'[WATCHLIST] Found {len(candidates)} candidates')
+
+        # Get valid Binance symbols (CCXT)
+        print('[WATCHLIST] Fetching valid Binance symbols...')
+        valid_symbols = get_valid_binance_symbols()
+        if not valid_symbols:
+            print('[WATCHLIST] CCXT fallback: using TRACKED_SYMBOLS_USDC as valid set')
+            valid_symbols = set(TRACKED_SYMBOLS_USDC) | set(current_symbols)
+
+        # Build prompt and call Grok
+        prompt = build_grok_prompt(current_symbols, symbol_stats, candidates,
+                                   wl_cfg, fear_greed, regime)
+        print('[WATCHLIST] Calling Grok...')
+        try:
+            grok_result = call_grok(prompt)
+        except RuntimeError as e:
+            err_msg = str(e)
+            print(f'[WATCHLIST] Grok failed: {err_msg}')
+            telegram_send(format_telegram_message(
+                status='failed', added=[], removed=[], skipped=[],
+                symbols_after=current_symbols, fear_greed=fear_greed,
+                regime=regime, reasoning=err_msg,
+                error_step='Grok-anrop (3 försök)',
+            ))
+            log_to_postgres(pg, run_id, {
+                'status': 'failed', 'symbols_before': current_symbols,
+                'symbols_after': current_symbols, 'fear_greed': fear_greed,
+                'regime': regime, 'error': err_msg,
+            })
+            return
+
+        proposed_add    = grok_result.get('add', [])
+        proposed_remove = grok_result.get('remove', [])
+        reasoning       = grok_result.get('reasoning', '')
+        print(f'[WATCHLIST] Grok proposes: +{proposed_add} -{proposed_remove}')
+
+        # Apply guardrails
+        guarded = apply_guardrails(
+            add=proposed_add, remove=proposed_remove,
+            current=current_symbols, symbol_stats=symbol_stats,
+            max_changes=5,
+            hard_cap=wl_cfg['max_symbols_hard_cap'],
+            min_symbols=10,
+            valid_symbols=valid_symbols,
+        )
+        final_add    = guarded['add']
+        final_remove = guarded['remove']
+        skipped      = guarded['skipped_removals']
+
+        if skipped:
+            print(f'[WATCHLIST] Guardrails blocked removal of: {skipped}')
+
+        if not final_add and not final_remove:
+            print('[WATCHLIST] No changes needed')
+            telegram_send(format_telegram_message(
+                status='no_changes', added=[], removed=[], skipped=skipped,
+                symbols_after=current_symbols, fear_greed=fear_greed,
+                regime=regime, reasoning=reasoning,
+            ))
+            log_to_postgres(pg, run_id, {
+                'status': 'no_changes', 'symbols_before': current_symbols,
+                'symbols_after': current_symbols, 'added': [], 'removed': [],
+                'skipped_removals': skipped, 'fear_greed': fear_greed,
+                'regime': regime, 'grok_reasoning': reasoning,
+            })
+            return
+
+        # Compute new symbol list
+        new_symbols = [s for s in current_symbols if s not in final_remove] + final_add
+        print(f'[WATCHLIST] New list ({len(new_symbols)}): {new_symbols}')
+
+        if args.dry_run:
+            print('[WATCHLIST] DRY RUN — no changes written')
+            print(f'  Would add:    {final_add}')
+            print(f'  Would remove: {final_remove}')
+            return
+
+        # Apply: write TOML
+        print('[WATCHLIST] Writing cryonix.toml...')
+        write_toml_whitelist(new_symbols)
+
+        # Apply: git commit
+        print('[WATCHLIST] Committing to git...')
+        git_commit(final_add, final_remove)
+
+        # Apply: restart engine
+        restart_status = 'applied'
+        print('[WATCHLIST] Restarting engine...')
+        try:
+            restart_engine()
+            print('[WATCHLIST] Engine restarted.')
+        except subprocess.CalledProcessError as e:
+            restart_status = 'applied_no_restart'
+            print(f'[WATCHLIST] Engine restart failed: {e}')
+
+        # Log + notify
+        log_to_postgres(pg, run_id, {
+            'status': restart_status,
+            'symbols_before': current_symbols,
+            'symbols_after':  new_symbols,
+            'added':          final_add,
+            'removed':        final_remove,
+            'skipped_removals': skipped,
+            'fear_greed':     fear_greed,
+            'regime':         regime,
+            'grok_reasoning': reasoning,
+        })
+
+        telegram_send(format_telegram_message(
+            status='applied', added=final_add, removed=final_remove, skipped=skipped,
+            symbols_after=new_symbols, fear_greed=fear_greed,
+            regime=regime, reasoning=reasoning,
+            symbol_stats=symbol_stats,
+        ))
+
+        if restart_status == 'applied_no_restart':
+            telegram_send('⚠️ Engine-restart misslyckades — symbolerna är uppdaterade i cryonix.toml men engine kör gamla listan tills nästa omstart.')
+
+    finally:
+        pg.close()
+        r.close()
+
+    print(f'[WATCHLIST] Run {run_id} complete.')
+
+
 if __name__ == '__main__':
-    pass
+    main()
