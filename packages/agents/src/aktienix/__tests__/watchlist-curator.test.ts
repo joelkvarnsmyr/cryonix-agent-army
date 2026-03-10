@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { WatchlistCurator } from '../watchlist-curator';
 
-describe('WatchlistCurator.needsRefresh()', () => {
+describe('WatchlistCurator', () => {
     it('returns true on first call (cold start)', () => {
         const curator = new WatchlistCurator(null, null, []);
         expect(curator.needsRefresh()).toBe(true);
@@ -23,5 +23,11 @@ describe('WatchlistCurator.needsRefresh()', () => {
         vi.setSystemTime(new Date('2026-03-11T10:00:00Z'));
         expect(curator.needsRefresh()).toBe(true);
         vi.useRealTimers();
+    });
+
+    it('returns fallbackSymbols from the stub', async () => {
+        const symbols = ['SPY', 'QQQ'];
+        const curator = new WatchlistCurator(null, null, symbols);
+        await expect(curator.curate([])).resolves.toEqual(symbols);
     });
 });
