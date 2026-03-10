@@ -8,6 +8,7 @@ from src.tanks.market_scout import MarketScoutTank
 from src.tanks.news_scout import NewsScoutTank
 from src.tanks.gainer_scanner import GainerScanner
 from src.tanks.cmc_scout import CMCScout
+from src.tanks.coinglass_scout import CoinglassScout
 from contextlib import asynccontextmanager
 
 # Get Redis URL from environment
@@ -18,6 +19,7 @@ scout_tank = MarketScoutTank()
 news_tank = NewsScoutTank(kv_url=kv_url)
 gainer_scanner = GainerScanner(redis_client=state_manager.redis)
 cmc_scout = CMCScout(redis_client=state_manager.redis)
+coinglass_scout = CoinglassScout(redis_client=state_manager.redis)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,6 +29,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(news_tank.run_loop())
     asyncio.create_task(gainer_scanner.run_loop())
     asyncio.create_task(cmc_scout.run_loop())
+    asyncio.create_task(coinglass_scout.run_loop())
     
     yield
     
