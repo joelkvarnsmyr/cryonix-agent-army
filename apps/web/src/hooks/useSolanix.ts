@@ -30,17 +30,22 @@ export interface SolanaSignal {
 }
 
 export interface SolanaAccountState {
-  usdcBalance: number;
-  solBalance: number;
+  /** USDC available (published as buyingPower by SolanaClient) */
+  buyingPower: number;
+  settledCash: number;
   portfolioValue: number;
+  isPatternDayTrader: boolean;
 }
 
 // ── Status ────────────────────────────────────────────────────────────────────
 
 interface SolanaRiskState {
-  openPositions: number;
-  dailyPnl: number;
-  paperTrading: boolean;
+  canTrade: boolean;
+  dailyPnlDollar: number;
+  weeklyPnlDollar: number;
+  consecutiveLosses: number;
+  tradesToday: number;
+  dayTradesThisWeek: number;
 }
 
 interface SolanixStatus {

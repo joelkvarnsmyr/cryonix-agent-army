@@ -33,11 +33,12 @@ export default function SolanixPage() {
   const { positions }       = useSolanixPositions(15_000);
   const { signals }         = useSolanixSignals(30_000);
 
+  const isLoading       = status === null;
   const agentRunning    = status?.status === 'running';
-  const portfolioValue  = status?.account?.portfolioValue ?? 0;
-  const buyingPower     = status?.account?.usdcBalance    ?? 0;
-  const dailyPnl        = status?.risk?.dailyPnl          ?? 0;
-  const tradesToday     = status?.risk?.openPositions     ?? 0;
+  const portfolioValue  = status?.account?.portfolioValue  ?? 0;
+  const buyingPower     = status?.account?.buyingPower     ?? 0;
+  const dailyPnl        = status?.risk?.dailyPnlDollar     ?? 0;
+  const tradesToday     = status?.risk?.tradesToday        ?? 0;
   const positionsUsed   = positions.length;
   const maxPositions    = 5;
 
@@ -52,9 +53,9 @@ export default function SolanixPage() {
             <span className="text-xs text-muted-foreground/60">Simulated execution — no real funds at risk</span>
           </div>
           <span className="flex items-center gap-1.5 text-xs font-mono">
-            <span className={`w-1.5 h-1.5 rounded-full ${agentRunning ? 'bg-emerald-400 animate-pulse-dot' : 'bg-red-400'}`} />
-            <span className={agentRunning ? 'text-emerald-400' : 'text-red-400'}>
-              {agentRunning ? 'RUNNING' : 'STOPPED'}
+            <span className={`w-1.5 h-1.5 rounded-full ${isLoading ? 'bg-zinc-500' : agentRunning ? 'bg-emerald-400 animate-pulse-dot' : 'bg-red-400'}`} />
+            <span className={isLoading ? 'text-muted-foreground/50' : agentRunning ? 'text-emerald-400' : 'text-red-400'}>
+              {isLoading ? 'CONNECTING…' : agentRunning ? 'RUNNING' : 'STOPPED'}
             </span>
           </span>
         </div>
@@ -80,10 +81,8 @@ export default function SolanixPage() {
               <div className="font-mono text-foreground">{positionsUsed} / {maxPositions}</div>
             </div>
             <div className="rounded-lg bg-white/[0.03] p-2">
-              <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">PAPER MODE</div>
-              <div className={`font-mono text-xs ${status?.risk?.paperTrading ? 'text-amber-400' : 'text-foreground'}`}>
-                {status?.risk?.paperTrading ? 'YES' : 'LIVE'}
-              </div>
+              <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">TRADES TODAY</div>
+              <div className="font-mono text-foreground">{tradesToday}</div>
             </div>
           </div>
         </div>
