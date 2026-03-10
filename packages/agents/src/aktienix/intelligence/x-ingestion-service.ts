@@ -1,21 +1,6 @@
 // packages/agents/src/aktienix/intelligence/x-ingestion-service.ts
 import OpenAI from 'openai';
-
-// Types are defined here until news-ingestion-service.ts is created,
-// at which point this file should import from './news-ingestion-service'.
-export type SourceTrust = 'tier1' | 'tier2' | 'unknown';
-
-export interface RawArticle {
-    url: string;
-    urlHash: string;
-    headline: string;
-    summary: string;
-    source: string;
-    sourceTrust: SourceTrust;
-    domain: string;
-    publishedAt: Date;
-    pipeline: 'rss' | 'x';
-}
+import type { RawArticle, SourceTrust } from './news-ingestion-service';
 
 const TIER1_ACCOUNTS = new Set([
     'WalterBloomberg', 'DeItaone', 'FirstSquawk', 'FinancialJuice',
