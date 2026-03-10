@@ -399,11 +399,11 @@ def call_grok(prompt: str) -> dict:
             resp.raise_for_status()
             content = resp.json()['choices'][0]['message']['content'].strip()
 
-            # Strip markdown code fences if present
+            # Strip markdown code fences if present (ai_brain.py pattern)
             if content.startswith('```'):
-                content = content.split('```')[1]
-                if content.startswith('json'):
-                    content = content[4:]
+                content = content.split('\n', 1)[1]
+                if content.endswith('```'):
+                    content = content[:-3]
 
             parsed = json.loads(content)
             if not isinstance(parsed.get('add'), list) or not isinstance(parsed.get('remove'), list):
