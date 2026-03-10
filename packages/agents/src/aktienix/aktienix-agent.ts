@@ -6,6 +6,7 @@ import { IbkrClient } from './brokers/ibkr/ibkr-client';
 import { AlpacaClient } from './brokers/alpaca/alpaca-client';
 import { StockSignalGenerator } from './signals/stock-signal-generator';
 import { StockNewsScanner, type MacroSignal } from './intelligence/news-scanner';
+import { MacroIntelligence } from './intelligence/macro-intelligence';
 import { loadAktienixConfig } from './config';
 import { MarketHours } from './market-hours';
 import { PositionSizer } from './position-sizer';
@@ -30,6 +31,7 @@ export class AktienixAgent extends BaseAgent {
     private watchlistCurator: WatchlistCurator | null = null;
     private loggerAdapter: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void; debug: (msg: string) => void } | null = null;
     private newsScanner: StockNewsScanner | null = null;
+    private macroIntelligence: MacroIntelligence | null = null;
     private activeMacroSignals: MacroSignal[] = [];
     private lastNewsScanTime = 0;
     private lastSignalScanTime = 0;
@@ -98,12 +100,11 @@ export class AktienixAgent extends BaseAgent {
         }
 
         if (this.tradingConfig.intelligence?.enabled) {
-            this.newsScanner = new StockNewsScanner();
-            if (this.newsScanner.isInitialized()) {
-                this.log('info', 'StockNewsScanner connected to xAI.');
-            } else {
-                this.log('warn', 'StockNewsScanner failed to initialize (check XAI_API_KEY).');
-            }
+            this.macroIntelligence = new MacroIntelligence(
+                process.env.KV_URL ?? 'redis://localhost:6379',
+                process.env.XAI_API_KEY ?? '',
+            );
+            this.log('info', 'MacroIntelligence initialized.');
         }
 
         const kvUrl = process.env.KV_URL;
@@ -227,22 +228,28 @@ export class AktienixAgent extends BaseAgent {
                 const scanIntervalMs = this.tradingConfig.intelligence?.news_scan_interval_ms
                     ?? config.intelligence.news_scan_interval_ms;
 
-                if (this.newsScanner && this.newsScanner.isInitialized() && (nowTs - this.lastNewsScanTime >= scanIntervalMs)) {
-                    this.log('info', 'Running macro intelligence scan via Grok...');
+                if (this.macroIntelligence && (nowTs - this.lastNewsScanTime >= scanIntervalMs)) {
+                    this.log('info', 'Running MacroIntelligence cycle...');
                     try {
-                        this.activeMacroSignals = await this.newsScanner.scanMacroEvents();
+                        await this.macroIntelligence.runIntelligenceCycle();
                         this.lastNewsScanTime = nowTs;
+                    } catch (e: any) {
+                        this.log('error', `MacroIntelligence cycle failed: ${e.message}`);
+                    }
+                }
 
+                // 7a. Always refresh live macro signals from Redis (fast path, no Grok calls)
+                if (this.macroIntelligence) {
+                    try {
+                        this.activeMacroSignals = await this.macroIntelligence.getLiveSignals();
                         if (this.activeMacroSignals.length > 0) {
-                            this.log('info', `Detected ${this.activeMacroSignals.length} active macro events:`);
+                            this.log('info', `Active macro signals: ${this.activeMacroSignals.length}`);
                             for (const m of this.activeMacroSignals) {
                                 this.log('info', `  [${m.impact.toUpperCase()}] ${m.event} → tickers: ${m.tickers.join(', ')}`);
                             }
-                        } else {
-                            this.log('info', 'No major actionable macro events detected.');
                         }
                     } catch (e: any) {
-                        this.log('error', `Macro scan failed: ${e.message}`);
+                        this.log('error', `getLiveSignals failed: ${e.message}`);
                     }
                 }
 
