@@ -1,0 +1,312 @@
+# ============================================================================
+#  AKTIENIX CONFIGURATION — Optimized for the US stock market
+# ============================================================================
+#
+#  This file configures the Aktienix stock trading agent.
+#  Secrets (API keys) stay in .env — NEVER put them here.
+#
+#  KEY DIFFERENCES FROM CRYPTO (cryonix.toml):
+#    - Market is open 09:30–16:00 ET only (no 24/7 trading)
+#    - T+1 settlement locks capital for 1 business day
+#    - PDT rule blocks >3 day-trades/week for accounts < $25k
+#    - Lower volatility → tighter indicator thresholds
+#    - Gap risk overnight → prefer closing positions before 16:00
+#    - Swing trading (days-weeks) is the natural strategy for micro-accounts
+#
+# ============================================================================
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  BROKER                                                                ║
+# ║  Change when: switching between brokers or paper/live mode.            ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[broker]
+
+# "alpaca" — Commission-free, fractional shares. Recommended.
+# "ibkr"   — Interactive Brokers. ISK support for Swedish tax optimization.
+# "mock"   — No real orders. Local testing only.
+provider = "alpaca"
+
+# ALWAYS keep true until strategy is proven profitable over 30+ trades.
+paper_trading = true
+
+# "cash" — No margin. Subject to T+1 settlement. MANDATORY for < $25k.
+# "margin" — Unsettled funds available. PDT rules apply.
+account_type = "cash"
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  MARKET HOURS & SCHEDULING                                             ║
+# ║  Stock markets are NOT 24/7 — this section controls when to trade.     ║
+# ║  All times are Eastern Time (ET). Alpaca handles DST automatically.    ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[market_hours]
+
+# Only place orders during regular trading hours.
+# Pre-market (04:00–09:30) and after-hours (16:00–20:00) have poor
+# liquidity, wide spreads, and are unsuitable for small accounts.
+regular_hours_only = true
+
+# Avoid the opening volatility rush. First 15 minutes after open
+# often see exaggerated moves that reverse. Wait for price discovery.
+# When to change: set to 0 if you want to trade the open.
+skip_first_minutes = 15
+
+# Close positions before end of day to avoid overnight gap risk.
+# Stock prices can gap 2-5% overnight on news/earnings.
+# When to change: set to false for a multi-day swing strategy.
+close_before_eod = false
+
+# Minutes before market close to stop opening NEW positions.
+# 30 min = stop new orders at 15:30 ET. Existing positions are kept.
+# When to change: lower to 15 if you trust late-day setups.
+no_new_orders_before_close_min = 30
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  WATCHLIST                                                             ║
+# ║  Symbols scanned each cycle. Keep to liquid, large-cap stocks.         ║
+# ║  On a micro-account, liquidity matters more than opportunity count.    ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[watchlist]
+
+symbols = [
+    # Tech — Highest liquidity, tightest spreads, fractional-friendly
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+
+    # Broad Market ETFs — trade "the market" with minimal stock-picking risk
+    "SPY",   # S&P 500
+    "QQQ",   # NASDAQ 100
+
+    # Blue Chips — diversify sectors
+    "JPM",   # Financials
+    "JNJ",   # Healthcare
+]
+
+# "1Day"  — Daily bars. Default for swing trading. One bar = one trading day.
+# "1Hour" — Hourly bars. More signals, noisier. Only during market hours.
+# "15Min" — Intraday. NOT recommended with T+1 settlement on cash accounts.
+timeframe = "1Day"
+
+# 100 daily bars ≈ 5 months of trading data. Sufficient for SMA 50,
+# Bollinger 20, and RSI 14 to all have stable values.
+bars_count = 220
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  CAPITAL & POSITION SIZING                                             ║
+# ║  Stock-market-specific sizing. Unlike crypto, fractional shares allow  ║
+# ║  precise dollar-based sizing even for high-priced stocks ($500+ NVDA). ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[capital]
+
+# Max value for a single position in USD.
+# Rule of thumb: never risk more than 5-10% of portfolio per position.
+# $5,000 on a $100k paper account = 5%.
+max_position_size_usd = 5000
+
+# Maximum % of settled cash to deploy per order.
+# 0.95 = 95%. The 5% buffer prevents "insufficient funds" edge cases.
+max_capital_per_trade_pct = 0.95
+
+# Minimum order value. Alpaca supports fractional shares down to $1.
+# $5 is a safer floor to avoid micro-dust positions.
+min_order_value = 5.00
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  POSITION LIMITS & T+1 SETTLEMENT                                     ║
+# ║  Critical for cash accounts. Unlike crypto, sold capital is LOCKED     ║
+# ║  for 1 business day. This limits daily trade frequency naturally.      ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[limits]
+
+# Total simultaneous open positions. With T+1 settlement locking funds,
+# having 3-5 positions spread across sectors is optimal.
+# Increase only as account grows above $25k (margin available).
+max_open_positions = 5
+
+# Maximum trades per day. On a cash account with T+1, you realistically
+# can only cycle 2-3 positions per day before running out of settled cash.
+# This acts as a safety net against overtrading.
+max_trades_per_day = 5
+
+# Maximum day-trades per rolling 5-day window. PDT rule: 3 or fewer.
+# A "day trade" = opening AND closing the same position in one day.
+# Set to 2 (one below the regulatory limit) for safety margin.
+# If account_type = "margin" AND equity > $25k, set to 999 (unlimited).
+max_day_trades_per_5d = 2
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  SIGNAL GENERATION                                                     ║
+# ║  Multi-factor model tuned for stocks. Stock indicators behave          ║
+# ║  differently than crypto: lower volatility, mean-reverting blue chips, ║
+# ║  and earnings-driven moves require adjusted thresholds.                ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[signals]
+
+# Minimum combined score to act. Stock signals are generally weaker
+# than crypto (lower volatility = less extreme indicator readings).
+# 0.35 is appropriate — signals rarely exceed 0.60 on daily bars.
+min_signal_score = 0.35
+
+# --- Factor Weights ---
+# Stocks are more momentum-driven and mean-reverting than crypto.
+# RSI and MACD carry more weight; volume is less reliable on ETFs.
+weight_rsi = 0.25
+weight_macd = 0.25
+weight_bollinger = 0.20
+weight_trend = 0.20
+weight_volume = 0.10
+
+# --- RSI (Relative Strength Index) ---
+# Stock RSI ranges are tighter than crypto. Blue chips rarely hit RSI 20.
+# Oversold at 30 / Overbought at 70 is the equity market standard.
+# "Approaching" zones give partial credit for early entries.
+rsi_period = 14
+rsi_oversold = 30
+rsi_approaching_oversold = 40
+rsi_overbought = 70
+rsi_approaching_overbought = 60
+
+# --- Bollinger Bands ---
+# Stocks have lower baseline volatility. Band touches are less frequent
+# but more meaningful than in crypto.
+bollinger_period = 20
+bollinger_std = 2.0
+bollinger_edge_threshold = 0.10
+
+# --- MACD ---
+# Standard 12/26/9 is universally used across equity markets.
+# No reason to deviate unless backtesting shows improvement.
+macd_fast = 12
+macd_slow = 26
+macd_signal_period = 9
+
+# --- Trend Filter ---
+# SMA 20 vs SMA 50 cross determines trend.
+# Counter-trend penalty: if signal disagrees with the trend,
+# multiply score by this value. 0.50 = halved.
+# When to change: lower to 0.3 if you strongly trust trend alignment.
+counter_trend_penalty = 0.50
+
+# --- Volume ---
+# Stock volume is more predictable (market hours only).
+# Confirmation on high volume adds 10% to the score.
+# Note: ETFs (SPY, QQQ) always have high volume, so this factor
+# is most useful for individual stocks.
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  RISK MANAGEMENT                                                       ║
+# ║  Tuned for equity markets. Stocks typically move 1-3% per day,         ║
+# ║  compared to 5-15% for crypto. Risk parameters are tighter.           ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[risk]
+
+# Minimum confidence to execute. Stock signals are subtler than crypto,
+# so 0.60 is appropriate. Crypto uses 0.65+ due to higher noise.
+min_confidence = 0.60
+
+# T+1 safety: never trade with less than $1 settled cash.
+# In a cash account, unsettled funds from yesterday's sale CANNOT
+# be used today without risking a Good Faith Violation (GFV).
+min_settled_cash = 1.00
+
+# Daily loss circuit breaker. Pause trading if today's P&L drops
+# below -(total_capital * this value).
+# 0.02 = 2%. Stocks move less than crypto — a 2% loss is significant.
+# Crypto uses 5% for the same purpose.
+max_daily_loss_pct = 0.02
+
+# Weekly loss circuit breaker.
+# 0.05 = 5% weekly. Tighter than crypto's 10%.
+max_weekly_loss_pct = 0.05
+
+# Consecutive losses before pausing. After N losses in a row,
+# pause for 1 trading day (cooling period).
+max_consecutive_losses = 3
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  EXIT STRATEGY                                                         ║
+# ║  Take-profit, stop-loss, and stagnation rules for stock positions.     ║
+# ║  Stocks trend more persistently than crypto — use wider trails.        ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[exits]
+
+# Fixed take-profit percentage. Sell when unrealized P/L reaches this.
+# 5.0 = +5%. This is the swing trading target from the Aktienix docs.
+# Crypto uses 8-12% because of higher baseline moves.
+take_profit_pct = 5.0
+
+# Fixed stop-loss percentage. Cut losses at this level.
+# 3.0 = -3%. Risk:Reward = 5.0 / 3.0 = 1.67 R:R (healthy).
+stop_loss_pct = 3.0
+
+# Trailing stop: follows price this % below the high watermark.
+# 4.0 = 4%. Wider than crypto's 3% to allow for stock pullbacks.
+# Blue chips like AAPL can pull back 2-3% intraday during normal trading.
+trailing_stop_pct = 4.0
+
+# Activate trailing stop only after this % profit.
+# 2.0 = 2%. Until then, only the fixed stop-loss is active.
+trailing_activation_pct = 2.0
+
+# Stagnation exit: sell if position barely moved after N trading days.
+# 10 trading days = 2 calendar weeks.
+# Capital tied up in a stagnant position can't be used elsewhere.
+stagnation_timeout_days = 10
+stagnation_min_pnl_pct = 0.5
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  TIMING & POLLING                                                      ║
+# ║  Stocks don't need 30-second polling. Daily bars update once/day.      ║
+# ║  The loop still refreshes account state for portfolio monitoring.      ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[timing]
+
+# Main loop interval in milliseconds.
+# 60000 = 1 minute. Fast enough for intraday monitoring.
+# For a pure daily-bar swing strategy, 300000 (5 min) is sufficient.
+poll_interval_ms = 60_000
+
+# How often to fully re-scan the watchlist for new signals.
+# Scanning 11 symbols × 100 bars each takes 2-3 seconds on Alpaca.
+# 900000 = 15 minutes. Daily bars only change once, so frequent
+# rescans are unnecessary — this just catches any late-day changes.
+signal_scan_interval_ms = 900_000
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  GEOPOLITICAL INTELLIGENCE                                             ║
+# ║  Grok-powered X (Twitter) search for breaking macro events.            ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[intelligence]
+
+# Enable the Grok news scanner. Requires XAI_API_KEY in .env.
+enabled = true
+
+# How often to query Grok for breaking news.
+# 900000 = 15 minutes. Avoids hitting rate limits / racking up API costs.
+news_scan_interval_ms = 900_000
+
+# Bonus added to a TA signal's confidence if it aligns with a bullish macro event.
+# 0.15 = +15%. Can push a borderline signal over the min_confidence threshold.
+macro_confidence_boost = 0.15
+
+# If a strong BEARISH macro event is detected for a sector, block ALL new BUY
+# orders for that sector, regardless of how good the TA looks.
+macro_bearish_block = true
