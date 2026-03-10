@@ -87,14 +87,12 @@ export class ExitMonitor {
             }
 
             if (ps.trailingActive) {
-                // Trailing stop fires when the position has given back enough of its
-                // gains. We measure the total round-trip drop: from high water mark
-                // down to current price, as a % of entry. When the position has gone
-                // below entry (pnlPct < 0) the round-trip drop always exceeds the
-                // activation gain, so we additionally trigger when price falls below
-                // entry after trailing has activated.
-                const roundTripDropPct = ((ps.highWaterMark - currentPrice) / ps.entryPrice) * 100;
-                if (roundTripDropPct >= config.trailing_stop_pct || pnlPct < 0) {
+                // Trailing stop fires when price pulls back enough from the peak.
+                // Standard "N% from peak" formula: drop measured as % of high water
+                // mark (not entry price). The || pnlPct < 0 clause is a safety net —
+                // always exit a once-profitable position that has reverted below entry.
+                const pullbackFromHighPct = ((ps.highWaterMark - currentPrice) / ps.highWaterMark) * 100;
+                if (pullbackFromHighPct >= config.trailing_stop_pct || pnlPct < 0) {
                     return { symbol: pos.symbol, reason: 'trailing_stop', pnlPct };
                 }
             }

@@ -88,6 +88,18 @@ describe('ExitMonitor', () => {
         expect(exits[0].reason).toBe('stagnation');
     });
 
+    it('triggers trailing_stop via pullback-from-peak (position still profitable)', () => {
+        monitor.recordEntry('AAPL', 100, new Date());
+        // Price rises to 104.5 (+4.5%) — activates trailing (> 2% activation), stays below TP (< 5%)
+        monitor.check([makePosition('AAPL', 100, 4.5, 104.5)], config);
+        // Price pulls back to 100.20: (104.5 - 100.20) / 104.5 = 4.11% >= trailing_stop_pct 4%
+        // pnlPct = +0.2% so position is still profitable — exercises the pullbackFromHighPct branch
+        const position = makePosition('AAPL', 100, 0.20, 100.20);
+        const exits = monitor.check([position], config);
+        expect(exits).toHaveLength(1);
+        expect(exits[0].reason).toBe('trailing_stop');
+    });
+
     it('clearPosition removes tracking state', () => {
         monitor.recordEntry('AAPL', 100, new Date());
         monitor.clearPosition('AAPL');
