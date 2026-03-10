@@ -114,8 +114,9 @@ notional_safety_buffer = 1.5
 #   reserve     — always kept as free cash (safety buffer)
 # When to change: increase grid_pool in ranging markets, increase reserve
 # if you want more safety margin.
-signal_pool_pct = 0.85
+signal_pool_pct = 0.70
 grid_pool_pct = 0.00
+scalp_pool_pct = 0.15
 reserve_pct = 0.15
 
 # Kelly Criterion position sizing multiplier.
@@ -147,11 +148,12 @@ deep_value_min_confidence = 0.80
 # Total concurrent open positions across all strategies.
 # Smart Dip Hunter: 3 slots for catching parallel dip opportunities.
 # Increase as account grows: 5 for $100+, 8 for $200+.
-max_open_positions = 3
+max_open_positions = 5
 
 # Sub-limits per strategy type. Must sum to <= max_open_positions.
 max_signal_positions = 3
 max_grid_positions = 0
+max_scalp_positions = 2
 
 # Maximum trades executed per calendar day (UTC).
 # Prevents overtrading in choppy markets. Resets at midnight UTC.
@@ -229,6 +231,39 @@ min_risk_reward = 1.5
 # ║  Change when: tuning exit strategy after reviewing closed trades.      ║
 # ║  Affects: win rate, average win/loss size, holding time.               ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  SCALP MODE                                                            ║
+# ║  Ultra-short trades (minutes). Runs parallel to swing strategy.        ║
+# ║  Separate budget pool (scalp_pool_pct) and position slots.             ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[scalp]
+enabled = true
+
+# Take-profit: close when price rises this % from entry
+tp_pct = 1.5
+
+# Stop-loss: close when price drops this % from entry
+sl_pct = 0.8
+
+# Trailing stop: follows price this % below high watermark
+trailing_pct = 0.5
+
+# Activate trailing after this % profit (prevents premature activation)
+trailing_activation_pct = 0.8
+
+# Maximum hold time in minutes — force-close stagnant scalps
+max_hold_minutes = 45
+
+# Minimum confidence for scalp entry (higher than swing — need conviction for tight exits)
+min_confidence = 0.70
+
+# Minimum volume ratio for scalp eligibility (need liquidity for tight fills)
+min_volume_ratio = 1.5
+
+# Patterns eligible for scalp trades
+scalp_patterns = ["VOLUME_SPIKE_UP", "MACD_BULLISH_CROSS", "EMA_CROSS_UP", "MOMENTUM_GAINER"]
 
 [exits]
 

@@ -6,6 +6,7 @@ export const RISK_CONFIG = {
   TOTAL_CAPITAL: 0 as number, // 0 = auto-detect from Binance balance
   SIGNAL_POOL_PCT: 0.65,
   GRID_POOL_PCT: 0.25,
+  SCALP_POOL_PCT: 0,
   RESERVE_PCT: 0.10,
 
   // Position limits
@@ -13,6 +14,7 @@ export const RISK_CONFIG = {
   MAX_OPEN_POSITIONS: 3,
   MAX_SIGNAL_POSITIONS: 2,
   MAX_GRID_POSITIONS: 1,
+  MAX_SCALP_POSITIONS: 2,
   MIN_ORDER_VALUE: 7.5,
 
   // Risk limits

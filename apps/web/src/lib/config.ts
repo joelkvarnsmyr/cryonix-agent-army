@@ -19,13 +19,13 @@ export interface CryonixConfig {
   trading: { mode: string; spot_only: boolean; margin_type: string; default_leverage: number; symbol_whitelist?: string[] };
   capital: {
     max_position_size_pct: number; min_order_value: number;
-    signal_pool_pct: number; grid_pool_pct: number; reserve_pct: number;
+    signal_pool_pct: number; grid_pool_pct: number; reserve_pct: number; scalp_pool_pct: number;
     kelly_fraction_multiplier: number; deep_value_max_pct: number; deep_value_min_confidence: number;
     notional_safety_buffer: number;
   };
   limits: {
     max_open_positions: number; max_signal_positions: number;
-    max_grid_positions: number; max_trades_per_day: number; max_pending_queue: number;
+    max_grid_positions: number; max_scalp_positions: number; max_trades_per_day: number; max_pending_queue: number;
   };
   risk: {
     max_daily_loss_pct: number; max_weekly_loss_pct: number;
@@ -68,6 +68,7 @@ export interface CryonixConfig {
     trending_signal_pct: number; trending_grid_pct: number; trending_reserve_pct: number;
   };
   rotation: { enabled: boolean; min_score_advantage: number; min_hold_minutes: number };
+  scalp: { enabled: boolean; tp_pct: number; sl_pct: number; trailing_pct: number; trailing_activation_pct: number; max_hold_minutes: number; min_confidence: number; min_volume_ratio: number; scalp_patterns: string[] };
   boosting: {
     gainer_min_change_pct: number; gainer_confidence_boost: number;
     telegram_window_minutes: number; telegram_boost_enabled: boolean;
@@ -164,10 +165,12 @@ export function loadConfig(): RiskConfig {
     SIGNAL_POOL_PCT: toml.capital.signal_pool_pct,
     GRID_POOL_PCT: toml.capital.grid_pool_pct,
     RESERVE_PCT: toml.capital.reserve_pct,
+    SCALP_POOL_PCT: toml.capital.scalp_pool_pct ?? 0,
     MAX_POSITION_SIZE_PCT: toml.capital.max_position_size_pct,
     MAX_OPEN_POSITIONS: toml.limits.max_open_positions,
     MAX_SIGNAL_POSITIONS: toml.limits.max_signal_positions,
     MAX_GRID_POSITIONS: toml.limits.max_grid_positions,
+    MAX_SCALP_POSITIONS: toml.limits.max_scalp_positions ?? 2,
     MIN_ORDER_VALUE: toml.capital.min_order_value,
     MIN_CONFIDENCE: toml.risk.min_confidence,
     MAX_DAILY_LOSS_PCT: toml.risk.max_daily_loss_pct,

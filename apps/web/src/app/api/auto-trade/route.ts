@@ -172,6 +172,7 @@ interface OpenPosition {
   pattern: string;
   confidence: number;
   isGridPosition?: boolean; // Track whether position came from grid strategy
+  isScalpPosition?: boolean; // Track whether position is a scalp trade
   pnlPct?: number;         // Live P&L % (updated every monitoring cycle)
   currentPrice?: number;   // Last known price (updated every monitoring cycle)
   entryFee?: number;       // Fee paid on entry order (for total fee tracking)
@@ -185,11 +186,14 @@ interface CapitalBudget {
   totalCapital: number;
   signalBudget: number;      // Max $ for signal trades
   gridBudget: number;        // Max $ for grid trades
+  scalpBudget: number;       // Max $ for scalp trades
   reserve: number;           // Always kept free
   signalUsed: number;        // Currently allocated to signal positions
   gridUsed: number;          // Currently allocated to grid positions
+  scalpUsed: number;         // Currently allocated to scalp positions
   signalRemaining: number;
   gridRemaining: number;
+  scalpRemaining: number;
   regime: string;            // Current market regime
 }
 
@@ -208,6 +212,7 @@ async function getCapitalBudget(): Promise<CapitalBudget> {
   let signalPct = CONFIG.SIGNAL_POOL_PCT;
   let gridPct = CONFIG.GRID_POOL_PCT;
   let reservePct = CONFIG.RESERVE_PCT;
+  let scalpPct = CONFIG.SCALP_POOL_PCT ?? 0;
 
   // Regime-based adjustments
   if (regime === 'volatile') {
@@ -226,15 +231,19 @@ async function getCapitalBudget(): Promise<CapitalBudget> {
 
   const signalBudget = capital * signalPct;
   const gridBudget = capital * gridPct;
+  const scalpBudget = capital * scalpPct;
   const reserve = capital * reservePct;
 
   // Calculate current usage
   let signalUsed = 0;
   let gridUsed = 0;
+  let scalpUsed = 0;
   for (const pos of positions) {
     const posValue = pos.entryPrice * pos.quantity;
     if (pos.isGridPosition || pos.pattern === 'GRID_BUY') {
       gridUsed += posValue;
+    } else if (pos.isScalpPosition) {
+      scalpUsed += posValue;
     } else {
       signalUsed += posValue;
     }
@@ -249,6 +258,9 @@ async function getCapitalBudget(): Promise<CapitalBudget> {
     gridUsed,
     signalRemaining: Math.max(0, signalBudget - signalUsed),
     gridRemaining: Math.max(0, gridBudget - gridUsed),
+    scalpBudget,
+    scalpUsed,
+    scalpRemaining: Math.max(0, scalpBudget - scalpUsed),
     regime,
   };
 }
@@ -430,6 +442,30 @@ async function removePosition(symbol: string): Promise<OpenPosition | null> {
   return removed;
 }
 
+
+
+// ============================================================================
+// SCALP MODE — Detect scalp-eligible signals and set tight exit params
+// ============================================================================
+function isScalpEligible(signal: Signal): boolean {
+  if (!TOML?.scalp?.enabled) return false;
+  if ((signal as any).is_scalp) return true; // Explicitly tagged by signal hunter
+  const scalpPatterns = TOML.scalp.scalp_patterns ?? ['VOLUME_SPIKE_UP', 'MACD_BULLISH_CROSS', 'EMA_CROSS_UP', 'MOMENTUM_GAINER'];
+  const hasScalpPattern = signal.patterns?.some(p => scalpPatterns.includes(p));
+  const hasVolume = (signal.indicators?.volume_ratio ?? 0) >= (TOML.scalp.min_volume_ratio ?? 1.5);
+  const hasConfidence = signal.confidence >= (TOML.scalp.min_confidence ?? 0.70);
+  return !!(hasScalpPattern && hasVolume && hasConfidence);
+}
+
+function getScalpExits(entryPrice: number): { stopLoss: number; takeProfit: number; trailingStop: number } {
+  const slPct = TOML?.scalp?.sl_pct ?? 0.8;
+  const tpPct = TOML?.scalp?.tp_pct ?? 1.5;
+  return {
+    stopLoss: entryPrice * (1 - slPct / 100),
+    takeProfit: entryPrice * (1 + tpPct / 100),
+    trailingStop: entryPrice * (1 - slPct / 100), // Start at SL, tightens when activated
+  };
+}
 // ============================================================================
 // POSITION MONITORING - THE EXIT STRATEGY
 // ============================================================================
@@ -625,8 +661,14 @@ async function monitorPositions(): Promise<MonitorResult[]> {
         pos.highWaterMark = currentPrice;
         // Only start trailing after activation threshold (let positions breathe)
         const profitPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
-        if (profitPct >= (TOML?.exits.trailing_activation_pct ?? 1.5)) {
-          const newTrailingStop = currentPrice * (1 - CONFIG.TRAILING_STOP_PCT / 100);
+        const trailingActivation = pos.isScalpPosition
+            ? (TOML?.scalp?.trailing_activation_pct ?? 0.8)
+            : (TOML?.exits.trailing_activation_pct ?? 1.5);
+          const trailingPct = pos.isScalpPosition
+            ? (TOML?.scalp?.trailing_pct ?? 0.5)
+            : CONFIG.TRAILING_STOP_PCT;
+          if (profitPct >= trailingActivation) {
+          const newTrailingStop = currentPrice * (1 - trailingPct / 100);
           if (newTrailingStop > pos.trailingStop) {
             pos.trailingStop = newTrailingStop;
           }
@@ -649,8 +691,10 @@ async function monitorPositions(): Promise<MonitorResult[]> {
       // Stagnation exit: sell positions that haven't moved >1% in N hours
       if (!shouldSell && pos.openedAt) {
         const ageHours = (Date.now() - new Date(pos.openedAt).getTime()) / (1000 * 60 * 60);
-        const stagnationTimeout = TOML?.exits?.stagnation_timeout_hours ?? 8;
-        const stagnationMinPnl = TOML?.exits?.stagnation_min_pnl_pct ?? 1.0;
+        const stagnationTimeout = pos.isScalpPosition
+          ? (TOML?.scalp?.max_hold_minutes ?? 45) / 60  // scalp: minutes → hours
+          : (TOML?.exits?.stagnation_timeout_hours ?? 8);
+        const stagnationMinPnl = pos.isScalpPosition ? 0.3 : (TOML?.exits?.stagnation_min_pnl_pct ?? 1.0);
         if (ageHours > stagnationTimeout && Math.abs(pnlPct) < stagnationMinPnl) {
           shouldSell = true;
           exitReason = `Stagnation exit: ${ageHours.toFixed(1)}h old, only ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% movement (< ${stagnationMinPnl}%)`;
@@ -1236,6 +1280,7 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
 
   // Capital allocator: enforce per-strategy budgets
   const isGrid = signal.patterns?.includes('GRID_BUY') || (signal as any).is_grid_buy;
+  const isScalp = !isGrid && isScalpEligible(signal);
   const budget = await getCapitalBudget();
 
   // Update regime from signal if available
@@ -1255,9 +1300,18 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     if (budget.regime === 'volatile') {
       return { pass: false, reason: 'Grid paused: volatile market regime' };
     }
+  } else if (isScalp) {
+    // Scalp strategy checks
+    const scalpPositions = openPositions.filter(p => p.isScalpPosition);
+    if (scalpPositions.length >= (CONFIG.MAX_SCALP_POSITIONS ?? 2)) {
+      return { pass: false, reason: `Max scalp positions (${CONFIG.MAX_SCALP_POSITIONS ?? 2})` };
+    }
+    if (budget.scalpRemaining < CONFIG.MIN_ORDER_VALUE) {
+      return { pass: false, reason: `Scalp budget exhausted ($${budget.scalpRemaining.toFixed(2)} remaining of $${budget.scalpBudget.toFixed(2)})` };
+    }
   } else {
     // Signal strategy checks
-    const signalPositions = openPositions.filter(p => !p.isGridPosition && p.pattern !== 'GRID_BUY');
+    const signalPositions = openPositions.filter(p => !p.isGridPosition && p.pattern !== 'GRID_BUY' && !p.isScalpPosition);
     if (signalPositions.length >= CONFIG.MAX_SIGNAL_POSITIONS) {
       return { pass: false, reason: `Max signal positions (${CONFIG.MAX_SIGNAL_POSITIONS})` };
     }
@@ -1632,7 +1686,8 @@ async function calculatePositionSize(signal: Signal): Promise<number> {
   const isGrid = signal.patterns?.includes('GRID_BUY') || (signal as any).is_grid_buy;
 
   // Use strategy-specific budget, not total capital
-  const availableBudget = isGrid ? budget.gridRemaining : budget.signalRemaining;
+  const isScalp = !isGrid && isScalpEligible(signal);
+  const availableBudget = isGrid ? budget.gridRemaining : isScalp ? budget.scalpRemaining : budget.signalRemaining;
 
   // Deep value: configurable max, normal: CONFIG max
   const maxPct = isDeepValue ? (TOML?.capital.deep_value_max_pct ?? 0.20) : CONFIG.MAX_POSITION_SIZE_PCT;
@@ -1786,6 +1841,7 @@ async function executeBuy(signal: Signal): Promise<{
       pattern: signal.patterns?.join(', ') || '',
       confidence: signal.confidence,
       isGridPosition: !!(signal as any).is_grid_buy,
+      isScalpPosition: isScalpEligible(signal),
       entryFee,
     });
 
