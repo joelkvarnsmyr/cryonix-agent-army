@@ -93,7 +93,7 @@ export default function AktienixPage() {
         {/* Balance */}
         <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-6 text-center">
           <div className="text-xs text-muted-foreground mb-1 font-mono">PORTFOLIO VALUE</div>
-          <div className="text-3xl font-bold tracking-tight" style={{ color: 'hsl(142, 76%, 55%)' }}>
+          <div className="text-3xl font-bold tracking-tight text-emerald-400">
             ${portfolioValue.toFixed(2)}
           </div>
           <div className="mt-1 flex items-center justify-center gap-3 text-sm">
@@ -189,8 +189,8 @@ export default function AktienixPage() {
             <div className="text-sm text-muted-foreground/50">No trades yet</div>
           ) : (
             <div className="space-y-1.5">
-              {trades.slice(0, 8).map((t, i) => (
-                <div key={i} className="flex items-center justify-between text-sm">
+              {trades.slice(0, 8).map((t) => (
+                <div key={`${t.symbol}-${t.closedAt}`} className="flex items-center justify-between text-sm">
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs text-muted-foreground w-12">{t.symbol}</span>
                     {t.signal && <span className="text-xs text-muted-foreground/60">{t.signal}</span>}

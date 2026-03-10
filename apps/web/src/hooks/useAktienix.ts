@@ -33,10 +33,11 @@ export function useAktienixStatus(refreshInterval = 30_000) {
   const fetch_ = useCallback(async () => {
     try {
       const res = await fetch('/api/aktienix/status');
+      if (!res.ok) { setError(`HTTP ${res.status}`); return; }
       setData(await res.json());
       setError(null);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
@@ -58,10 +59,11 @@ export function useAktienixPortfolio(refreshInterval = 15_000) {
   const fetch_ = useCallback(async () => {
     try {
       const res = await fetch('/api/aktienix/portfolio');
+      if (!res.ok) { setError(`HTTP ${res.status}`); return; }
       setData(await res.json());
       setError(null);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
@@ -83,11 +85,12 @@ export function useAktienixPositions(refreshInterval = 15_000) {
   const fetch_ = useCallback(async () => {
     try {
       const res = await fetch('/api/aktienix/positions');
+      if (!res.ok) { setError(`HTTP ${res.status}`); return; }
       const json = await res.json();
       setPositions(json.positions ?? []);
       setError(null);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
@@ -116,12 +119,13 @@ export function useAktienixTrades(limit = 20, refreshInterval = 30_000) {
   const fetch_ = useCallback(async () => {
     try {
       const res = await fetch(`/api/aktienix/trades?limit=${limit}`);
+      if (!res.ok) { setError(`HTTP ${res.status}`); return; }
       const json = await res.json();
       setTrades(json.trades ?? []);
       setSummary(json.summary ?? { total: 0, winRate: 0, totalPnl: 0 });
       setError(null);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }, [limit]);
 
