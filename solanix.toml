@@ -2,7 +2,7 @@
 paper_trading = true
 
 [watchlist]
-symbols = ["SOL", "JUP", "BONK", "WIF", "PYTH", "RNDR"]
+symbols = ["SOL", "JUP", "BONK", "WIF", "PYTH", "RNDR", "RAY", "ORCA", "JTO", "W", "HNT", "DRIFT", "POPCAT", "MEW"]
 timeframe = "1h"
 bars_count = 100
 

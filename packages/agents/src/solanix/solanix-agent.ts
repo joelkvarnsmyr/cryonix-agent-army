@@ -205,6 +205,17 @@ export class SolanaAgent extends BaseAgent {
                     // Register newly discovered tokens with the broker client
                     this.brokerClient?.addDynamicToken(token.symbol, token.mintAddress);
                     this.log('info', `DexScreener breakout: ${token.symbol} @ $${token.priceUsd}`);
+
+                    // Generate a BUY signal from the volume spike
+                    const spikeRatio = token.volumeChange1h / Math.max(token.volume24h / 24, 1);
+                    const confidence = Math.min(0.85, 0.5 + spikeRatio * 0.05);
+                    await this.evaluateSignal({
+                        symbol: token.symbol,
+                        action: 'BUY',
+                        confidence,
+                        reasoning: `DexScreener volume spike (${spikeRatio.toFixed(1)}x avg), liquidity $${(token.liquidityUsd / 1000).toFixed(0)}k`,
+                        currentPrice: token.priceUsd,
+                    });
                 }
             } catch (e: any) {
                 this.log('error', `DexScreener scan error: ${e.message}`);

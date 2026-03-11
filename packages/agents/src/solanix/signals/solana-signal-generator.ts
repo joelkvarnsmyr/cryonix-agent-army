@@ -11,6 +11,17 @@ const GECKO_ID_MAP: Record<string, string> = {
     WIF: 'dogwifcoin',
     PYTH: 'pyth-network',
     RNDR: 'render-token',
+    RAY: 'raydium',
+    ORCA: 'orca',
+    JTO: 'jito-governance-token',
+    W: 'wormhole',
+    TENSOR: 'tensor',
+    HNT: 'helium',
+    MOBILE: 'helium-mobile',
+    JITO: 'jito-governance-token',
+    DRIFT: 'drift-protocol',
+    POPCAT: 'popcat',
+    MEW: 'cat-in-a-dogs-world',
 };
 
 // Maps ticker symbol -> Solana mint address
@@ -21,6 +32,14 @@ const MINT_ADDRESS_MAP: Record<string, string> = {
     WIF: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
     PYTH: 'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3',
     RNDR: 'rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof',
+    RAY: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
+    ORCA: 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
+    JTO: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL',
+    W: '85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ',
+    HNT: 'hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux',
+    DRIFT: 'DriFtupJYLTosbwoN8koMbEYSx54aFAVLddWsbksjwg7',
+    POPCAT: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',
+    MEW: 'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5',
 };
 
 interface SignalGeneratorConfig {
@@ -143,6 +162,8 @@ export class SolanaSignalGenerator {
                 if (signal && signal.action !== 'WAIT') {
                     results.push(signal);
                 }
+                // Respect CoinGecko free-tier rate limit (30 req/min)
+                await new Promise((r) => setTimeout(r, 2500));
             } catch {
                 // Skip symbol on any error (network, parse, etc.)
             }

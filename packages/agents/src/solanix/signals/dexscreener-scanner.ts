@@ -2,6 +2,7 @@ import type { DexScreenerToken } from '../types';
 
 // DexScreener API response shapes
 interface DexScreenerPair {
+    chainId: string;
     baseToken: { symbol: string; address: string };
     priceUsd: string;
     volume: { h24: number; h1: number };
@@ -27,9 +28,11 @@ interface DynamicEntry {
     addedAt: number;
 }
 
-// SOL mint address used as the query token to discover active Solana pairs
-const SOL_MINT = 'So11111111111111111111111111111111111111112';
-const DEXSCREENER_URL = `https://api.dexscreener.com/latest/dex/tokens/${SOL_MINT}`;
+// Query the Solana chain directly for trending pairs (broader discovery than a single mint)
+const DEXSCREENER_URL = 'https://api.dexscreener.com/latest/dex/search?q=solana';
+
+// Skip wrapped SOL itself — we want the *counterpart* tokens
+const SKIP_SYMBOLS = new Set(['SOL', 'WSOL', 'USDC', 'USDT']);
 
 export class DexScreenerScanner {
     private readonly config: DexScreenerScannerConfig;
@@ -56,6 +59,10 @@ export class DexScreenerScanner {
 
             return pairs
                 .filter((pair) => {
+                    // Only Solana chain pairs
+                    if (pair.chainId !== 'solana') return false;
+                    // Skip stablecoins and SOL itself — we want altcoins
+                    if (SKIP_SYMBOLS.has(pair.baseToken.symbol.toUpperCase())) return false;
                     // Liquidity gate
                     if (pair.liquidity.usd < minLiquidityUsd) return false;
                     // Volume-spike gate: h1 volume vs average hourly h24 volume
