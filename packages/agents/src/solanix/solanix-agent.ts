@@ -8,6 +8,7 @@ import { SolanaSignalGenerator, MINT_ADDRESS_MAP } from './signals/solana-signal
 import { DexScreenerScanner } from './signals/dexscreener-scanner';
 import { SolanaWatchlistCurator } from './watchlist-curator';
 import { SolanaExitMonitor } from './exit-monitor';
+import { MacroFilter } from './macro-filter';
 import { loadSolanixConfig } from './config';
 import type { SolanaPosition, SolanaAccountState } from './types';
 
@@ -20,6 +21,7 @@ export class SolanaAgent extends BaseAgent {
     private watchlistCurator: SolanaWatchlistCurator | null = null;
     private statePublisher: StatePublisher | null = null;
     private exitMonitor = new SolanaExitMonitor();
+    private macroFilter: MacroFilter | null = null;
     private riskManager = new RiskManager();
 
     private positions: SolanaPosition[] = [];
@@ -87,7 +89,13 @@ export class SolanaAgent extends BaseAgent {
                 kvUrl,
                 'solanix',
             );
-            this.log('info', 'StatePublisher initialized.');
+            // MacroFilter reads Cryonix data from the same Redis
+            this.macroFilter = new MacroFilter(
+                this.statePublisher,
+                undefined,
+                (msg) => this.log('info', `[macro] ${msg}`),
+            );
+            this.log('info', 'StatePublisher + MacroFilter initialized.');
         } else {
             this.log('warn', 'KV_URL not set — state will not be published to Redis.');
         }
@@ -232,7 +240,12 @@ export class SolanaAgent extends BaseAgent {
 
         // 4b. Exit monitor — check TP/SL/trailing/stagnation on open positions
         if (this.positions.length > 0 && this.brokerClient) {
-            const exits = this.exitMonitor.check(this.positions, config.exits);
+            // Tighten stop-loss during volatile regime
+            const exitConfig = { ...config.exits };
+            if (this.macroFilter) {
+                exitConfig.stop_loss_pct = await this.macroFilter.adjustedStopLoss(config.exits.stop_loss_pct);
+            }
+            const exits = this.exitMonitor.check(this.positions, exitConfig);
             for (const exit of exits) {
                 try {
                     await this.brokerClient.closePosition(exit.symbol);
@@ -355,9 +368,23 @@ export class SolanaAgent extends BaseAgent {
             return;
         }
 
-        // Confidence threshold
-        if (confidence < config.risk.min_confidence) {
-            this.log('info', `Signal confidence ${confidence} below threshold (${config.risk.min_confidence}). Skipping ${symbol}.`);
+        // Macro filter — veto check + confidence adjustment from Cryonix data
+        let adjustedConfidence = confidence;
+        if (this.macroFilter) {
+            const macro = await this.macroFilter.evaluate(symbol);
+            if (macro.veto) {
+                this.log('warn', `Macro veto for ${symbol}: ${macro.vetoReason}`);
+                return;
+            }
+            if (macro.delta !== 0) {
+                adjustedConfidence = Math.max(0, Math.min(1, confidence + macro.delta));
+                this.log('info', `Macro adjustment for ${symbol}: ${macro.delta >= 0 ? '+' : ''}${(macro.delta * 100).toFixed(0)}% (${macro.reasons.join(', ')})`);
+            }
+        }
+
+        // Confidence threshold (after macro adjustment)
+        if (adjustedConfidence < config.risk.min_confidence) {
+            this.log('info', `Signal confidence ${adjustedConfidence.toFixed(2)} below threshold (${config.risk.min_confidence}). Skipping ${symbol}.`);
             return;
         }
 
@@ -397,7 +424,7 @@ export class SolanaAgent extends BaseAgent {
             return;
         }
 
-        this.log('info', `Submitting BUY for ${symbol} ~$${usdcToSpend.toFixed(2)} (confidence=${confidence})`);
+        this.log('info', `Submitting BUY for ${symbol} ~$${usdcToSpend.toFixed(2)} (confidence=${adjustedConfidence.toFixed(2)}${adjustedConfidence !== confidence ? ` ← ${confidence.toFixed(2)} raw` : ''})`);
 
         const result = await this.brokerClient.submitOrder({
             symbol,
