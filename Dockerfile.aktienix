@@ -1,0 +1,33 @@
+# Dockerfile.aktienix — Aktienix trading agent + Brain service
+# Used by: aktienix (runner) and aktienix-brain services
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN npm install --no-save \
+    @alpacahq/alpaca-trade-api@3 \
+    @iarna/toml@2 \
+    openai@4 \
+    technicalindicators@3 \
+    dotenv@16 \
+    ioredis@5 \
+    pg@8 \
+    zod@3 \
+    ws@8
+
+# Stub for @cryonix/types — all imports are `import type` (erased by tsx at runtime)
+RUN mkdir -p node_modules/@cryonix/types && \
+    echo '{"name":"@cryonix/types","version":"1.0.0","main":"index.js"}' > node_modules/@cryonix/types/package.json && \
+    echo 'module.exports = {};' > node_modules/@cryonix/types/index.js
+
+# Copy agent source (maintains relative import paths from scripts/)
+COPY packages/agents/src/ ./packages/agents/src/
+
+# Copy runner + brain scripts
+COPY scripts/services/aktienix-runner.ts scripts/services/aktienix-brain.ts ./scripts/services/
+COPY scripts/aktienix/ ./scripts/aktienix/
+COPY scripts/lib/ ./scripts/lib/
+
+# Default: run the trading agent (brain overrides via docker-compose command)
+CMD ["npx", "tsx", "scripts/services/aktienix-runner.ts"]

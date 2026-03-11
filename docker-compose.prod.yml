@@ -231,7 +231,7 @@ services:
     container_name: aktienix   # required — brain uses `docker restart aktienix`
     build:
       context: .
-      dockerfile: Dockerfile.scripts
+      dockerfile: Dockerfile.aktienix
     restart: unless-stopped
     command: ["npx", "tsx", "scripts/services/aktienix-runner.ts"]
     volumes:
@@ -260,7 +260,7 @@ services:
     container_name: aktienix-brain
     build:
       context: .
-      dockerfile: Dockerfile.scripts
+      dockerfile: Dockerfile.aktienix
     restart: unless-stopped
     command: ["npx", "tsx", "scripts/services/aktienix-brain.ts"]
     volumes:
