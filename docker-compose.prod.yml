@@ -228,6 +228,7 @@ services:
   # ============================================================
 
   aktienix:
+    container_name: aktienix   # required — brain uses `docker restart aktienix`
     build:
       context: .
       dockerfile: Dockerfile.scripts
@@ -249,6 +250,39 @@ services:
       redis:
         condition: service_healthy
       web:
+        condition: service_healthy
+
+  # ============================================================
+  # AktienixBrain — Claude Code CLI autonomous portfolio analyst
+  # ============================================================
+
+  aktienix-brain:
+    container_name: aktienix-brain
+    build:
+      context: .
+      dockerfile: Dockerfile.scripts
+    restart: unless-stopped
+    command: ["npx", "tsx", "scripts/services/aktienix-brain.ts"]
+    volumes:
+      - ./aktienix.toml:/app/aktienix.toml  # read-write (Brain edits config)
+      - /var/run/docker.sock:/var/run/docker.sock  # for docker restart aktienix
+    environment:
+      - NODE_ENV=production
+      - KV_URL=redis://redis:6379
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_INTERACTIVE_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - ALPACA_PAPER_API_KEY=${ALPACA_PAPER_API_KEY}
+      - ALPACA_PAPER_API_SECRET=${ALPACA_PAPER_API_SECRET}
+      - ALPACA_API_KEY=${ALPACA_API_KEY:-}
+      - ALPACA_API_SECRET=${ALPACA_API_SECRET:-}
+      - PROJECT_ROOT=/app
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   # ============================================================
