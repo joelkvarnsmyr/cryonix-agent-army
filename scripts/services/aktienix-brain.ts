@@ -222,7 +222,7 @@ async function collectData(): Promise<BrainData> {
             max_capital_per_trade_pct: extract(/max_capital_per_trade_pct\s*=\s*([\d.]+)/),
             stop_loss_pct: extract(/stop_loss_pct\s*=\s*([\d.]+)/),
             take_profit_pct: extract(/take_profit_pct\s*=\s*([\d.]+)/),
-            max_trades_per_day: extract(/max_trades_per_day\s*=\s*(\d+)/),
+            max_trades_per_day: extract(/^max_trades_per_day\s*=\s*(\d+)/m),
             max_daily_loss_pct: extract(/max_daily_loss_pct\s*=\s*([\d.]+)/),
             trailing_stop_pct: extract(/trailing_stop_pct\s*=\s*([\d.]+)/),
             paper_trading: extract(/paper_trading\s*=\s*(true|false)/),
@@ -377,9 +377,10 @@ Edit \`aktienix.toml\` at the project root directly if changes are needed. You d
 | Parameter | Current | Allowed range | Safety floor |
 |-----------|---------|---------------|-------------|
 | \`risk.min_confidence\` | ${data.currentConfig?.min_confidence ?? '?'} | 0.30 – 0.75 | ≥ 0.40 |
-| \`limits.max_open_positions\` | ${data.currentConfig?.max_open_positions ?? '?'} | 1 – 8 | ≥ 2 |
-| \`capital.max_capital_per_trade_pct\` | ${data.currentConfig?.max_capital_per_trade_pct ?? '?'} | 0.05 – 0.25 | ≥ 0.05 |
-| \`exits.stop_loss_pct\` | ${data.currentConfig?.stop_loss_pct ?? '?'} | 1.5 – 5.0 | ≥ 1.5 |
+| \`limits.max_open_positions\` | ${data.currentConfig?.max_open_positions ?? '?'} | 3 – 10 | ≥ 4 |
+| \`limits.max_trades_per_day\` | ${data.currentConfig?.max_trades_per_day ?? '?'} | 5 – 30 | ≥ 10 |
+| \`capital.max_capital_per_trade_pct\` | ${data.currentConfig?.max_capital_per_trade_pct ?? '?'} | 0.10 – 0.30 | ≥ 0.10 |
+| \`exits.stop_loss_pct\` | ${data.currentConfig?.stop_loss_pct ?? '?'} | 1.5 – 5.0 | ≥ 2.0 |
 | \`exits.take_profit_pct\` | ${data.currentConfig?.take_profit_pct ?? '?'} | 3.0 – 10.0 | ≥ 3.0 |
 | symbols in \`[watchlist]\` section | — | add up to 10, remove if no open position | — |
 
