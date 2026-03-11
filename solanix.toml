@@ -40,7 +40,7 @@ min_score_advantage = 15
 min_hold_minutes = 30
 
 [signals]
-min_signal_score = 0.35
+min_signal_score = 0.25
 dexscreener_enabled = true
 dexscreener_min_liquidity_usd = 50000
 dexscreener_volume_spike_multiplier = 3.0

@@ -23,7 +23,7 @@ export const SOLANIX_DEFAULTS: SolanixTomlConfig = {
     exits: { take_profit_pct: 8.0, stop_loss_pct: 4.0, trailing_stop_pct: 5.0, trailing_activation_pct: 3.0, stagnation_timeout_days: 3, stagnation_min_pnl_pct: 0.5 },
     rotation: { enabled: true, min_score_advantage: 15, min_hold_minutes: 30 },
     timing: { poll_interval_ms: 60_000, signal_scan_interval_ms: 900_000, dexscreener_scan_interval_ms: 300_000 },
-    signals: { min_signal_score: 0.35, dexscreener_enabled: true, dexscreener_min_liquidity_usd: 50_000, dexscreener_volume_spike_multiplier: 3.0, dexscreener_dynamic_ttl_ms: 7_200_000 },
+    signals: { min_signal_score: 0.25, dexscreener_enabled: true, dexscreener_min_liquidity_usd: 50_000, dexscreener_volume_spike_multiplier: 3.0, dexscreener_dynamic_ttl_ms: 7_200_000 },
 };
 
 export function loadSolanixConfig(filePath?: string): SolanixTomlConfig {

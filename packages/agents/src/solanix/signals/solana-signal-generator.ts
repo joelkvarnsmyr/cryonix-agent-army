@@ -22,6 +22,16 @@ const GECKO_ID_MAP: Record<string, string> = {
     DRIFT: 'drift-protocol',
     POPCAT: 'popcat',
     MEW: 'cat-in-a-dogs-world',
+    // Tokens discovered by watchlist curator
+    LINK: 'chainlink',
+    PENGU: 'pudgy-penguins',
+    TRUMP: 'official-trump',
+    VIRTUAL: 'virtual-protocol',
+    RENDER: 'render-token',
+    MSOL: 'msol',
+    MNGO: 'mango-markets',
+    GMT: 'stepn',
+    PUMP: 'pump-fun',
 };
 
 // Maps ticker symbol -> Solana mint address
@@ -141,6 +151,8 @@ export class SolanaSignalGenerator {
             this.watchlist.set(sym, mint);
         }
     }
+
+    get watchlistSize(): number { return this.watchlist.size; }
 
     /** Add a symbol to the watchlist at runtime. */
     addSymbol(symbol: string, mintAddress: string): void {
