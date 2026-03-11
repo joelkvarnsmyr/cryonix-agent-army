@@ -103,6 +103,9 @@ interface BrainData {
 }
 
 async function collectData(): Promise<BrainData> {
+    // Verify Redis is reachable — spec requires aborting if Redis is down
+    await redis.ping(); // throws if Redis unreachable → runBrain() catches and aborts
+
     // Redis (may be null if agent is idle — 5-min TTL)
     const accountRaw   = await redis.get('aktienix:account').catch(() => null);
     const positionsRaw = await redis.get('aktienix:positions').catch(() => null);
@@ -302,7 +305,7 @@ async function runBrain(triggerReason: string) {
             `Bash(docker restart aktienix),` +
             `Bash(git add aktienix.toml),Bash(git commit)' ` +
             `--max-budget-usd 3`,
-            { timeout: 300_000, cwd: PROJECT_ROOT, encoding: 'utf-8' }
+            { timeout: 300_000, cwd: PROJECT_ROOT, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
         );
         console.log('[aktienix-brain] Claude finished.');
     } catch (err: any) {
