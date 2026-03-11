@@ -185,6 +185,8 @@ interface OpenPosition {
   estimatedTpTime?: string; // ISO string for expected TP arrival
   aiEstimatedMinutes?: number; // Initial estimate from Grok
   stagnationOverrideHours?: number; // AI-suggested timeout
+  etaNotified?: boolean;   // True once initial ETA Telegram sent
+  stagnationWarned?: boolean; // True once stagnation warning Telegram sent
 }
 
 // ============================================================================
@@ -692,10 +694,39 @@ async function monitorPositions(): Promise<MonitorResult[]> {
         pos.lastPrice
       );
       
+      const previousEta = pos.estimatedTpTime;
       pos.velocity = timing.velocity;
       pos.lastPrice = timing.lastPrice;
       pos.estimatedTpTime = timing.estimatedTpTime;
       pos.currentPrice = currentPrice;
+
+      // --- ETA Telegram Alerts ---
+      try {
+        // 1. Alert when ETA is first established
+        if (timing.estimatedTpTime && !pos.etaNotified) {
+          pos.etaNotified = true;
+          const minsToTp = Math.round((new Date(timing.estimatedTpTime).getTime() - Date.now()) / 60000);
+          const etaLabel = minsToTp > 60 ? `${(minsToTp / 60).toFixed(1)}h` : `${minsToTp}min`;
+          await sendTelegramAlert(
+            `⏱️ <b>ETA: ${pos.symbol}</b>\n\nEstimerad TP-tid: ${etaLabel}\nEntry: $${pos.entryPrice.toFixed(4)} → TP: $${pos.takeProfit.toFixed(4)}\nVelocity: $${timing.velocity.toFixed(6)}/min`
+          );
+        }
+
+        // 2. Alert on drastic ETA change (>2x shift)
+        if (previousEta && timing.estimatedTpTime && pos.etaNotified) {
+          const oldMins = Math.max(1, (new Date(previousEta).getTime() - Date.now()) / 60000);
+          const newMins = Math.max(1, (new Date(timing.estimatedTpTime).getTime() - Date.now()) / 60000);
+          const ratio = newMins / oldMins;
+          if (ratio > 2.0 || ratio < 0.5) {
+            const oldLabel = oldMins > 60 ? `${(oldMins / 60).toFixed(1)}h` : `${Math.round(oldMins)}min`;
+            const newLabel = newMins > 60 ? `${(newMins / 60).toFixed(1)}h` : `${Math.round(newMins)}min`;
+            const direction = ratio > 2.0 ? '🐢 Momentum tappat' : '🚀 Acceleration';
+            await sendTelegramAlert(
+              `${direction}: <b>${pos.symbol}</b>\n\nETA ändrad: ${oldLabel} → ${newLabel}\nP&L: ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`
+            );
+          }
+        }
+      } catch { /* non-critical */ }
 
       // Update high water mark and trailing stop
       if (currentPrice > pos.highWaterMark) {
@@ -742,6 +773,17 @@ async function monitorPositions(): Promise<MonitorResult[]> {
         if (stagnation.stagnant) {
           shouldSell = true;
           exitReason = `Stagnation exit: ${stagnation.ageHours.toFixed(1)}h old (limit ${stagnation.timeout}h), movement ${pnlPct.toFixed(2)}%`;
+        }
+
+        // 3. Stagnation warning — 2h before auto-exit
+        if (!stagnation.stagnant && !pos.stagnationWarned) {
+          const hoursRemaining = stagnation.timeout - stagnation.ageHours;
+          if (hoursRemaining > 0 && hoursRemaining <= 2) {
+            pos.stagnationWarned = true;
+            await sendTelegramAlert(
+              `⏳ <b>Stagnation-varning: ${pos.symbol}</b>\n\nPosition har rört sig ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% på ${stagnation.ageHours.toFixed(1)}h\nAuto-exit om ~${hoursRemaining.toFixed(1)}h om ingen rörelse\nTimeout: ${stagnation.timeout}h | Tröskel: ±1.0%`
+            );
+          }
         }
       }
 
