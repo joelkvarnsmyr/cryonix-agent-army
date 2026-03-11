@@ -152,39 +152,39 @@ export class DexScreenerSignalGenerator {
         const reasoning: string[] = [];
 
         // 1. Short-term momentum (weight 0.30)
-        //    h1 change: > +2% bullish, < -2% bearish
-        if (h1Change >= 3) {
+        if (h1Change >= 2) {
             score += 0.30;
             reasoning.push(`h1 +${h1Change.toFixed(1)}% strong momentum`);
-        } else if (h1Change >= 1.5) {
+        } else if (h1Change >= 0.8) {
             score += 0.20;
             reasoning.push(`h1 +${h1Change.toFixed(1)}% momentum`);
-        } else if (h1Change >= 0.5) {
+        } else if (h1Change >= 0.2) {
             score += 0.10;
             reasoning.push(`h1 +${h1Change.toFixed(1)}% mild up`);
-        } else if (h1Change <= -3) {
+        } else if (h1Change <= -2) {
             score -= 0.30;
             reasoning.push(`h1 ${h1Change.toFixed(1)}% strong sell-off`);
-        } else if (h1Change <= -1.5) {
+        } else if (h1Change <= -0.8) {
             score -= 0.20;
             reasoning.push(`h1 ${h1Change.toFixed(1)}% declining`);
-        } else if (h1Change <= -0.5) {
+        } else if (h1Change <= -0.2) {
             score -= 0.10;
             reasoning.push(`h1 ${h1Change.toFixed(1)}% mild down`);
         }
 
         // 2. Medium-term momentum (weight 0.20)
-        if (h6Change >= 4) {
+        //    h6: gives directional context
+        if (h6Change >= 3) {
             score += 0.20;
             reasoning.push(`h6 +${h6Change.toFixed(1)}% uptrend`);
-        } else if (h6Change >= 2) {
+        } else if (h6Change >= 1) {
             score += 0.10;
             reasoning.push(`h6 +${h6Change.toFixed(1)}% rising`);
         } else if (h6Change <= -4) {
-            // Deep dip — could be a dip buy opportunity
+            // Deep dip — potential dip buy
             score += 0.15;
             reasoning.push(`h6 ${h6Change.toFixed(1)}% dip buy opportunity`);
-        } else if (h6Change <= -2) {
+        } else if (h6Change <= -1) {
             score -= 0.10;
             reasoning.push(`h6 ${h6Change.toFixed(1)}% downtrend`);
         }
@@ -225,15 +225,13 @@ export class DexScreenerSignalGenerator {
         }
 
         // 5. Trend alignment bonus (weight 0.15)
-        //    h1 and h6 both positive = confirmed uptrend
-        //    h1 positive but h6 negative = potential reversal (bonus for catching dips)
-        if (h1Change > 0.5 && h6Change > 1) {
+        if (h1Change > 0.2 && h6Change > 0.5) {
             score += 0.15;
             reasoning.push('trend alignment (h1+h6 bullish)');
-        } else if (h1Change > 1 && h6Change < -2) {
+        } else if (h1Change > 0.5 && h6Change < -1) {
             score += 0.10;
             reasoning.push('dip reversal (h1 recovering from h6 dip)');
-        } else if (h1Change < -0.5 && h6Change < -1) {
+        } else if (h1Change < -0.2 && h6Change < -0.5) {
             score -= 0.15;
             reasoning.push('trend alignment (h1+h6 bearish)');
         }
