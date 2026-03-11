@@ -15,8 +15,12 @@ export interface WatchlistToken {
     source: 'core' | 'dexscreener' | 'coingecko' | 'grok';
 }
 
-// Tokens to always exclude (wrapped SOL, stablecoins, spam)
-const SKIP_SYMBOLS = new Set(['SOL', 'WSOL', 'USDC', 'USDT', 'USDD', 'DAI', 'BUSD']);
+// Tokens to always exclude (wrapped SOL, stablecoins, wrapped assets, spam)
+const SKIP_SYMBOLS = new Set([
+    'SOL', 'WSOL', 'USDC', 'USDT', 'USDD', 'DAI', 'BUSD',
+    'USD1', 'USDCV', 'USAD', 'USDE', 'PYUSD', 'EURC', 'FDUSD',
+    'WBTC', 'CBBTC', 'WETH', 'TBTC',
+]);
 
 export class SolanaWatchlistCurator {
     private lastRefreshDate: string | null = null;
@@ -89,6 +93,7 @@ export class SolanaWatchlistCurator {
             return coins
                 .map(c => c.symbol.toUpperCase())
                 .filter(s => !SKIP_SYMBOLS.has(s))
+                .filter(s => !/USD|BTC|ETH|WBTC|WETH/.test(s))
                 .slice(0, 15)
                 .map(symbol => ({
                     symbol,
