@@ -127,7 +127,8 @@ function fmtPatternsDiscord(patternStr) {
 function buildBuyEmbed(trade) {
   const pair = trade.symbol || '?';
   const entry = fmtPriceDiscord(trade.entry_price || trade.entryPrice);
-  const conf = Math.round(parseFloat(trade.confidence || 0));
+  const rawConf = parseFloat(trade.confidence || 0);
+  const conf = Math.round(rawConf <= 1 ? rawConf * 100 : rawConf);
   const patterns = fmtPatternsDiscord(trade.pattern);
   const meta = typeof trade.metadata === 'object' ? trade.metadata : {};
   const slRaw = trade.stop_loss || trade.stopLoss || meta.stopLoss || null;

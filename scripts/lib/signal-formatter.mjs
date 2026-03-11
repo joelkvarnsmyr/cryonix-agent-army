@@ -36,7 +36,8 @@ export function formatBuySignal(trade) {
   const symbol = (trade.symbol || '').replace('/USDC', '').replace('/USDT', '');
   const pair = trade.symbol || `${symbol}/USDC`;
   const entry = fmtPrice(trade.entry_price || trade.entryPrice);
-  const conf = Math.round(parseFloat(trade.confidence || 0));
+  const rawConf = parseFloat(trade.confidence || 0);
+  const conf = Math.round(rawConf <= 1 ? rawConf * 100 : rawConf);
   const patterns = fmtPatterns(trade.pattern);
 
   const meta = typeof trade.metadata === 'object' ? trade.metadata : {};
