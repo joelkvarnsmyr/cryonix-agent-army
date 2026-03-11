@@ -2,6 +2,8 @@
 # Used by: aktienix (runner) and aktienix-brain services
 FROM node:20-alpine
 
+RUN apk add --no-cache git
+
 WORKDIR /app
 
 # Install runtime dependencies
@@ -15,6 +17,9 @@ RUN npm install --no-save \
     pg@8 \
     zod@3 \
     ws@8
+
+# Install Claude Code CLI (used by aktienix-brain for autonomous analysis)
+RUN npm install -g @anthropic-ai/claude-code
 
 # Stub for @cryonix/types — all imports are `import type` (erased by tsx at runtime)
 RUN mkdir -p node_modules/@cryonix/types && \

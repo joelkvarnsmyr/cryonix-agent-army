@@ -45,6 +45,8 @@ scripts/
   telegram-scraper/            # Telegram signal scraper (Python/Telethon, Docker)
     scraper.py                 #   Main Telethon event listener + Redis/Postgres writer
     parser.py                  #   Multi-format signal parser (Cornix, simple, emoji)
+  aktienix/                    # Aktienix stock trading helper scripts
+    close-position.ts          #   CLI: close Alpaca position (used by Brain via Claude Code)
   lib/
     load-toml.mjs              # TOML config loader utility
 ```
@@ -60,7 +62,12 @@ pnpm type-check              # TypeScript check across monorepo
 
 # Infrastructure (Docker)
 docker compose up -d                                    # Dev: engine + redis + postgres
-docker compose -f docker-compose.prod.yml up -d --build # Prod: all 8 containers
+docker compose -f docker-compose.prod.yml up -d --build # Prod: all 10 containers
+
+# Aktienix (stock trading agent + brain)
+docker compose -f docker-compose.prod.yml up -d --build aktienix aktienix-brain
+docker logs aktienix --tail 20              # Runner logs
+docker logs aktienix-brain --tail 20        # Brain logs
 
 # Database (from packages/database)
 pnpm db:generate             # Generate Drizzle migrations
@@ -130,6 +137,8 @@ Legacy agent system. Key classes:
 - `scripts/strategy-lab/ai_brain.py` - AI Brain autonomous analysis (every 6h + acute trigger, respects baseline freeze)
 - `scripts/strategy-lab/watchlist_agent.py` - Watchlist rotation agent (Tue+Fri 05:00 UTC, twice-weekly symbol rotation via Grok)
 - `scripts/telegram-scraper/scraper.py` - Telegram channel signal scraper (Telethon/Python, Docker)
+- `scripts/services/aktienix-runner.ts` - Aktienix stock trading agent loop (Alpaca, Docker)
+- `scripts/services/aktienix-brain.ts` - AktienixBrain autonomous portfolio analyst (Claude Code CLI, Docker)
 
 ## Data Flow
 
@@ -254,7 +263,7 @@ CMC_API_KEY=...                      # CoinMarketCap Free tier API key (engine)
 ## Key Conventions
 
 - Python engine packages use `echo` skip for `pnpm build` since they run in Docker
-- Redis key patterns: `trades:pending`, `trades:approved`, `positions:open`, `sentiment:{SYMBOL}`, `agent:{NAME}:status`, `risk:portfolio_state`, `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:{channel}:{symbol}:{action}`, `cmc:global`, `cmc:fear_greed`, `cmc:mcap:{SYMBOL}`, `brain:acute_trigger`, `brain:loss_streak`, `brain:blocked_patterns`, `evolution:directives`
+- Redis key patterns: `trades:pending`, `trades:approved`, `positions:open`, `sentiment:{SYMBOL}`, `agent:{NAME}:status`, `risk:portfolio_state`, `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:{channel}:{symbol}:{action}`, `cmc:global`, `cmc:fear_greed`, `cmc:mcap:{SYMBOL}`, `brain:acute_trigger`, `brain:loss_streak`, `brain:blocked_patterns`, `evolution:directives`, `aktienix:state`, `aktienix:risk`, `aktienix:brain:last_run`, `aktienix:brain:cooldown`
 - Docker networking: containers use service names (web, engine, redis, postgres) not localhost
 - `host.docker.internal` for dev Docker -> host communication
 - Auto-trader is SPOT_ONLY (rejects SELL signals, only BUY)
@@ -268,3 +277,39 @@ CMC_API_KEY=...                      # CoinMarketCap Free tier API key (engine)
 - **Smart Dip Hunter** (active since 2026-02-25): `[patterns] dip_focus_mode = true` requires every signal to contain at least one value pattern (DIP_BUY, DEEP_VALUE_CRASH, BOLLINGER_SQUEEZE). Trend-only signals (MACD+EMA) are rejected. Backtest-validated: value patterns have 80-100% WR vs 0-25% for trend-only. Signal cooldown reduced to 5min (from 15min) to catch fast dips. 3 position slots (was 2). See `docs/plans/2026-02-25-smart-dip-hunter-strategy.md` for full rationale.
 - **Engine resilience**: `BaseTank.run_loop()` wraps each symbol in try/except and skips `None` outputs from LangGraph. One failed symbol no longer kills the entire scanner.
 - **Backtester**: Supports 5m/15m/1h/4h/1d timeframes. Smart fetch — only primary TF + HTF context (1h/4h/1d). Run via `docker exec cryonix-engine-1 python3 /app/scripts/strategy-lab/backtest.py --symbol BTC/USDC --days 30 --json`.
+
+## Aktienix — US Stock Trading Agent
+
+Aktienix is a separate trading agent for US stocks via Alpaca. Runs in its own Docker containers alongside the crypto system.
+
+### Architecture
+
+- **Aktienix Runner** (`scripts/services/aktienix-runner.ts`) — Trading loop: scans watchlist, generates signals via technical indicators + macro intelligence, executes trades on Alpaca. Config from `aktienix.toml`.
+- **AktienixBrain** (`scripts/services/aktienix-brain.ts`) — Autonomous portfolio analyst using Claude Code CLI (`claude -p`). Analyzes performance, adjusts `aktienix.toml` parameters, can close positions and restart the runner.
+- **Agent modules** (`packages/agents/src/aktienix/`) — Modular components: `aktienix-agent.ts` (orchestrator), `risk-manager.ts` (circuit breakers + PDT), `exit-monitor.ts` (5-stage exit strategy), `position-sizer.ts` (fractional shares), `state-publisher.ts` (Redis state bridge), `market-hours.ts` (NYSE DST-aware guards), `config.ts` (TOML loader), `signals/stock-signal-generator.ts` (multi-factor signals).
+- **Dockerfile.aktienix** — Shared image for both runner and brain. Installs: Alpaca SDK, TOML parser, OpenAI, technicalindicators, ioredis, pg, Claude Code CLI. Stubs `@cryonix/types` (type-only imports erased by tsx).
+
+### Docker Services
+
+- `aktienix` — Runner service. `container_name: aktienix` required (Brain uses `docker restart aktienix`).
+- `aktienix-brain` — Brain service. Mounts `~/.claude:/root/.claude:ro` for Claude Code account auth (no API key needed). Mounts Docker socket for `docker restart`. Mounts `aktienix.toml` read-write.
+
+### Brain Triggers
+
+- **Scheduled**: 09:00-09:05 ET (pre-market review) + 16:30-16:35 ET (post-close review)
+- **Acute**: consecutiveLosses >= 2 OR dailyPnlDollar < -(portfolioValue * 3%)
+- **Cooldown**: Max one run per hour (Redis `aktienix:brain:last_run`, 48h TTL)
+- **Budget**: $3 max per Claude Code invocation
+
+### Key Redis Keys (Aktienix)
+
+- `aktienix:state` — Full agent state (positions, signals, portfolio)
+- `aktienix:risk` — Risk manager state (circuit breakers, PDT count)
+- `aktienix:brain:last_run` — Last brain run timestamp + summary (48h TTL)
+- `aktienix:brain:cooldown` — Cooldown flag (1h TTL)
+
+### Config
+
+- `aktienix.toml` — All Aktienix configuration (watchlist, risk params, brain bounds)
+- Brain parameter bounds defined in prompt (not config) — prevents runaway mutations
+- Brain can: adjust risk params, close positions, restart runner, commit config changes

@@ -266,6 +266,7 @@ services:
     volumes:
       - ./aktienix.toml:/app/aktienix.toml  # read-write (Brain edits config)
       - /var/run/docker.sock:/var/run/docker.sock  # for docker restart aktienix
+      - ~/.claude:/root/.claude:ro  # Claude Code auth (account login, not API key)
     environment:
       - NODE_ENV=production
       - KV_URL=redis://redis:6379
