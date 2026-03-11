@@ -9,6 +9,7 @@ import { DexScreenerScanner } from './signals/dexscreener-scanner';
 import { SolanaWatchlistCurator } from './watchlist-curator';
 import { SolanaExitMonitor } from './exit-monitor';
 import { MacroFilter } from './macro-filter';
+import { trySmartRotation } from './smart-rotation';
 import { loadSolanixConfig } from './config';
 import type { SolanaPosition, SolanaAccountState } from './types';
 
@@ -394,10 +395,40 @@ export class SolanaAgent extends BaseAgent {
             return;
         }
 
-        // Max positions gate
+        // Max positions gate — try smart rotation before giving up
         if (this.positions.length >= config.limits.max_open_positions) {
-            this.log('warn', `Max open positions (${config.limits.max_open_positions}) reached. Skipping ${symbol}.`);
-            return;
+            const rotation = trySmartRotation(
+                adjustedConfidence,
+                reasoning ?? '',
+                symbol,
+                this.positions,
+                config.rotation,
+            );
+            if (!rotation.shouldRotate || !rotation.victim) {
+                this.log('info', `Max positions reached, rotation declined: ${rotation.reason}`);
+                return;
+            }
+            // Close the weakest position to make room
+            this.log('info', `ROTATION: ${rotation.reason}`);
+            try {
+                await this.brokerClient.closePosition(rotation.victim.symbol);
+                this.positionMeta.delete(rotation.victim.symbol);
+                const victimPnlPct = rotation.victim.avgEntryPrice > 0
+                    ? ((rotation.victim.currentPrice - rotation.victim.avgEntryPrice) / rotation.victim.avgEntryPrice) * 100
+                    : 0;
+                this.riskManager.recordTrade(victimPnlPct >= 0);
+                this.log('info', `Closed ${rotation.victim.symbol} for rotation (P&L: ${victimPnlPct >= 0 ? '+' : ''}${victimPnlPct.toFixed(2)}%)`);
+                // Refresh positions after close
+                const rawPositions = await this.brokerClient.getPositions();
+                this.positions = rawPositions.map((p) => {
+                    const cp = p.avgEntryPrice + (p.unrealizedPl / Math.max(p.qty, 1e-12));
+                    const meta = this.positionMeta.get(p.symbol) ?? { entryTime: Date.now(), highWatermark: p.avgEntryPrice, trailingActive: false };
+                    return { symbol: p.symbol, mintAddress: this.brokerClient!.getMintAddress(p.symbol) ?? '', qty: p.qty, avgEntryPrice: p.avgEntryPrice, currentPrice: cp, unrealizedPl: p.unrealizedPl, entryTime: meta.entryTime, highWatermark: meta.highWatermark, trailingStopActive: meta.trailingActive };
+                });
+            } catch (e: any) {
+                this.log('error', `Rotation close failed for ${rotation.victim.symbol}: ${e.message}`);
+                return;
+            }
         }
 
         // Risk gate

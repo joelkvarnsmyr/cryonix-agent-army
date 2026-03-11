@@ -34,6 +34,11 @@ poll_interval_ms = 60000
 signal_scan_interval_ms = 900000
 dexscreener_scan_interval_ms = 300000
 
+[rotation]
+enabled = true
+min_score_advantage = 15
+min_hold_minutes = 30
+
 [signals]
 min_signal_score = 0.35
 dexscreener_enabled = true
