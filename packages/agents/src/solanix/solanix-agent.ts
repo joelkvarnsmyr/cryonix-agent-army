@@ -4,7 +4,8 @@ import { RiskManager } from '../aktienix/risk-manager';
 import { PositionSizer } from '../aktienix/position-sizer';
 import { StatePublisher } from '../aktienix/state-publisher';
 import { SolanaClient } from './brokers/solana-client';
-import { SolanaSignalGenerator, MINT_ADDRESS_MAP } from './signals/solana-signal-generator';
+import { MINT_ADDRESS_MAP } from './signals/solana-signal-generator';
+import { DexScreenerSignalGenerator } from './signals/dexscreener-signal-generator';
 import { DexScreenerScanner } from './signals/dexscreener-scanner';
 import { SolanaWatchlistCurator } from './watchlist-curator';
 import { SolanaExitMonitor } from './exit-monitor';
@@ -17,7 +18,7 @@ export class SolanaAgent extends BaseAgent {
     private isRunning = false;
 
     private brokerClient: SolanaClient | null = null;
-    private signalGenerator: SolanaSignalGenerator | null = null;
+    private signalGenerator: DexScreenerSignalGenerator | null = null;
     private dexScanner: DexScreenerScanner | null = null;
     private watchlistCurator: SolanaWatchlistCurator | null = null;
     private statePublisher: StatePublisher | null = null;
@@ -60,10 +61,9 @@ export class SolanaAgent extends BaseAgent {
         };
         this.riskManager.updatePortfolioValue(acct.portfolioValue);
 
-        // Signal generator
-        this.signalGenerator = new SolanaSignalGenerator({
+        // Signal generator (DexScreener-based — real-time momentum)
+        this.signalGenerator = new DexScreenerSignalGenerator({
             symbols: config.watchlist.symbols,
-            bars_count: config.watchlist.bars_count,
             min_signal_score: config.signals.min_signal_score,
         });
 
@@ -269,9 +269,8 @@ export class SolanaAgent extends BaseAgent {
                 const tokens = await this.watchlistCurator.curate();
                 const newSymbols = tokens.map(t => t.symbol);
                 // Rebuild signal generator with fresh watchlist
-                this.signalGenerator = new SolanaSignalGenerator({
+                this.signalGenerator = new DexScreenerSignalGenerator({
                     symbols: newSymbols,
-                    bars_count: config.watchlist.bars_count,
                     min_signal_score: config.signals.min_signal_score,
                 });
                 // Register discovered mint addresses with broker
