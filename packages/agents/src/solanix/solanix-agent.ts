@@ -4,8 +4,9 @@ import { RiskManager } from '../aktienix/risk-manager';
 import { PositionSizer } from '../aktienix/position-sizer';
 import { StatePublisher } from '../aktienix/state-publisher';
 import { SolanaClient } from './brokers/solana-client';
-import { SolanaSignalGenerator } from './signals/solana-signal-generator';
+import { SolanaSignalGenerator, MINT_ADDRESS_MAP } from './signals/solana-signal-generator';
 import { DexScreenerScanner } from './signals/dexscreener-scanner';
+import { SolanaWatchlistCurator } from './watchlist-curator';
 import { loadSolanixConfig } from './config';
 import type { SolanaPosition, SolanaAccountState } from './types';
 
@@ -15,6 +16,7 @@ export class SolanaAgent extends BaseAgent {
     private brokerClient: SolanaClient | null = null;
     private signalGenerator: SolanaSignalGenerator | null = null;
     private dexScanner: DexScreenerScanner | null = null;
+    private watchlistCurator: SolanaWatchlistCurator | null = null;
     private statePublisher: StatePublisher | null = null;
     private riskManager = new RiskManager();
 
@@ -58,6 +60,15 @@ export class SolanaAgent extends BaseAgent {
             bars_count: config.watchlist.bars_count,
             min_signal_score: config.signals.min_signal_score,
         });
+
+        // Watchlist curator (daily refresh with DexScreener + CoinGecko + Grok)
+        this.watchlistCurator = new SolanaWatchlistCurator(
+            process.env.XAI_API_KEY ?? null,
+            config.watchlist.symbols,
+            MINT_ADDRESS_MAP,
+            config.signals.dexscreener_min_liquidity_usd,
+            { info: (msg: string) => this.log('info', msg) },
+        );
 
         // DexScreener scanner
         this.dexScanner = new DexScreenerScanner({
@@ -191,7 +202,31 @@ export class SolanaAgent extends BaseAgent {
 
         const nowTs = Date.now();
 
-        // 5. DexScreener scan (every dexscreener_scan_interval_ms)
+        // 5. Daily watchlist refresh
+        if (this.watchlistCurator?.needsRefresh() && this.signalGenerator) {
+            try {
+                const tokens = await this.watchlistCurator.curate();
+                const newSymbols = tokens.map(t => t.symbol);
+                // Rebuild signal generator with fresh watchlist
+                this.signalGenerator = new SolanaSignalGenerator({
+                    symbols: newSymbols,
+                    bars_count: config.watchlist.bars_count,
+                    min_signal_score: config.signals.min_signal_score,
+                });
+                // Register discovered mint addresses with broker
+                for (const t of tokens) {
+                    if (t.mintAddress) {
+                        this.brokerClient?.addDynamicToken(t.symbol, t.mintAddress);
+                    }
+                }
+                this.log('info', `Watchlist refreshed: ${newSymbols.length} symbols — ${newSymbols.join(', ')}`);
+            } catch (e: any) {
+                this.log('error', `WatchlistCurator failed: ${e.message} — keeping existing watchlist`);
+                this.watchlistCurator.markRefreshed();
+            }
+        }
+
+        // 6. DexScreener scan (every dexscreener_scan_interval_ms)
         if (
             config.signals.dexscreener_enabled &&
             this.dexScanner &&

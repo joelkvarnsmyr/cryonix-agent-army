@@ -25,7 +25,7 @@ const GECKO_ID_MAP: Record<string, string> = {
 };
 
 // Maps ticker symbol -> Solana mint address
-const MINT_ADDRESS_MAP: Record<string, string> = {
+export const MINT_ADDRESS_MAP: Record<string, string> = {
     SOL: 'So11111111111111111111111111111111111111112',
     JUP: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
     BONK: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
