@@ -10,7 +10,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../apps/aktienix/.env') });
 import Redis from 'ioredis';
 import { Client as PgClient } from 'pg';
 import { execSync } from 'child_process';
-import { writeFileSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -111,6 +111,9 @@ interface BrainData {
         overall: { totalTrades: number; winRate: number; totalPnl: number };
         bySymbol: Array<{ symbol: string; trades: number; winRate: number; avgPnl: number }>;
     } | null;
+    recentTrades: Array<Record<string, any>> | null;
+    currentConfig: Record<string, any> | null;
+    marketStatus: string;
 }
 
 async function collectData(): Promise<BrainData> {
@@ -127,8 +130,8 @@ async function collectData(): Promise<BrainData> {
         if (!raw) return null;
         try { return JSON.parse(raw); } catch { return null; }
     }
-    const account   = safeParse(accountRaw);
-    const positions = safeParse(positionsRaw);
+    let account   = safeParse(accountRaw);
+    let positions = safeParse(positionsRaw);
     const risk      = safeParse(riskRaw);
 
     // Format previous run for prompt
@@ -140,8 +143,95 @@ async function collectData(): Promise<BrainData> {
         } catch { /* ignore */ }
     }
 
-    // Postgres: 7-day closed trade stats
+    // Fallback: query Alpaca directly if Redis is stale (market closed / agent idle)
+    if (!account || !positions) {
+        try {
+            const isPaper = !process.env.ALPACA_API_KEY;
+            const key = isPaper ? process.env.ALPACA_PAPER_API_KEY : process.env.ALPACA_API_KEY;
+            const secret = isPaper ? process.env.ALPACA_PAPER_API_SECRET : process.env.ALPACA_API_SECRET;
+            const baseUrl = isPaper ? 'https://paper-api.alpaca.markets' : 'https://api.alpaca.markets';
+
+            if (key && secret) {
+                const headers = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret };
+
+                if (!account) {
+                    const res = await fetch(`${baseUrl}/v2/account`, { headers });
+                    if (res.ok) {
+                        const a = await res.json() as any;
+                        account = {
+                            portfolioValue: parseFloat(a.portfolio_value),
+                            cash: parseFloat(a.cash),
+                            buyingPower: parseFloat(a.buying_power),
+                            settledCash: parseFloat(a.cash), // approximate
+                            isPatternDayTrader: a.pattern_day_trader,
+                        };
+                    }
+                }
+                if (!positions) {
+                    const res = await fetch(`${baseUrl}/v2/positions`, { headers });
+                    if (res.ok) {
+                        const posArr = await res.json() as any[];
+                        positions = posArr.map(p => ({
+                            symbol: p.symbol,
+                            qty: parseFloat(p.qty),
+                            avgEntryPrice: parseFloat(p.avg_entry_price),
+                            marketValue: parseFloat(p.market_value),
+                            unrealizedPl: parseFloat(p.unrealized_pl),
+                            unrealizedPlpc: parseFloat(p.unrealized_plpc),
+                            currentPrice: parseFloat(p.current_price),
+                        }));
+                    }
+                }
+                console.log('[aktienix-brain] Used Alpaca API fallback for account/positions.');
+            }
+        } catch (e: any) {
+            console.warn('[aktienix-brain] Alpaca fallback failed:', e.message);
+        }
+    }
+
+    // Market status (ET)
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const h = nowET.getHours();
+    const m = nowET.getMinutes();
+    const dayOfWeek = nowET.getDay(); // 0=Sun, 6=Sat
+    let marketStatus: string;
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+        marketStatus = 'CLOSED (weekend)';
+    } else if (h < 9 || (h === 9 && m < 30)) {
+        marketStatus = `PRE-MARKET (opens ${9}:30 ET, currently ${h}:${String(m).padStart(2, '0')} ET)`;
+    } else if (h >= 16) {
+        marketStatus = `AFTER-HOURS (closed at 16:00 ET, currently ${h}:${String(m).padStart(2, '0')} ET)`;
+    } else {
+        marketStatus = `OPEN (${h}:${String(m).padStart(2, '0')} ET)`;
+    }
+
+    // Read current config values from aktienix.toml
+    let currentConfig: Record<string, any> | null = null;
+    try {
+        const tomlPath = path.join(PROJECT_ROOT, 'aktienix.toml');
+        const tomlText = readFileSync(tomlPath, 'utf-8');
+
+        // Extract key values with regex (avoids needing TOML parser in brain)
+        const extract = (pattern: RegExp): string | null => {
+            const match = tomlText.match(pattern);
+            return match ? match[1].trim() : null;
+        };
+        currentConfig = {
+            min_confidence: extract(/min_confidence\s*=\s*([\d.]+)/),
+            max_open_positions: extract(/max_open_positions\s*=\s*(\d+)/),
+            max_capital_per_trade_pct: extract(/max_capital_per_trade_pct\s*=\s*([\d.]+)/),
+            stop_loss_pct: extract(/stop_loss_pct\s*=\s*([\d.]+)/),
+            take_profit_pct: extract(/take_profit_pct\s*=\s*([\d.]+)/),
+            max_trades_per_day: extract(/max_trades_per_day\s*=\s*(\d+)/),
+            max_daily_loss_pct: extract(/max_daily_loss_pct\s*=\s*([\d.]+)/),
+            trailing_stop_pct: extract(/trailing_stop_pct\s*=\s*([\d.]+)/),
+            paper_trading: extract(/paper_trading\s*=\s*(true|false)/),
+        };
+    } catch { /* non-fatal */ }
+
+    // Postgres: 7-day trade stats + recent individual trades
     let tradeStats = null;
+    let recentTrades: Array<Record<string, any>> | null = null;
     if (PG_URL) {
         const db = new PgClient({ connectionString: PG_URL });
         try {
@@ -170,6 +260,16 @@ async function collectData(): Promise<BrainData> {
                 ORDER BY SUM(realized_pnl) ASC
             `);
 
+            // Recent individual trades (last 20) — gives Brain detail on what happened
+            const recent = await db.query(`
+                SELECT symbol, side, qty, fill_price, dollar_amount, realized_pnl,
+                       confidence, exit_reason, timestamp
+                FROM aktienix_trades
+                WHERE timestamp > NOW() - INTERVAL '7 days'
+                ORDER BY timestamp DESC
+                LIMIT 20
+            `);
+
             const r = overall.rows[0];
             tradeStats = {
                 overall: {
@@ -184,6 +284,7 @@ async function collectData(): Promise<BrainData> {
                     avgPnl: parseFloat(row.avg_pnl ?? '0'),
                 })),
             };
+            recentTrades = recent.rows.length > 0 ? recent.rows : null;
         } catch (err: any) {
             console.warn('[aktienix-brain] Postgres unavailable:', err.message);
         } finally {
@@ -191,33 +292,41 @@ async function collectData(): Promise<BrainData> {
         }
     }
 
-    return { account, positions, risk, previousRun, tradeStats };
+    return { account, positions, risk, previousRun, tradeStats, recentTrades, currentConfig, marketStatus };
 }
 
 function buildPrompt(data: BrainData, triggerReason: string, runId: string): string {
     const date = new Date().toISOString().slice(0, 10);
     const accountSection = data.account
         ? JSON.stringify(data.account, null, 2)
-        : '[not available — agent idle]';
-    const positionsSection = data.positions
+        : '[not available — agent idle or market closed]';
+    const positionsSection = data.positions && data.positions.length > 0
         ? JSON.stringify(data.positions, null, 2)
-        : '[not available — agent idle]';
+        : '[] (no open positions)';
     const riskSection = data.risk
         ? JSON.stringify(data.risk, null, 2)
-        : '[not available — agent idle]';
-    const tradeSection = data.tradeStats
+        : '[not available — agent idle or market closed]';
+    const tradeSection = data.tradeStats && data.tradeStats.overall.totalTrades > 0
         ? JSON.stringify(data.tradeStats, null, 2)
-        : '[no trade data available]';
-    const prevSection = data.previousRun ?? 'First run';
+        : '[no closed trades in the last 7 days]';
+    const recentTradesSection = data.recentTrades
+        ? JSON.stringify(data.recentTrades, null, 2)
+        : '[no recent trades]';
+    const configSection = data.currentConfig
+        ? JSON.stringify(data.currentConfig, null, 2)
+        : '[could not read config]';
+    const prevSection = data.previousRun ?? 'First run — no prior Brain analysis exists.';
 
     return `# AktienixBrain — Portfolio Analysis Run
 
-You are AktienixBrain, an autonomous portfolio analyst for Aktienix (US stock swing trading).
+You are AktienixBrain, an autonomous portfolio analyst for Aktienix (US stock swing trading on Alpaca).
 Today is ${date}. Run ID: ${runId}. Trigger: ${triggerReason}.
+
+**Market status: ${data.marketStatus}**
 
 ## Current State
 
-### Account
+### Account (from Alpaca API)
 \`\`\`json
 ${accountSection}
 \`\`\`
@@ -227,14 +336,24 @@ ${accountSection}
 ${positionsSection}
 \`\`\`
 
-### Risk State
+### Risk State (from runner's Redis state — may be stale if runner is idle)
 \`\`\`json
 ${riskSection}
 \`\`\`
 
-### Trade Performance (7 days, closed trades only)
+### Current Config Values (aktienix.toml — the values you may change)
+\`\`\`json
+${configSection}
+\`\`\`
+
+### Trade Performance (7-day summary, closed trades only)
 \`\`\`json
 ${tradeSection}
+\`\`\`
+
+### Recent Individual Trades (last 20, newest first)
+\`\`\`json
+${recentTradesSection}
 \`\`\`
 
 ### Previous Brain Run
@@ -242,48 +361,54 @@ ${prevSection}
 
 ## Your Job
 
-Analyse trading performance and take autonomous corrective actions.
+Analyse trading performance and decide whether config adjustments are needed. Be conservative — only change parameters when the data clearly justifies it.
+
+### Decision Framework
+1. **Read the data above carefully.** If there are no trades yet or insufficient data, say so and make no changes.
+2. **Identify root causes**, not just symptoms. "3 losses" could mean bad signals, bad sizing, bad timing, or just bad luck on 3 trades.
+3. **Make small, targeted changes.** Change 1-2 parameters at most per run. Large multi-parameter changes make it impossible to know what helped.
+4. **Consider reverting previous Brain changes** if they didn't help or made things worse.
 
 ### Config File
-Read \`aktienix.toml\` at the project root — that is the live config. Edit it directly if changes are needed.
+Edit \`aktienix.toml\` at the project root directly if changes are needed. You do NOT need to commit or restart — that is handled automatically after your run.
 
 ### What You CAN Change in aktienix.toml:
 
-| Parameter | Allowed range |
-|-----------|--------------|
-| \`risk.min_confidence\` | 0.30 – 0.75 |
-| \`limits.max_open_positions\` | 1 – 8 |
-| \`capital.max_capital_per_trade_pct\` | 0.05 – 0.25 |
-| \`exits.stop_loss_pct\` | current value ±20% |
-| \`exits.take_profit_pct\` | current value ±20% |
-| symbols in \`[watchlist]\` section | add up to 10, remove if no open position |
+| Parameter | Current | Allowed range | Safety floor |
+|-----------|---------|---------------|-------------|
+| \`risk.min_confidence\` | ${data.currentConfig?.min_confidence ?? '?'} | 0.30 – 0.75 | ≥ 0.40 |
+| \`limits.max_open_positions\` | ${data.currentConfig?.max_open_positions ?? '?'} | 1 – 8 | ≥ 2 |
+| \`capital.max_capital_per_trade_pct\` | ${data.currentConfig?.max_capital_per_trade_pct ?? '?'} | 0.05 – 0.25 | ≥ 0.05 |
+| \`exits.stop_loss_pct\` | ${data.currentConfig?.stop_loss_pct ?? '?'} | 1.5 – 5.0 | ≥ 1.5 |
+| \`exits.take_profit_pct\` | ${data.currentConfig?.take_profit_pct ?? '?'} | 3.0 – 10.0 | ≥ 3.0 |
+| symbols in \`[watchlist]\` section | — | add up to 10, remove if no open position | — |
 
-### What You CAN Do:
-- Edit \`aktienix.toml\` to adjust the parameters above
-- Use the Bash tool to run shell commands. You have full shell access. Examples:
-  - \`npx tsx scripts/aktienix/close-position.ts SYMBOL\` to close a position (only if unrealizedPl% < –5% OR age > 5 days)
-  - \`docker restart aktienix\` AFTER editing aktienix.toml (so trading agent reloads config)
-  - \`git add aktienix.toml && git commit -m "brain(${runId}): <description>"\` to commit your changes
+**Safety floors** prevent death spirals. Never go below them even on repeated acute triggers.
 
-**IMPORTANT**: After editing aktienix.toml, you MUST run these Bash commands:
-1. \`git add aktienix.toml && git commit -m "brain(${runId}): <your change summary>"\`
-2. \`docker restart aktienix\`
+### What You CAN Also Do:
+- Use Bash to run \`npx tsx scripts/aktienix/close-position.ts SYMBOL\` to close a losing position
+  - Only close if: unrealizedPl% < –5% OR position held > 5 trading days with < 0.5% gain
 
 ### What You CANNOT Do:
-- Open new positions
-- Change \`intelligence.*\` or \`broker.*\` settings
-- Exceed the parameter bounds above
-- Use git add -A or stage files other than aktienix.toml
+- Open new positions or place buy orders
+- Change \`intelligence.*\`, \`broker.*\`, \`market_hours.*\`, or \`timing.*\` settings
+- Exceed the parameter bounds or go below safety floors
+- Make changes without clear data-backed reasoning
+
+### What Is Handled Automatically (do NOT do these):
+- Git commit of aktienix.toml (automatic after your run)
+- Docker restart of the aktienix runner (automatic after your run)
+- Telegram report (automatic after your run)
 
 ## Output
 
-After completing your analysis and actions, print this summary block:
+After completing your analysis and any actions, print this exact block:
 
 \`\`\`
 BRAIN_SUMMARY_START
 Trigger: ${triggerReason}
-Actions: [comma-separated list of actions taken, or "none"]
-Analysis: [2-3 sentences summarising what you found and did]
+Actions: [comma-separated list of what you changed, or "none"]
+Analysis: [2-3 sentences: what you observed, your diagnosis, and what you did/didn't change and why]
 BRAIN_SUMMARY_END
 \`\`\`
 `;
