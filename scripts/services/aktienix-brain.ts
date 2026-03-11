@@ -64,7 +64,8 @@ async function shouldRun(): Promise<string | null> {
     // Cooldown check
     const lastRun = await redis.get('aktienix:brain:last_run');
     if (lastRun) {
-        const lastRunData = JSON.parse(lastRun);
+        const lastRunData = (() => { try { return JSON.parse(lastRun); } catch { return null; } })();
+        if (!lastRunData) return null; // corrupt data — skip cooldown, let it re-run
         const lastTs = new Date(lastRunData.timestamp).getTime();
         if (Date.now() - lastTs < COOLDOWN_MS) return null;
     }
@@ -80,8 +81,8 @@ async function shouldRun(): Promise<string | null> {
     const riskRaw = await redis.get('aktienix:risk');
     const acctRaw = await redis.get('aktienix:account');
     if (riskRaw && acctRaw) {
-        const risk = JSON.parse(riskRaw);
-        const acct = JSON.parse(acctRaw);
+        let risk: any, acct: any;
+        try { risk = JSON.parse(riskRaw); acct = JSON.parse(acctRaw); } catch { return null; }
         const pv   = acct.portfolioValue ?? 0;
         if (risk.consecutiveLosses >= 2) return 'acute: 2+ consecutive losses';
         if (pv > 0 && risk.dailyPnlDollar < -(pv * 0.03)) return 'acute: daily P&L < -3%';
@@ -390,7 +391,7 @@ async function sendTelegram(text: string) {
         await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: CHAT_ID, text, parse_mode: 'HTML' }),
+            body: JSON.stringify({ chat_id: CHAT_ID, text }),
         });
     } catch (err: any) {
         console.error('[aktienix-brain] Telegram failed:', err.message);
