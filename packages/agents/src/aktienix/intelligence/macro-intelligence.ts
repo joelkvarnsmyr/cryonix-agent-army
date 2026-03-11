@@ -135,8 +135,8 @@ export class MacroIntelligence {
         const confAfterTrust = signal.confidence * trustMultiplier;
         steps.push({ step: 'source_trust', passed: true });
 
-        // Step 3: Cross-validation delta
-        const confAfterDelta = confAfterTrust + signal.confidence_delta;
+        // Step 3: Cross-validation delta (clamped to 1.0)
+        const confAfterDelta = Math.min(confAfterTrust + signal.confidence_delta, 1.0);
         steps.push({ step: 'cross_validation', passed: true });
 
         // Step 4: Confidence gate

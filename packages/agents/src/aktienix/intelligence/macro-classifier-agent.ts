@@ -44,12 +44,13 @@ For NEW events not in this list, create a descriptive snake_case slug (e.g. "bir
 Analyze the provided news articles and identify market-moving macro events.
 
 IMPORTANT RULES:
-1. Group related articles about the SAME event into ONE entry. Multiple articles about OPEC = one "oil_supply_shock", not three.
+1. Group ALL related articles about the SAME event into ONE entry. Multiple articles about Iran/oil/Strait of Hormuz = one "oil_supply_shock", not three separate events. Deduplicate aggressively.
 2. Reference which articles support each event using their [N] index numbers in "source_indices".
-3. Only NYSE/NASDAQ-listed tickers (max 8 per side). No OTC, no crypto, no forex.
+3. Only NYSE/NASDAQ-listed tickers (3-8 per side). Include sector ETFs (XLE, XLF, QQQ) AND individual stocks. Don't just pick one stock — list all materially affected companies.
 4. Set market_moving=false if the event would NOT cause >1% move in any affected sector ETF.
 5. Return [] if nothing is market-moving.
 6. Return JSON array only, no markdown fences.
+7. Maximum 5 events per batch. If more exist, keep only the 5 most market-moving.
 
 Confidence calibration:
 - 0.90-1.0: Confirmed fact from official source (Fed statement, EIA data release, signed executive order)
@@ -94,10 +95,41 @@ export class MacroClassifierAgent {
         if (!this.grok || articles.length === 0) return [];
 
         const results: ClassifiedEvent[] = [];
+        const seenEventIds = new Set<string>();
+
         for (let i = 0; i < articles.length; i += BATCH_SIZE) {
             const batch = articles.slice(i, i + BATCH_SIZE);
             const batchResults = await this.classifyBatch(batch);
-            results.push(...batchResults);
+
+            // Deduplicate: merge tickers from duplicate event_ids, keep highest confidence
+            for (const event of batchResults) {
+                const existing = results.find(e => e.event_id === event.event_id);
+                if (existing) {
+                    // Merge tickers (union) and keep the higher confidence
+                    const ib = existing.causal_chain.immediate.bearish_tickers;
+                    const ibu = existing.causal_chain.immediate.bullish_tickers;
+                    for (const t of event.causal_chain.immediate.bearish_tickers) {
+                        if (!ib.includes(t)) ib.push(t);
+                    }
+                    for (const t of event.causal_chain.immediate.bullish_tickers) {
+                        if (!ibu.includes(t)) ibu.push(t);
+                    }
+                    // Merge recovery watch tickers
+                    const rw = existing.causal_chain.secondary.recovery_watch_tickers;
+                    for (const t of event.causal_chain.secondary.recovery_watch_tickers) {
+                        if (!rw.includes(t)) rw.push(t);
+                    }
+                    // Keep higher confidence and more advanced phase
+                    if (event.confidence > existing.confidence) {
+                        existing.confidence = event.confidence;
+                        existing.reasoning = event.reasoning;
+                    }
+                    existing.source_articles.push(...event.source_articles);
+                } else {
+                    seenEventIds.add(event.event_id);
+                    results.push(event);
+                }
+            }
         }
         return results;
     }

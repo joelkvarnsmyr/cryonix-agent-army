@@ -3,6 +3,14 @@
 // Live end-to-end test of Macro Intelligence v2 pipeline
 // Usage: npx tsx scripts/aktienix/live-pipeline-test.ts
 
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+
+// Load env from multiple locations (first match wins for each var)
+dotenv.config({ path: path.resolve(__dirname, '../../apps/aktienix/.env') });
+dotenv.config({ path: path.resolve(__dirname, '../../apps/web/.env.local') });
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
 import { NewsIngestionService } from '../../packages/agents/src/aktienix/intelligence/news-ingestion-service';
 import { MacroClassifierAgent, ClassifiedEvent } from '../../packages/agents/src/aktienix/intelligence/macro-classifier-agent';
 import { SignalMerger } from '../../packages/agents/src/aktienix/intelligence/signal-merger';
