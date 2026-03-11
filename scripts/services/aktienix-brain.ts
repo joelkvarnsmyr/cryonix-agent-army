@@ -29,6 +29,17 @@ let redis: Redis;
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
     console.log('[aktienix-brain] Starting AktienixBrain...');
+
+    // Init git repo + seed baseline for aktienix.toml so Brain can track changes
+    try {
+        execSync(
+            'git init && git config user.email "brain@aktienix" && git config user.name "AktienixBrain" && ' +
+            'git add aktienix.toml && git commit -m "baseline" || true',
+            { cwd: PROJECT_ROOT, encoding: 'utf-8' }
+        );
+        console.log('[aktienix-brain] Git baseline created for aktienix.toml');
+    } catch { /* non-fatal */ }
+
     redis = new Redis(REDIS_URL);
     redis.on('error', err => console.error('[aktienix-brain] Redis error:', err.message));
 
@@ -249,10 +260,14 @@ Read \`aktienix.toml\` at the project root — that is the live config. Edit it 
 
 ### What You CAN Do:
 - Edit \`aktienix.toml\` to adjust the parameters above
-- Run \`npx tsx scripts/aktienix/close-position.ts SYMBOL\` to close a position
-  - Only close if: unrealizedPl% < –5% OR position age > 5 days
-- Run \`docker restart aktienix\` AFTER editing aktienix.toml (so trading agent reloads config)
-- Run \`git add aktienix.toml && git commit -m "brain(${runId}): <description>"\` to commit
+- Use the Bash tool to run shell commands. You have full shell access. Examples:
+  - \`npx tsx scripts/aktienix/close-position.ts SYMBOL\` to close a position (only if unrealizedPl% < –5% OR age > 5 days)
+  - \`docker restart aktienix\` AFTER editing aktienix.toml (so trading agent reloads config)
+  - \`git add aktienix.toml && git commit -m "brain(${runId}): <description>"\` to commit your changes
+
+**IMPORTANT**: After editing aktienix.toml, you MUST run these Bash commands:
+1. \`git add aktienix.toml && git commit -m "brain(${runId}): <your change summary>"\`
+2. \`docker restart aktienix\`
 
 ### What You CANNOT Do:
 - Open new positions
@@ -298,12 +313,9 @@ async function runBrain(triggerReason: string) {
     let claudeOutput = '';
     try {
         claudeOutput = execSync(
-            `cat "${promptPath}" | CLAUDECODE= claude -p ` +
+            `cat "${promptPath}" | claude -p ` +
             `--model ${CLAUDE_MODEL} ` +
-            `--allowedTools 'Edit,Read,Glob,Grep,` +
-            `Bash(npx tsx scripts/aktienix/close-position.ts),` +
-            `Bash(docker restart aktienix),` +
-            `Bash(git add aktienix.toml),Bash(git commit)' ` +
+            `--allowedTools 'Edit,Read,Glob,Grep,Bash' ` +
             `--max-budget-usd 3`,
             { timeout: 300_000, cwd: PROJECT_ROOT, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
         );
@@ -326,12 +338,29 @@ async function runBrain(triggerReason: string) {
     const analysisLine = summaryRaw.match(/^Analysis: (.+)$/m)?.[1] ?? '(no analysis)';
     const actions = actionLine === 'none' ? [] : actionLine.split(',').map(s => s.trim());
 
-    // 5. Check which files were changed
+    // 5. Check if aktienix.toml was modified, commit + restart if so
     let filesChanged = '';
     try {
-        filesChanged = execSync('git diff --stat HEAD~1 HEAD -- aktienix.toml', { cwd: PROJECT_ROOT, encoding: 'utf-8' }).trim();
-    } catch { /* git diff can fail if no commits yet; non-fatal */ }
-    const filesLine = filesChanged.includes('aktienix.toml') ? 'aktienix.toml' : 'none';
+        filesChanged = execSync('git diff --stat HEAD -- aktienix.toml', { cwd: PROJECT_ROOT, encoding: 'utf-8' }).trim();
+    } catch { /* non-fatal */ }
+    const tomlChanged = filesChanged.includes('aktienix.toml');
+
+    if (tomlChanged) {
+        // Auto-commit and restart since Claude can't reliably use Bash in pipe mode
+        try {
+            execSync(
+                `git add aktienix.toml && git commit -m "brain(${runId}): ${actions.join(', ')}"`,
+                { cwd: PROJECT_ROOT, encoding: 'utf-8' }
+            );
+            console.log('[aktienix-brain] Committed aktienix.toml changes.');
+        } catch (e: any) { console.error('[aktienix-brain] git commit failed:', e.message); }
+
+        try {
+            execSync('docker restart aktienix', { timeout: 30_000, encoding: 'utf-8' });
+            console.log('[aktienix-brain] Restarted aktienix runner.');
+        } catch (e: any) { console.error('[aktienix-brain] docker restart failed:', e.message); }
+    }
+    const filesLine = tomlChanged ? 'aktienix.toml (committed + runner restarted)' : 'none';
 
     // 6. Store last_run in Redis (48h TTL)
     const lastRunData = {
