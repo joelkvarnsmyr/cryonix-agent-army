@@ -157,6 +157,8 @@ interface Signal {
   position_size: number;
   is_deep_value?: boolean;
   is_grid_buy?: boolean;
+  aiEstimatedMinutes?: number;
+  stagnationOverrideHours?: number;
 }
 
 interface OpenPosition {
@@ -1594,6 +1596,8 @@ interface AIValidation {
   thinkingSummary?: string;
   adjustedSL?: number;
   adjustedTP?: number;
+  estimatedMinutesToTarget?: number;
+  stagnationThresholdHours?: number;
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -1671,39 +1675,55 @@ async function getAIValidation(signal: Signal): Promise<AIValidation> {
     const alertKeywords = (TOML?.sentiment?.alert_keywords ?? ['hack', 'exploit', 'rug', 'delist', 'scam']).join(', ');
     const minConf = Math.round((TOML?.risk?.min_confidence ?? 0.70) * 100);
     const strategyMode = TOML?.patterns?.dip_focus_mode ? 'Smart Dip Hunter (mean-reversion focus)' : 'All patterns';
+    const stagnationDefault = TOML?.exits?.stagnation_timeout_hours ?? 16;
+
+    const timingContext = `
+TIME HORIZON: We trade across multiple horizons. Set estimated_minutes_to_target and stagnation_threshold_hours proportionally:
+- Scalps (TP <2%): 15-60 min target, stagnation 1-2h
+- Standard (TP 2-5%): 2-12h target, stagnation 6-16h
+- Swing (TP 5-15%): 12-72h target, stagnation 24-48h
+Default stagnation timeout is ${stagnationDefault}h. If position hasn't moved ±1% by stagnation_threshold_hours, it auto-exits.`;
+
+    const jsonSchema = `{"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number,"stagnation_threshold_hours":number}`;
 
     const systemPrompt = isDeepValue
-      ? `You are a crash-buying specialist for crypto markets. Evaluate whether a large drawdown is PANIC SELLING (buy opportunity) or a FALLING KNIFE (avoid). Respond with ONLY a JSON object.
+      ? `You are a crash-buying specialist for crypto markets. Evaluate whether a large drawdown is PANIC SELLING (buy opportunity) or a FALLING KNIFE (avoid).
+${timingContext}
 
-JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number|null,"stagnation_threshold_hours":number|null}`
+Respond with ONLY a JSON object.
+JSON: ${jsonSchema}`
       : isDipBuy
       ? `You are a mean-reversion specialist for crypto dip buying. Strategy: ${strategyMode}.
 
 1. THINK through whether this dip is a buying opportunity or start of a larger decline
 2. SEARCH X for any breaking news or negative catalysts about this coin
 3. Evaluate whether the dip is structural or fundamental
+${timingContext}
 
 Respond with ONLY a JSON object.
-
-JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number|null,"stagnation_threshold_hours":number|null}`
+JSON: ${jsonSchema}`
       : `You are a crypto trading risk analyst with access to real-time X/Twitter data and web search. Strategy: ${strategyMode}.
 
 1. THINK through the technical setup step by step
 2. SEARCH X for any breaking news, hacks, or sentiment shifts
 3. Evaluate risk-reward and momentum
+${timingContext}
 
 Respond with ONLY a JSON object.
+JSON: ${jsonSchema}`;
 
-JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number|null,"stagnation_threshold_hours":number|null}`;
+    const tpDistancePct = signal.entry_price > 0
+      ? ((signal.target_price - signal.entry_price) / signal.entry_price * 100).toFixed(1)
+      : '?';
 
     const prompt = isDeepValue
       ? `CRASH BUY ANALYSIS: ${signal.symbol}
 Drawdown: ${signal.indicators.drawdown_pct}% from $${signal.indicators.recent_high}
-JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number,"stagnation_threshold_hours":number}`
+TP distance: ${tpDistancePct}%`
       : `SIGNAL: ${signal.action} ${signal.symbol}
 Setup: ${signal.patterns.join(' + ')} | TA confidence: ${(signal.confidence * 100).toFixed(0)}%
 Entry: $${signal.entry_price.toFixed(4)} | SL: $${signal.stop_loss.toFixed(4)} | TP: $${signal.target_price.toFixed(4)}
-JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number,"stagnation_threshold_hours":number}`;
+TP distance: ${tpDistancePct}%`;
 
     // Build request with reasoning and search capabilities
     const modelId = TOML?.ai.model ?? 'grok-4-1-fast-reasoning';
@@ -1757,6 +1777,8 @@ JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"
       thinkingSummary,
       adjustedSL: result.sl || undefined,
       adjustedTP: result.tp || undefined,
+      estimatedMinutesToTarget: result.estimated_minutes_to_target || undefined,
+      stagnationThresholdHours: result.stagnation_threshold_hours || undefined,
       usage: {
         prompt_tokens: response.usage?.prompt_tokens || 0,
         completion_tokens: response.usage?.completion_tokens || 0,
@@ -1941,6 +1963,8 @@ async function executeBuy(signal: Signal): Promise<{
       isGridPosition: !!(signal as any).is_grid_buy,
       isScalpPosition: isScalpEligible(signal),
       entryFee,
+      aiEstimatedMinutes: signal.aiEstimatedMinutes,
+      stagnationOverrideHours: signal.stagnationOverrideHours,
     });
 
     // Sync to Postgres positions table
@@ -2683,6 +2707,10 @@ export async function POST() {
       // Apply AI-adjusted levels if provided
       if (aiResult.adjustedSL) signal.stop_loss = aiResult.adjustedSL;
       if (aiResult.adjustedTP) signal.target_price = aiResult.adjustedTP;
+
+      // Wire AI timing estimates to signal for position creation
+      if (aiResult.estimatedMinutesToTarget) signal.aiEstimatedMinutes = aiResult.estimatedMinutesToTarget;
+      if (aiResult.stagnationThresholdHours) signal.stagnationOverrideHours = aiResult.stagnationThresholdHours;
 
       // Blend TA + AI confidence, normalized to ensure weights sum to 1.0
       const rawTaWeight = TOML?.ai.ta_weight ?? 0.5;
