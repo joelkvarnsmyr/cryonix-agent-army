@@ -117,6 +117,24 @@ export class SolanaClient implements BrokerClient {
         }
     }
 
+    /**
+     * Close an entire position by selling all held tokens.
+     */
+    async closePosition(symbol: string): Promise<BrokerOrderResult> {
+        const pos = this.paperPositions.get(symbol);
+        if (!pos) {
+            return { success: false, message: `No open position for ${symbol}` };
+        }
+        // Sell the full market value
+        const marketValue = pos.tokenQty * pos.currentPrice;
+        return this.submitOrder({
+            symbol,
+            action: 'SELL',
+            qty: marketValue,
+            orderType: 'MARKET',
+        });
+    }
+
     // -------------------------------------------------------------------------
     // Extended API (used by SolanaAgent)
     // -------------------------------------------------------------------------

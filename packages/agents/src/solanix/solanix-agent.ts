@@ -7,6 +7,7 @@ import { SolanaClient } from './brokers/solana-client';
 import { SolanaSignalGenerator, MINT_ADDRESS_MAP } from './signals/solana-signal-generator';
 import { DexScreenerScanner } from './signals/dexscreener-scanner';
 import { SolanaWatchlistCurator } from './watchlist-curator';
+import { SolanaExitMonitor } from './exit-monitor';
 import { loadSolanixConfig } from './config';
 import type { SolanaPosition, SolanaAccountState } from './types';
 
@@ -18,9 +19,11 @@ export class SolanaAgent extends BaseAgent {
     private dexScanner: DexScreenerScanner | null = null;
     private watchlistCurator: SolanaWatchlistCurator | null = null;
     private statePublisher: StatePublisher | null = null;
+    private exitMonitor = new SolanaExitMonitor();
     private riskManager = new RiskManager();
 
     private positions: SolanaPosition[] = [];
+    private positionMeta: Map<string, { entryTime: number; highWatermark: number; trailingActive: boolean }> = new Map();
     private accountState: SolanaAccountState | null = null;
 
     private lastDexScanTime = 0;
@@ -164,16 +167,43 @@ export class SolanaAgent extends BaseAgent {
             await this.brokerClient.refreshPositionPrices();
 
             const rawPositions = await this.brokerClient.getPositions();
-            this.positions = rawPositions.map((p) => ({
-                symbol: p.symbol,
-                mintAddress: this.brokerClient!.getMintAddress(p.symbol) ?? '',
-                qty: p.qty,
-                avgEntryPrice: p.avgEntryPrice,
-                currentPrice: p.avgEntryPrice + (p.unrealizedPl / Math.max(p.qty, 1e-12)),
-                unrealizedPl: p.unrealizedPl,
-                entryTime: Date.now(),
-                highWatermark: p.avgEntryPrice,
-            }));
+            this.positions = rawPositions.map((p) => {
+                const currentPrice = p.avgEntryPrice + (p.unrealizedPl / Math.max(p.qty, 1e-12));
+                // Preserve persistent per-position state (entryTime, highWatermark)
+                const meta = this.positionMeta.get(p.symbol) ?? {
+                    entryTime: Date.now(),
+                    highWatermark: p.avgEntryPrice,
+                    trailingActive: false,
+                };
+                // Update high watermark
+                if (currentPrice > meta.highWatermark) {
+                    meta.highWatermark = currentPrice;
+                }
+                // Activate trailing once threshold reached
+                const pnlPct = ((currentPrice - p.avgEntryPrice) / p.avgEntryPrice) * 100;
+                if (pnlPct >= config.exits.trailing_activation_pct) {
+                    meta.trailingActive = true;
+                }
+                this.positionMeta.set(p.symbol, meta);
+
+                return {
+                    symbol: p.symbol,
+                    mintAddress: this.brokerClient!.getMintAddress(p.symbol) ?? '',
+                    qty: p.qty,
+                    avgEntryPrice: p.avgEntryPrice,
+                    currentPrice,
+                    unrealizedPl: p.unrealizedPl,
+                    entryTime: meta.entryTime,
+                    highWatermark: meta.highWatermark,
+                    trailingStopActive: meta.trailingActive,
+                };
+            });
+            // Clean up meta for closed positions
+            for (const sym of this.positionMeta.keys()) {
+                if (!rawPositions.some(p => p.symbol === sym)) {
+                    this.positionMeta.delete(sym);
+                }
+            }
         }
 
         // 3. Update risk manager
@@ -197,8 +227,25 @@ export class SolanaAgent extends BaseAgent {
 
         if (!riskCheck.canTrade) {
             this.log('warn', `Risk gate blocked: ${riskCheck.reason}`);
-            return;
+            // Still check exits even when risk gate blocks new trades
         }
+
+        // 4b. Exit monitor — check TP/SL/trailing/stagnation on open positions
+        if (this.positions.length > 0 && this.brokerClient) {
+            const exits = this.exitMonitor.check(this.positions, config.exits);
+            for (const exit of exits) {
+                try {
+                    await this.brokerClient.closePosition(exit.symbol);
+                    this.positionMeta.delete(exit.symbol);
+                    this.riskManager.recordTrade(exit.pnlPct >= 0);
+                    this.log('info', `EXIT ${exit.symbol}: ${exit.reason} (P&L: ${exit.pnlPct >= 0 ? '+' : ''}${exit.pnlPct.toFixed(2)}%)`);
+                } catch (e: any) {
+                    this.log('error', `Failed to close ${exit.symbol}: ${e.message}`);
+                }
+            }
+        }
+
+        if (!riskCheck.canTrade) return;
 
         const nowTs = Date.now();
 
