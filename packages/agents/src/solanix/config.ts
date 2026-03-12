@@ -19,7 +19,7 @@ export const SOLANIX_DEFAULTS: SolanixTomlConfig = {
     watchlist: { symbols: ['SOL', 'JUP', 'BONK', 'WIF', 'PYTH', 'RNDR'], timeframe: '1h', bars_count: 100 },
     capital: { max_position_size_usd: 50, max_capital_per_trade_pct: 0.95, min_order_value: 1.0 },
     limits: { max_open_positions: 5, max_trades_per_day: 10 },
-    risk: { min_confidence: 0.50, max_daily_loss_pct: 0.05, max_weekly_loss_pct: 0.10, max_consecutive_losses: 3 },
+    risk: { min_confidence: 0.40, max_daily_loss_pct: 0.05, max_weekly_loss_pct: 0.10, max_consecutive_losses: 3 },
     exits: { take_profit_pct: 8.0, stop_loss_pct: 4.0, trailing_stop_pct: 5.0, trailing_activation_pct: 3.0, stagnation_timeout_days: 3, stagnation_min_pnl_pct: 0.5 },
     rotation: { enabled: true, min_score_advantage: 15, min_hold_minutes: 30 },
     timing: { poll_interval_ms: 60_000, signal_scan_interval_ms: 900_000, dexscreener_scan_interval_ms: 300_000 },

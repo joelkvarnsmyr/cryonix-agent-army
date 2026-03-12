@@ -151,42 +151,48 @@ export class DexScreenerSignalGenerator {
         let score = 0;
         const reasoning: string[] = [];
 
-        // 1. Short-term momentum (weight 0.30)
+        // 1. Short-term momentum (weight 0.25)
         if (h1Change >= 2) {
-            score += 0.30;
+            score += 0.25;
             reasoning.push(`h1 +${h1Change.toFixed(1)}% strong momentum`);
         } else if (h1Change >= 0.8) {
-            score += 0.20;
+            score += 0.15;
             reasoning.push(`h1 +${h1Change.toFixed(1)}% momentum`);
         } else if (h1Change >= 0.2) {
-            score += 0.10;
+            score += 0.08;
             reasoning.push(`h1 +${h1Change.toFixed(1)}% mild up`);
         } else if (h1Change <= -2) {
-            score -= 0.30;
+            score -= 0.25;
             reasoning.push(`h1 ${h1Change.toFixed(1)}% strong sell-off`);
         } else if (h1Change <= -0.8) {
-            score -= 0.20;
+            score -= 0.15;
             reasoning.push(`h1 ${h1Change.toFixed(1)}% declining`);
         } else if (h1Change <= -0.2) {
-            score -= 0.10;
+            score -= 0.08;
             reasoning.push(`h1 ${h1Change.toFixed(1)}% mild down`);
         }
 
-        // 2. Medium-term momentum (weight 0.20)
-        //    h6: gives directional context
-        if (h6Change >= 3) {
+        // 2. Medium-term momentum (weight 0.30 — primary trend signal)
+        //    h6 is the strongest predictor of near-term direction
+        if (h6Change >= 4) {
+            score += 0.30;
+            reasoning.push(`h6 +${h6Change.toFixed(1)}% strong uptrend`);
+        } else if (h6Change >= 2) {
             score += 0.20;
             reasoning.push(`h6 +${h6Change.toFixed(1)}% uptrend`);
-        } else if (h6Change >= 1) {
+        } else if (h6Change >= 0.5) {
             score += 0.10;
             reasoning.push(`h6 +${h6Change.toFixed(1)}% rising`);
-        } else if (h6Change <= -4) {
+        } else if (h6Change <= -5) {
             // Deep dip — potential dip buy
             score += 0.15;
             reasoning.push(`h6 ${h6Change.toFixed(1)}% dip buy opportunity`);
-        } else if (h6Change <= -1) {
-            score -= 0.10;
+        } else if (h6Change <= -2) {
+            score -= 0.20;
             reasoning.push(`h6 ${h6Change.toFixed(1)}% downtrend`);
+        } else if (h6Change <= -0.5) {
+            score -= 0.10;
+            reasoning.push(`h6 ${h6Change.toFixed(1)}% declining`);
         }
 
         // 3. Volume surge (weight 0.20)
@@ -205,21 +211,21 @@ export class DexScreenerSignalGenerator {
             }
         }
 
-        // 4. Buy pressure (weight 0.15)
+        // 4. Buy pressure (weight 0.10)
         const totalTxns = buysH1 + sellsH1;
         if (totalTxns >= 10) {
             const buyRatio = buysH1 / totalTxns;
             if (buyRatio >= 0.65) {
-                score += 0.15;
+                score += 0.10;
                 reasoning.push(`buy pressure ${(buyRatio * 100).toFixed(0)}%`);
             } else if (buyRatio >= 0.55) {
                 score += 0.05;
                 reasoning.push(`slight buy bias ${(buyRatio * 100).toFixed(0)}%`);
             } else if (buyRatio <= 0.35) {
-                score -= 0.15;
+                score -= 0.08;
                 reasoning.push(`sell pressure ${((1 - buyRatio) * 100).toFixed(0)}%`);
             } else if (buyRatio <= 0.45) {
-                score -= 0.05;
+                score -= 0.03;
                 reasoning.push(`slight sell bias ${((1 - buyRatio) * 100).toFixed(0)}%`);
             }
         }
@@ -231,9 +237,23 @@ export class DexScreenerSignalGenerator {
         } else if (h1Change > 0.5 && h6Change < -1) {
             score += 0.10;
             reasoning.push('dip reversal (h1 recovering from h6 dip)');
+        } else if (h1Change <= 0 && h6Change >= 2) {
+            // h6 uptrend with h1 pullback — dip entry on established trend
+            score += 0.10;
+            reasoning.push(`h1 pullback on h6 uptrend (dip entry)`);
         } else if (h1Change < -0.2 && h6Change < -0.5) {
             score -= 0.15;
             reasoning.push('trend alignment (h1+h6 bearish)');
+        }
+
+        // 6. 24h context bonus (weight 0.10)
+        //    Strong 24h move adds conviction
+        if (h24Change >= 5) {
+            score += 0.10;
+            reasoning.push(`h24 +${h24Change.toFixed(1)}% strong daily trend`);
+        } else if (h24Change <= -5) {
+            score += 0.05;
+            reasoning.push(`h24 ${h24Change.toFixed(1)}% oversold bounce candidate`);
         }
 
         // Determine action
