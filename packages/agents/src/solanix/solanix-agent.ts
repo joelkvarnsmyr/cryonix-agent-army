@@ -32,6 +32,7 @@ export class SolanaAgent extends BaseAgent {
 
     private lastDexScanTime = 0;
     private lastSignalScanTime = 0;
+    private lastResetDay = new Date().getUTCDate();
 
     private tomlConfig = loadSolanixConfig();
 
@@ -156,6 +157,14 @@ export class SolanaAgent extends BaseAgent {
 
     private async runLoop(): Promise<void> {
         const config = this.tomlConfig;
+
+        // 0. Daily reset — clear trade counters at midnight UTC
+        const today = new Date().getUTCDate();
+        if (today !== this.lastResetDay) {
+            this.riskManager.resetDaily();
+            this.lastResetDay = today;
+            this.log('info', 'Daily risk counters reset (new UTC day)');
+        }
 
         // 1. Circuit breaker check via Redis (skip trading if tripped)
         const circuitOpen = await this.isCircuitBreakerOpen();
