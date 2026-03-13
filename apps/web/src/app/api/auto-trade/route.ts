@@ -159,6 +159,8 @@ interface Signal {
   is_grid_buy?: boolean;
   aiEstimatedMinutes?: number;
   stagnationOverrideHours?: number;
+  moonshot_score?: number;
+  trade_type?: string;
 }
 
 interface OpenPosition {
@@ -189,6 +191,8 @@ interface OpenPosition {
   stagnationOverrideHours?: number; // AI-suggested timeout
   etaNotified?: boolean;   // True once initial ETA Telegram sent
   stagnationWarned?: boolean; // True once stagnation warning Telegram sent
+  moonshot_score?: number;
+  trade_type?: string;
 }
 
 // ============================================================================
@@ -2011,6 +2015,8 @@ async function executeBuy(signal: Signal): Promise<{
       entryFee,
       aiEstimatedMinutes: signal.aiEstimatedMinutes,
       stagnationOverrideHours: signal.stagnationOverrideHours,
+      moonshot_score: signal.moonshot_score,
+      trade_type: signal.trade_type,
     });
 
     // Sync to Postgres positions table
@@ -2650,6 +2656,80 @@ export async function POST() {
       }
     } catch { /* Coinglass data unavailable — skip adjustments */ }
 
+    // STEP 3e: Polymarket prediction market adjustments
+    try {
+      const [pmCryptoRaw, pmFedRaw, pmGeoRaw, pmOilRaw] = await Promise.all([
+        redis.get('polymarket:crypto'),
+        redis.get('polymarket:fed'),
+        redis.get('polymarket:geopolitik'),
+        redis.get('polymarket:oil'),
+      ]);
+
+      for (const p of parsed) {
+        if (p.signal.action !== 'BUY') continue;
+        const baseAsset = p.signal.symbol.split('/')[0];
+        const patterns = p.signal.patterns || [];
+        const isDeepValue = patterns.some((pat: string) =>
+          ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'].includes(pat)
+        );
+
+        // Crypto sentiment from prediction markets
+        if (pmCryptoRaw) {
+          const crypto = JSON.parse(pmCryptoRaw);
+          if (crypto.score <= 20 && isDeepValue) {
+            // Very bearish prediction market + deep value signal = contrarian boost
+            const boost = TOML?.polymarket?.crypto_bearish_dv_boost ?? 0.06;
+            p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
+            p.signal.reason += ` | 🔮 Polymarket crypto very_bearish, contrarian DV +${(boost * 100).toFixed(0)}%`;
+          } else if (crypto.score >= 80) {
+            // Very bullish = possible FOMO, slight penalty
+            const penalty = TOML?.polymarket?.crypto_bullish_penalty ?? 0.05;
+            p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+            p.signal.reason += ` | 🔮 Polymarket crypto euphoria -${(penalty * 100).toFixed(0)}%`;
+          }
+        }
+
+        // Fed dovish/hawkish sentiment
+        if (pmFedRaw) {
+          const fed = JSON.parse(pmFedRaw);
+          const dovishThreshold = TOML?.polymarket?.fed_dovish_threshold ?? 70;
+          const hawkishThreshold = TOML?.polymarket?.fed_hawkish_threshold ?? 30;
+          if (fed.score >= dovishThreshold) {
+            const boost = TOML?.polymarket?.fed_dovish_boost ?? 0.04;
+            p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
+            p.signal.reason += ` | 🔮 Fed dovish (${fed.score}) +${(boost * 100).toFixed(0)}%`;
+          } else if (fed.score <= hawkishThreshold) {
+            const penalty = TOML?.polymarket?.fed_hawkish_penalty ?? 0.05;
+            p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+            p.signal.reason += ` | 🔮 Fed hawkish (${fed.score}) -${(penalty * 100).toFixed(0)}%`;
+          }
+        }
+
+        // Geopolitical risk — block non-BTC alts in extreme risk
+        if (pmGeoRaw) {
+          const geo = JSON.parse(pmGeoRaw);
+          const riskThreshold = TOML?.polymarket?.geopolitik_risk_threshold ?? 70;
+          const btcOnly = TOML?.polymarket?.geopolitik_btc_only ?? true;
+          if (geo.score <= (100 - riskThreshold) && btcOnly && baseAsset !== 'BTC') {
+            // High geopolitical risk (low bullish score) — block non-BTC
+            p.signal.confidence = 0;
+            p.signal.reason += ` | 🔮 Geo risk high (${geo.score}), BTC-only mode`;
+          }
+        }
+
+        // Oil price pressure — high oil = headwind for risk-on crypto
+        if (pmOilRaw) {
+          const oil = JSON.parse(pmOilRaw);
+          const oilThreshold = TOML?.polymarket?.oil_bullish_threshold ?? 70;
+          if (oil.score >= oilThreshold) {
+            const penalty = TOML?.polymarket?.oil_risk_penalty ?? 0.03;
+            p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+            p.signal.reason += ` | 🔮 Oil bullish (${oil.score}) risk-off -${(penalty * 100).toFixed(0)}%`;
+          }
+        }
+      }
+    } catch { /* Polymarket data unavailable — skip */ }
+
     parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
     const topSignals = parsed.slice(0, 15);
     // Remove low-quality signals we won't process
@@ -2768,6 +2848,27 @@ export async function POST() {
       // Wire AI timing estimates to signal for position creation
       if (aiResult.estimatedMinutesToTarget) signal.aiEstimatedMinutes = aiResult.estimatedMinutesToTarget;
       if (aiResult.stagnationThresholdHours) signal.stagnationOverrideHours = aiResult.stagnationThresholdHours;
+
+      // Moonshot classification — use engine score or pattern-based fallback
+      if (!signal.moonshot_score) {
+        let score = 50; // default: standard
+        const patterns = signal.patterns || [];
+        const volumeRatio = (signal.indicators?.volume_ratio as number) || 0;
+        const volumeThreshold = TOML?.moonshot?.volume_threshold ?? 2.0;
+
+        if (patterns.includes('DIP_BUY')) score = 20;
+        else if (patterns.includes('DEEP_VALUE_CRASH')) score = 50;
+        else if (patterns.includes('BOLLINGER_SQUEEZE') && patterns.includes('VOLUME_SPIKE_UP')) score = 70;
+        else if (patterns.includes('BOLLINGER_SQUEEZE')) score = 50;
+
+        if (volumeRatio >= volumeThreshold) score = Math.min(100, score + 30);
+
+        signal.moonshot_score = score;
+        const scalp = TOML?.moonshot?.scalp_threshold ?? 30;
+        const moon = TOML?.moonshot?.moonshot_threshold ?? 70;
+        signal.trade_type = score < scalp ? 'scalp' : score >= moon ? 'moonshot' : 'standard';
+      }
+      console.log(`[CLASSIFY] ${signal.symbol}: moonshot_score=${signal.moonshot_score}, type=${signal.trade_type}`);
 
       // Blend TA + AI confidence, normalized to ensure weights sum to 1.0
       const rawTaWeight = TOML?.ai.ta_weight ?? 0.5;
@@ -3007,6 +3108,12 @@ export async function GET() {
           fearGreed: fgRaw ? JSON.parse(fgRaw as string) : null,
           global: globalRaw ? JSON.parse(globalRaw as string) : null,
         };
+      } catch { return null; }
+    })(),
+    polymarket: await (async () => {
+      try {
+        const raw = await redis.get('polymarket:summary');
+        return raw ? JSON.parse(raw as string) : null;
       } catch { return null; }
     })(),
   });

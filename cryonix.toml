@@ -859,6 +859,46 @@ btc_dominance_rise_alt_penalty = 2.0
 alt_dominance_penalty = 0.05
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  POLYMARKET — Prediction market intelligence                           ║
+# ║  Free API, no auth required. Polls Gamma API for event odds.           ║
+# ║  Covers: crypto price targets, Fed rates, oil, geopolitics.            ║
+# ║  Used by both Cryonix (crypto) and Aktienix (stocks).                  ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[polymarket]
+enabled = true
+
+# Poll interval in seconds. 900 = 15 minutes.
+# Gamma API is free with no published rate limits.
+poll_interval_seconds = 900
+
+# ── Crypto sentiment ─────────────────────────────────────────────────
+# When Polymarket crowd is very bearish on crypto (score < 20):
+#   Deep-value signals (DIP_BUY, DEEP_VALUE_CRASH) get a contrarian boost.
+crypto_bearish_dv_boost = 0.06
+
+# When crowd is euphoric (score > 80): slight FOMO penalty.
+crypto_bullish_penalty = 0.05
+
+# ── Fed sentiment ────────────────────────────────────────────────────
+# Dovish (rate cuts expected) = bullish for risk assets.
+fed_dovish_threshold = 70
+fed_dovish_boost = 0.04
+fed_hawkish_threshold = 30
+fed_hawkish_penalty = 0.05
+
+# ── Geopolitical risk ────────────────────────────────────────────────
+# When conflict/escalation probability is high (bullish score < 30):
+# Only allow BTC trades (flight to safety), block altcoins.
+geopolitik_risk_threshold = 70
+geopolitik_btc_only = true
+
+# ── Oil price pressure ───────────────────────────────────────────────
+# High oil prices = headwind for risk-on crypto.
+oil_bullish_threshold = 70
+oil_risk_penalty = 0.03
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  COINGLASS — Derivatives market intelligence                           ║
 # ║  Provides funding rates, open interest, and long/short ratio.          ║
 # ║  Fallback: CCXT Binance futures (funding + OI, no L/S ratio).          ║
@@ -981,3 +1021,17 @@ freshness_max_hours = 4
 
 # Minimum confirmed_count before warning-level alerts trigger action
 min_confirmations_for_action = 2
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  MOONSHOT DETECTION                                                    ║
+# ║  Scores each signal 0-100 for trade classification.                    ║
+# ║  <30 = scalp, 30-69 = standard, 70+ = moonshot.                       ║
+# ║  Affects: exit profile selection (tiered exits).                       ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[moonshot]
+enabled = true
+volume_threshold = 2.0            # Volume vs 20-period avg for +30 score
+atr_expansion_threshold = 1.5     # Current ATR vs ATR 20 periods ago for +15 score
+moonshot_threshold = 70           # Score above this = moonshot trade type
+scalp_threshold = 30              # Score below this = scalp trade type
