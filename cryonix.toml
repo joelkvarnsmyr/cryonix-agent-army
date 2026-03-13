@@ -954,3 +954,30 @@ candidate_min_volume_usd = 5000000
 # fear_greed_skip_above: don't rotate when F&G > 85 (extreme greed → avoid chasing tops)
 fear_greed_skip_below = 15
 fear_greed_skip_above = 85
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  INTELLIGENT ALERT SYSTEM                                              ║
+# ║  4-tier severity with confirmation counter.                            ║
+# ║  Replaces binary warning/critical with graduated response.             ║
+# ║  Change when: tuning alert sensitivity or TTL durations.               ║
+# ║  Affects: BUY signal blocking, SL tightening, force-close triggers.    ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[alerts]
+
+# TTL per severity level (seconds). Alert expires after this duration.
+# info: routine activity, no action taken
+# warning: multiple confirming signals, blocks BUY when confirmed_count >= 2
+# critical: confirmed threat, blocks BUY, tightens SL to breakeven
+# emergency: acute existential threat, force-closes open positions
+severity_ttl_info = 1800        # 30 min
+severity_ttl_warning = 7200     # 2h
+severity_ttl_critical = 21600   # 6h
+severity_ttl_emergency = 43200  # 12h
+
+# Ignore events older than this many hours (stale tweet guard)
+freshness_max_hours = 4
+
+# Minimum confirmed_count before warning-level alerts trigger action
+min_confirmations_for_action = 2

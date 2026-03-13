@@ -120,6 +120,14 @@ export interface CryonixConfig {
     ls_squeeze_boost?: number;
     ls_crowded_penalty?: number;
   };
+  alerts?: {
+    severity_ttl_info?: number;
+    severity_ttl_warning?: number;
+    severity_ttl_critical?: number;
+    severity_ttl_emergency?: number;
+    freshness_max_hours?: number;
+    min_confirmations_for_action?: number;
+  };
 }
 
 let _tomlConfig: CryonixConfig | null = null;

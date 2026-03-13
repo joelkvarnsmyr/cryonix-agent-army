@@ -820,7 +820,9 @@ async function monitorPositions(): Promise<MonitorResult[]> {
         }
       }
 
-      // On-chain alert check — tighten SL (warning) or force close (critical)
+      // On-chain alert check — severity-based response (Intelligent Alert System)
+      // info: no action | warning x1: log only | warning x2+: SL→breakeven
+      // critical: SL→breakeven | emergency: force close (cancel native SL + market sell)
       if (!shouldSell) {
         try {
           const baseAsset = pos.symbol.split('/')[0];
@@ -829,38 +831,67 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             let severity = 'warning';
             let reason = alertRaw;
             let source: string | null = null;
+            let confirmedCount = 1;
+            let timingUncertain = false;
             try {
               const parsed = JSON.parse(alertRaw);
               severity = parsed.severity ?? 'warning';
               reason = parsed.reason ?? alertRaw;
               source = parsed.source ?? null;
-            } catch { /* not JSON — treat as warning */ }
+              confirmedCount = parsed.confirmed_count ?? 1;
+              timingUncertain = parsed.context?.timing_uncertain ?? false;
+            } catch { /* not JSON — treat as warning with confirmed_count=1 */ }
+
+            // Freshness guard: timing_uncertain → treat as info
+            if (timingUncertain) severity = 'info';
 
             const notifiedKey = `onchain:notified:${pos.symbol}`;
             const alreadyNotified = await redis.get(notifiedKey);
+            const minConfirmations = TOML?.alerts?.min_confirmations_for_action ?? 2;
 
-            if (severity === 'critical') {
+            if (severity === 'emergency') {
+              // Emergency: force close — cancel native SL first, then market sell
               shouldSell = true;
-              exitReason = `On-chain alert (critical): ${reason}`;
+              exitReason = `On-chain alert (emergency): ${reason}`;
               if (!alreadyNotified) {
                 await redis.set(notifiedKey, '1', 'EX', 3600);
                 await sendTelegramAlert(
-                  `🚨 <b>Kritisk on-chain varning: ${pos.symbol}</b>\n\nKälla: ${source ?? 'okänd'}\nVarning: ${reason}\nÅtgärd: Position stängd (market sell)`
+                  `🚨 <b>EMERGENCY CLOSE: ${pos.symbol}</b>\n\nKälla: ${source ?? 'okänd'}\nVarning: ${reason}\nÅtgärd: Position force-closed (market sell)`
                 );
               }
-            } else if (!alreadyNotified) {
-              // warning: tighten SL to breakeven (entry - 0.05% for fees)
-              const newSl = pos.entryPrice * 0.9995;
-              if (newSl > pos.stopLoss) {
-                const oldSl = pos.stopLoss;
-                pos.stopLoss = newSl;
-                await redis.set(notifiedKey, '1', 'EX', 3600);
-                console.log(`[MONITOR] On-chain warning ${pos.symbol}: SL ${oldSl.toFixed(4)} → ${newSl.toFixed(4)}`);
-                await sendTelegramAlert(
-                  `⚠️ <b>On-chain varning: ${pos.symbol}</b>\n\nKälla: ${source ?? 'okänd'}\nVarning: ${reason}\nÅtgärd: Stop-loss dragit till entry (${newSl.toFixed(4)})`
-                );
+            } else if (severity === 'critical') {
+              // Critical: tighten SL to breakeven
+              if (!alreadyNotified) {
+                const newSl = pos.entryPrice * 0.9995;
+                if (newSl > pos.stopLoss) {
+                  const oldSl = pos.stopLoss;
+                  pos.stopLoss = newSl;
+                  await redis.set(notifiedKey, '1', 'EX', 3600);
+                  console.log(`[MONITOR] On-chain critical ${pos.symbol}: SL ${oldSl.toFixed(4)} → ${newSl.toFixed(4)}`);
+                  await sendTelegramAlert(
+                    `🚨 <b>Kritisk on-chain varning: ${pos.symbol}</b>\n\nKälla: ${source ?? 'okänd'}\nVarning: ${reason}\nÅtgärd: Stop-loss dragit till entry (${newSl.toFixed(4)})`
+                  );
+                }
               }
+            } else if (severity === 'warning' && confirmedCount >= minConfirmations) {
+              // Warning with enough confirmations: tighten SL to breakeven
+              if (!alreadyNotified) {
+                const newSl = pos.entryPrice * 0.9995;
+                if (newSl > pos.stopLoss) {
+                  const oldSl = pos.stopLoss;
+                  pos.stopLoss = newSl;
+                  await redis.set(notifiedKey, '1', 'EX', 3600);
+                  console.log(`[MONITOR] On-chain warning x${confirmedCount} ${pos.symbol}: SL ${oldSl.toFixed(4)} → ${newSl.toFixed(4)}`);
+                  await sendTelegramAlert(
+                    `⚠️ <b>On-chain varning (bekräftad x${confirmedCount}): ${pos.symbol}</b>\n\nKälla: ${source ?? 'okänd'}\nVarning: ${reason}\nÅtgärd: Stop-loss dragit till entry (${newSl.toFixed(4)})`
+                  );
+                }
+              }
+            } else if (severity === 'warning' && confirmedCount < minConfirmations) {
+              // Warning with insufficient confirmations: log only, no SL change
+              console.log(`[MONITOR] On-chain warning (${confirmedCount}/${minConfirmations} confirmations) ${pos.symbol}: ${reason} — no action`);
             }
+            // info severity: no action
           }
         } catch { /* non-critical — never block normal position monitoring */ }
       }
@@ -1470,21 +1501,36 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     return { pass: false, reason: `Execution in progress for ${signal.symbol}` };
   }
 
-  // X sentiment alert check — reject if breaking negative news
+  // X sentiment alert check — severity-based filtering (Intelligent Alert System)
   try {
     const baseAsset = signal.symbol.split('/')[0];
     const alertRaw = await redis.get(`sentiment:alert:${baseAsset}`) as string | null;
     if (alertRaw && signal.action === 'BUY') {
-      let alertText = alertRaw;
+      let severity = 'warning';
+      let confirmedCount = 1;
+      let reason = alertRaw;
+      let timingUncertain = false;
       try {
         const parsed = JSON.parse(alertRaw);
-        alertText = parsed.reason ?? alertRaw;
-      } catch { /* not JSON — use as-is */ }
-      const alertLower = alertText.toLowerCase();
-      const alertKeywords = TOML?.sentiment?.alert_keywords ?? ['hack', 'exploit', 'rug', 'sec', 'crash', 'delist', 'lawsuit', 'ban', 'scam', 'fraud', 'investigation', 'vulnerability'];
-      if (alertKeywords.some((kw: string) => alertLower.includes(kw))) {
-        return { pass: false, reason: `X alert: ${alertText}` };
+        severity = parsed.severity ?? 'warning';
+        confirmedCount = parsed.confirmed_count ?? 1;
+        reason = parsed.reason ?? alertRaw;
+        timingUncertain = parsed.context?.timing_uncertain ?? false;
+      } catch { /* not JSON — treat as warning with confirmed_count=1 (backward compat) */ }
+
+      // Freshness guard: timing_uncertain → treat as info (no action)
+      if (timingUncertain) severity = 'info';
+
+      const minConfirmations = TOML?.alerts?.min_confirmations_for_action ?? 2;
+
+      if (severity === 'critical' || severity === 'emergency') {
+        return { pass: false, reason: `X alert [${severity}]: ${reason}` };
+      } else if (severity === 'warning' && confirmedCount >= minConfirmations) {
+        return { pass: false, reason: `X alert [warning x${confirmedCount}]: ${reason}` };
+      } else if (severity === 'warning' && confirmedCount < minConfirmations) {
+        console.log(`[BUY-FILTER] X alert warning (${confirmedCount}/${minConfirmations} confirmations) for ${baseAsset} — pass, log only: ${reason}`);
       }
+      // info severity: pass — no impact
     }
   } catch { }
 
@@ -2217,13 +2263,24 @@ async function checkGridTriggers(): Promise<GridResult[]> {
             break;
           }
 
-          // Basic safety checks before grid execution (skip full AI but check spread + X alerts)
+          // Basic safety checks before grid execution — only block on critical/emergency alerts
           try {
             const baseAsset = symbol.split('/')[0];
-            const xAlert = await redis.get(`sentiment:alert:${baseAsset}`);
-            if (xAlert) {
-              results.push({ symbol, status: 'SKIPPED', level: i, error: `X alert active: ${xAlert}` });
-              continue;
+            const xAlertRaw = await redis.get(`sentiment:alert:${baseAsset}`);
+            if (xAlertRaw) {
+              let gridAlertSeverity = 'warning';
+              let gridAlertReason = xAlertRaw as string;
+              try {
+                const parsed = JSON.parse(xAlertRaw as string);
+                gridAlertSeverity = parsed.severity ?? 'warning';
+                gridAlertReason = parsed.reason ?? (xAlertRaw as string);
+                // Freshness guard
+                if (parsed.context?.timing_uncertain) gridAlertSeverity = 'info';
+              } catch { /* plain string — treat as warning (pass for grid) */ }
+              if (gridAlertSeverity === 'critical' || gridAlertSeverity === 'emergency') {
+                results.push({ symbol, status: 'SKIPPED', level: i, error: `X alert [${gridAlertSeverity}]: ${gridAlertReason}` });
+                continue;
+              }
             }
           } catch {}
 

@@ -34,8 +34,18 @@ WATCHLIST = ['BTC', 'ETH', 'SOL', 'XRP', 'AVAX', 'LINK', 'ADA', 'DOT', 'NEAR', '
 CACHE_TTL = 900       # 15 min for x-sentiment:latest
 SYMBOL_TTL = 3600     # 1h for individual sentiment:{SYMBOL}
 CONTEXT_TTL = 3600    # 1h for sentiment:context:{SYMBOL} (score + narrative)
-ALERT_TTL = 1800      # 30 min for sentiment:alert:{SYMBOL}
-ONCHAIN_ALERT_TTL = 3600  # 1h for structured on-chain alerts
+ALERT_TTL = 1800      # 30 min for sentiment:alert:{SYMBOL} (legacy plain string)
+
+# Severity-specific TTLs for structured on-chain alerts
+SEVERITY_TTLS = {
+    'info': 1800,       # 30 min
+    'warning': 7200,    # 2h
+    'critical': 21600,  # 6h
+    'emergency': 43200, # 12h
+}
+
+# Severity ordering for comparison (higher = more severe)
+SEVERITY_ORDER = {'info': 0, 'warning': 1, 'critical': 2, 'emergency': 3}
 
 SYSTEM_PROMPT = (
     'You are a crypto market sentiment analyst with access to real-time X/Twitter data. '
@@ -53,22 +63,61 @@ For each coin, provide:
 2. Volume of discussion (low/medium/high)
 3. Key narrative (one sentence: what are people talking about?)
 4. Any breaking news or events
-5. On-chain warnings: search for suspicious large exchange deposits, whale wallet moves to
-   exchanges, hack/exploit/rug alerts. Check accounts like @lookonchain, @rektfeed,
-   @OnchainLens, @WhalAlert for each coin.
+5. On-chain risk assessment: For each coin, search @lookonchain, @WhalAlert,
+   @rektfeed, @OnchainLens for on-chain activity.
+
+   CLASSIFICATION RULES:
+   - SINGLE whale transfer to exchange = "info" (routine ~80% are benign:
+     MM rebalancing, OTC settlement, cold wallet shuffling)
+   - Only ESCALATE whale moves to "warning" when:
+     * CLUSTER: multiple distinct wallets → same exchange within hours
+     * MAGNITUDE: transfer > 5% of coin's daily volume
+     * KNOWN SELLER: wallet identified as long-term holder (not MM/exchange)
+   - HACK/EXPLOIT/RUG = always "critical" minimum
+     * If funds actively draining = "emergency"
+   - REGULATORY: SEC action, delist notice = "warning"
+     * Confirmed enforcement action = "critical"
+
+   FRESHNESS RULES:
+   - Only report events from the LAST 4 HOURS
+   - If a tweet references an event without clear timestamp: timing_uncertain=true
+   - Old news (>4h) = "info" regardless of content
 
 Return JSON only:
 {{
   "BTC": {{"score": 1, "volume": "high", "narrative": "...", "alert": null, "onchain_alert": null}},
   "ETH": {{"score": -1, "volume": "medium", "narrative": "...", "alert": "hack reported",
-           "onchain_alert": {{"severity": "critical", "reason": "Exploit reported", "source": "@rektfeed"}}}},
+           "onchain_alert": {{
+             "severity": "critical",
+             "reason": "Exploit reported on bridge contract",
+             "source": "@rektfeed",
+             "context": {{
+               "direction": "to_exchange",
+               "magnitude": "high",
+               "wallet_type": "unknown",
+               "cluster": false,
+               "event_age": "minutes",
+               "timing_uncertain": false
+             }}
+           }}
+         }},
   ...
 }}
 
 onchain_alert severity rules:
-- "critical": hack, exploit, rug pull, contract vulnerability, funds drained
-- "warning": large exchange deposits, whale moves to exchanges, suspicious transfers
+- "emergency": active hack with funds draining, confirmed rug pull, exchange insolvency
+- "critical": verified hack/exploit, smart contract vulnerability, confirmed fund drain
+- "warning": cluster of whale deposits, SEC filing, negative regulatory news
+- "info": single whale transfer, market maker rebalancing, cold wallet shuffle, old news (>4h)
 - null: no on-chain concerns
+
+For each alert, provide context:
+- direction: "to_exchange" | "from_exchange" | "internal" | "unknown"
+- magnitude: "low" (<1% daily vol) | "medium" (1-5%) | "high" (>5%)
+- wallet_type: "exchange" | "market_maker" | "vc_fund" | "whale" | "unknown"
+- cluster: true if multiple wallets making same move
+- event_age: "minutes" | "hours" | "days" | "unknown"
+- timing_uncertain: true if tweet doesn't have clear timestamp
 
 Only include coins with notable sentiment. Skip coins with no meaningful X activity."""
 
@@ -144,22 +193,50 @@ def write_to_redis(r, sentiment_data: dict, model: str, tokens: int):
             plain_alert = info.get('alert')
             if onchain_alert and isinstance(onchain_alert, dict):
                 new_severity = onchain_alert.get('severity', 'warning')
-                # Idempotent: skip if same severity already in Redis (avoid TTL refresh spam)
+                context = onchain_alert.get('context', {})
+
+                # Freshness guard: timing_uncertain → cap at info
+                if isinstance(context, dict) and context.get('timing_uncertain'):
+                    new_severity = 'info'
+
+                new_severity_rank = SEVERITY_ORDER.get(new_severity, 1)
+                ttl = SEVERITY_TTLS.get(new_severity, SEVERITY_TTLS['warning'])
+
+                # Confirmation counter logic
                 existing_raw = r.get(f'sentiment:alert:{symbol}')
                 if existing_raw:
                     try:
                         existing = json.loads(existing_raw)
-                        if existing.get('severity') == new_severity:
-                            continue  # same alert already set, skip
-                    except Exception:
+                        existing_severity = existing.get('severity', 'warning')
+                        existing_rank = SEVERITY_ORDER.get(existing_severity, 1)
+                        existing_count = existing.get('confirmed_count', 1)
+
+                        if new_severity_rank == existing_rank:
+                            # Same severity: increment confirmed_count, refresh TTL
+                            existing['confirmed_count'] = existing_count + 1
+                            existing['detected_at'] = datetime.now(timezone.utc).isoformat()
+                            if context:
+                                existing['context'] = context
+                            r.setex(f'sentiment:alert:{symbol}', ttl, json.dumps(existing))
+                            continue
+                        elif new_severity_rank > existing_rank:
+                            # Higher severity: replace, reset confirmed_count
+                            pass  # fall through to create new alert below
+                        else:
+                            # Lower severity: keep existing (don't downgrade until TTL expires)
+                            continue
+                    except (json.JSONDecodeError, TypeError):
                         pass  # existing is plain string — overwrite with structured
+
                 alert_payload = {
                     'severity': new_severity,
                     'reason': onchain_alert.get('reason', ''),
                     'source': onchain_alert.get('source'),
                     'detected_at': datetime.now(timezone.utc).isoformat(),
+                    'confirmed_count': 1,
+                    'context': context if isinstance(context, dict) else {},
                 }
-                r.setex(f'sentiment:alert:{symbol}', ONCHAIN_ALERT_TTL, json.dumps(alert_payload))
+                r.setex(f'sentiment:alert:{symbol}', ttl, json.dumps(alert_payload))
             elif plain_alert:
                 r.setex(f'sentiment:alert:{symbol}', ALERT_TTL, str(plain_alert))
 
@@ -214,7 +291,19 @@ def print_summary(sentiment_data: dict, model: str, tokens: int, dry_run: bool):
             sev = onchain.get('severity', '?').upper()
             reason = onchain.get('reason', '')
             src = onchain.get('source', '')
-            print(f'           ON-CHAIN [{sev}]: {reason} {src}')
+            ctx = onchain.get('context', {})
+            ctx_parts = []
+            if isinstance(ctx, dict):
+                if ctx.get('direction'):
+                    ctx_parts.append(f'dir={ctx["direction"]}')
+                if ctx.get('magnitude'):
+                    ctx_parts.append(f'mag={ctx["magnitude"]}')
+                if ctx.get('cluster'):
+                    ctx_parts.append('CLUSTER')
+                if ctx.get('timing_uncertain'):
+                    ctx_parts.append('TIMING_UNCERTAIN')
+            ctx_str = f' ({", ".join(ctx_parts)})' if ctx_parts else ''
+            print(f'           ON-CHAIN [{sev}]: {reason} {src}{ctx_str}')
 
     # Summary line
     scores = [
@@ -241,7 +330,8 @@ def print_summary(sentiment_data: dict, model: str, tokens: int, dry_run: bool):
                 print(f'    sentiment:alert:{symbol:<6}        (TTL {ALERT_TTL}s) = {info["alert"]}')
             if info.get('onchain_alert') and isinstance(info.get('onchain_alert'), dict):
                 sev = info['onchain_alert'].get('severity', '?')
-                print(f'    sentiment:alert:{symbol:<6} (on-chain [{sev}]) (TTL {ONCHAIN_ALERT_TTL}s)')
+                ttl = SEVERITY_TTLS.get(sev, SEVERITY_TTLS['warning'])
+                print(f'    sentiment:alert:{symbol:<6} (on-chain [{sev}]) (TTL {ttl}s)')
 
     print()
 
