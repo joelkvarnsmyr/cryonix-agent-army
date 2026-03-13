@@ -79,6 +79,18 @@ class QuantGuild:
         signal = self._generate_signal(patterns, indicators, df, htf_trend)
         self._current_multi_tf = None
 
+        # Moonshot detection: classify trade type based on market conditions
+        moonshot_enabled = get_toml('moonshot', 'enabled', True)
+        if moonshot_enabled:
+            pattern_names = [p['pattern'] for p in patterns] if patterns else []
+            moonshot_score = self._compute_moonshot_score(df, indicators, pattern_names)
+            trade_type = self._classify_trade_type(moonshot_score)
+            signal['moonshot_score'] = moonshot_score
+            signal['trade_type'] = trade_type
+        else:
+            signal['moonshot_score'] = 50
+            signal['trade_type'] = 'standard'
+
         return {
             "status": "success",
             "symbol": symbol,
@@ -886,6 +898,86 @@ class QuantGuild:
                     "consensus_score": 0,
                     "conflicting": True,
                 }
+
+    # === Moonshot Detection ===
+
+    def _compute_moonshot_score(self, df: pd.DataFrame, indicators: Dict[str, Any], patterns: List[str]) -> int:
+        """
+        Compute moonshot score (0-100) based on market conditions.
+        Higher scores indicate potential for larger price moves.
+
+        Scoring:
+          Volume > threshold x 20-period avg:       +30
+          BOLLINGER_SQUEEZE in patterns:             +20
+          ATR expanding (current > threshold x 20p): +15
+          RSI between 50-65 (momentum sweet spot):   +10
+          Multi-TF alignment:                        +25 (capped at 75 without it)
+        """
+        score = 0
+
+        # Volume surge: current volume vs 20-period average
+        volume_threshold = get_toml('moonshot', 'volume_threshold', 2.0)
+        volume_ratio = indicators.get('volume_ratio', 0)
+        if volume_ratio >= volume_threshold:
+            score += 30
+
+        # Bollinger Squeeze: compressed volatility about to expand
+        if 'BOLLINGER_SQUEEZE' in patterns:
+            score += 20
+
+        # ATR expansion: volatility increasing (breakout conditions)
+        atr_expansion_threshold = get_toml('moonshot', 'atr_expansion_threshold', 1.5)
+        try:
+            if len(df) >= 20:
+                high = df['high']
+                low = df['low']
+                close = df['close']
+                atr_period = get_toml('indicators', 'atr_period', 14)
+                # Calculate ATR series
+                tr = pd.concat([
+                    high - low,
+                    (high - close.shift(1)).abs(),
+                    (low - close.shift(1)).abs()
+                ], axis=1).max(axis=1)
+                atr_series = tr.rolling(window=atr_period, min_periods=1).mean()
+                current_atr = atr_series.iloc[-1]
+                atr_20_ago = atr_series.iloc[-20] if len(atr_series) >= 20 else atr_series.iloc[0]
+                if atr_20_ago > 0 and current_atr / atr_20_ago >= atr_expansion_threshold:
+                    score += 15
+        except Exception:
+            pass  # ATR calculation failed — skip this component
+
+        # RSI in momentum sweet spot (50-65): not overbought, building momentum
+        rsi = indicators.get('rsi', 50)
+        if 50 <= rsi <= 65:
+            score += 10
+
+        # Multi-TF alignment: check if HTF data confirms direction
+        # For now, skip if HTF unavailable — cap at 75 without it
+        htf_data = getattr(self, '_current_multi_tf', None)
+        if htf_data:
+            htf_trend = self._get_higher_tf_trend(htf_data)
+            if htf_trend and htf_trend.get('bias') == 'bullish':
+                score += 25
+        else:
+            score = min(score, 75)
+
+        return min(score, 100)
+
+    def _classify_trade_type(self, score: int) -> str:
+        """
+        Classify trade type based on moonshot score.
+        Returns 'scalp', 'standard', or 'moonshot'.
+        """
+        scalp_threshold = get_toml('moonshot', 'scalp_threshold', 30)
+        moonshot_threshold = get_toml('moonshot', 'moonshot_threshold', 70)
+
+        if score < scalp_threshold:
+            return 'scalp'
+        elif score >= moonshot_threshold:
+            return 'moonshot'
+        else:
+            return 'standard'
 
     # === Helper Methods ===
 

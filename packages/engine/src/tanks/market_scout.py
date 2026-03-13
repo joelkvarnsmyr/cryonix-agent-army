@@ -162,6 +162,8 @@ class MarketScoutTank(BaseTank):
                 "entry_price": signal['entry_price'],
                 "stop_loss": signal['stop_loss'],
                 "target_price": signal['target_price'],
+                "moonshot_score": signal.get('moonshot_score', 50),
+                "trade_type": signal.get('trade_type', 'standard'),
                 "indicators": {
                     "rsi": round(indicators['rsi'], 2),
                     "bb_width_pct": indicators['bb_width_percentile'],
