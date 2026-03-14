@@ -1,0 +1,59 @@
+[broker]
+paper_trading = true
+
+[wallets]
+# Seed wallets — verified active Solana traders (last trade 2026-03-13)
+# #1 gambles.sol: 68.2% WR, $131K PnL, ROI +68.8% (TopWallets.ai KOL)
+# #2 cryptovillain26: 60.9% WR, $1.3M PnL, ROI +66.5% (TopWallets.ai KOL)
+# #3 ram: 64.3% WR, $272K PnL, ROI +115.6% (TopWallets.ai KOL)
+tracked = [
+    "Hi5yNvPSfagdja5xjYMTYWnnjSE3ze5KsezTLfuD2mqd",
+    "5sNnKuWKUtZkdC1eFNyqz3XHpNoCRQ1D1DfHcNHMV7gn",
+    "57rXqaQsvgyBKwebP2StfqQeCBjBS4jsrZFJN5aU2V9b",
+]
+max_tracked = 5
+discovery_interval_hours = 168
+
+[consensus]
+# With 3 tracked wallets: 3 = strong, 2 = medium is reasonable
+min_wallets_strong = 3
+min_wallets_medium = 2
+time_window_minutes = 15
+cooldown_hours = 4
+
+[capital]
+max_position_size_usd = 50
+max_capital_per_trade_pct = 0.20
+min_order_value = 5.00
+
+[limits]
+max_open_positions = 5
+max_trades_per_day = 10
+
+[risk]
+min_confidence = 0.50
+max_daily_loss_pct = 0.10
+max_weekly_loss_pct = 0.20
+max_consecutive_losses = 4
+
+[safety]
+min_token_age_hours = 24
+min_liquidity_usd = 50000
+min_holders = 50
+min_lp_burnt_pct = 50
+require_immutable_supply = true
+
+[exits]
+take_profit_pct = 25.0
+stop_loss_pct = 15.0
+trailing_stop_pct = 8.0
+trailing_activation_pct = 10.0
+leader_exit_enabled = true
+leader_exit_timeout_s = 60
+stagnation_timeout_hours = 48
+stagnation_min_pnl_pct = 2.0
+
+[timing]
+poll_interval_ms = 30000
+wallet_scan_interval_ms = 30000
+discovery_interval_ms = 604800000

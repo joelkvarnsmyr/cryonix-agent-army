@@ -69,6 +69,10 @@ docker compose -f docker-compose.prod.yml up -d --build aktienix aktienix-brain
 docker logs aktienix --tail 20              # Runner logs
 docker logs aktienix-brain --tail 20        # Brain logs
 
+# Polymarket Scanner
+docker compose -f docker-compose.prod.yml up -d --build polymarket-scanner
+docker logs cryonix-polymarket-scanner-1 --tail 20
+
 # Database (from packages/database)
 pnpm db:generate             # Generate Drizzle migrations
 pnpm db:push                 # Push schema to database
@@ -139,6 +143,7 @@ Legacy agent system. Key classes:
 - `scripts/telegram-scraper/scraper.py` - Telegram channel signal scraper (Telethon/Python, Docker)
 - `scripts/services/aktienix-runner.ts` - Aktienix stock trading agent loop (Alpaca, Docker)
 - `scripts/services/aktienix-brain.ts` - AktienixBrain autonomous portfolio analyst (Claude Code CLI, Docker)
+- `scripts/services/polymarket-scanner.ts` - Polymarket prediction market intelligence (every 15min, Docker)
 
 ## Data Flow
 
@@ -154,6 +159,13 @@ CMCScout (Python, every 10min, requires CMC_API_KEY)
   -> Fetch global metrics (total MC, BTC dominance, F&G)
   -> Fetch quotes for 45 symbols (rank, MC, FDV)
   -> Write to Redis: cmc:global, cmc:fear_greed, cmc:mcap:{SYMBOL}
+
+PolymarketScanner (TypeScript, every 15min, no auth needed)
+  -> Fetch top 50 events by 24h volume from Gamma API
+  -> Classify: crypto, fed, oil, geopolitik (keyword-based)
+  -> Volume-weighted sentiment scoring (0-100 per category)
+  -> Write to Redis: polymarket:crypto, polymarket:fed, polymarket:oil, polymarket:geopolitik, polymarket:summary
+  -> Consumed by: auto-trade (crypto confidence adjustments) + aktienix (sector overlays)
 
 Auto-Trader (Node, every 30s)
   -> GET /api/auto-trade
@@ -263,7 +275,7 @@ CMC_API_KEY=...                      # CoinMarketCap Free tier API key (engine)
 ## Key Conventions
 
 - Python engine packages use `echo` skip for `pnpm build` since they run in Docker
-- Redis key patterns: `trades:pending`, `trades:approved`, `positions:open`, `sentiment:{SYMBOL}`, `agent:{NAME}:status`, `risk:portfolio_state`, `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:{channel}:{symbol}:{action}`, `cmc:global`, `cmc:fear_greed`, `cmc:mcap:{SYMBOL}`, `brain:acute_trigger`, `brain:loss_streak`, `brain:blocked_patterns`, `evolution:directives`, `aktienix:state`, `aktienix:risk`, `aktienix:brain:last_run`, `aktienix:brain:cooldown`
+- Redis key patterns: `trades:pending`, `trades:approved`, `positions:open`, `sentiment:{SYMBOL}`, `agent:{NAME}:status`, `risk:portfolio_state`, `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:{channel}:{symbol}:{action}`, `cmc:global`, `cmc:fear_greed`, `cmc:mcap:{SYMBOL}`, `brain:acute_trigger`, `brain:loss_streak`, `brain:blocked_patterns`, `evolution:directives`, `aktienix:state`, `aktienix:risk`, `aktienix:brain:last_run`, `aktienix:brain:cooldown`, `polymarket:crypto`, `polymarket:fed`, `polymarket:oil`, `polymarket:geopolitik`, `polymarket:summary`
 - Docker networking: containers use service names (web, engine, redis, postgres) not localhost
 - `host.docker.internal` for dev Docker -> host communication
 - Auto-trader is SPOT_ONLY (rejects SELL signals, only BUY)

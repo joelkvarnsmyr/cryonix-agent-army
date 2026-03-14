@@ -12,6 +12,7 @@ import { SolanaExitMonitor } from './exit-monitor';
 import { MacroFilter } from './macro-filter';
 import { trySmartRotation } from './smart-rotation';
 import { loadSolanixConfig } from './config';
+import { PolymarketIntelligence } from '../shared/polymarket-intelligence';
 import type { SolanaPosition, SolanaAccountState } from './types';
 
 export class SolanaAgent extends BaseAgent {
@@ -24,6 +25,7 @@ export class SolanaAgent extends BaseAgent {
     private statePublisher: StatePublisher | null = null;
     private exitMonitor = new SolanaExitMonitor();
     private macroFilter: MacroFilter | null = null;
+    private polymarket = new PolymarketIntelligence(300_000); // 5 min cache
     private riskManager = new RiskManager();
 
     private positions: SolanaPosition[] = [];
@@ -392,7 +394,18 @@ export class SolanaAgent extends BaseAgent {
             }
         }
 
-        // Confidence threshold (after macro adjustment)
+        // Polymarket sentiment adjustment
+        try {
+            const poly = await this.polymarket.getConfidenceDelta('solanix');
+            if (poly.delta !== 0) {
+                adjustedConfidence = Math.max(0, Math.min(1, adjustedConfidence + poly.delta / 100));
+                this.log('info', `Polymarket: ${poly.delta >= 0 ? '+' : ''}${poly.delta}% (${poly.reason})`);
+            }
+        } catch {
+            // Non-critical, continue without Polymarket data
+        }
+
+        // Confidence threshold (after macro + polymarket adjustment)
         if (adjustedConfidence < config.risk.min_confidence) {
             this.log('info', `Signal confidence ${adjustedConfidence.toFixed(2)} below threshold (${config.risk.min_confidence}). Skipping ${symbol}.`);
             return;
