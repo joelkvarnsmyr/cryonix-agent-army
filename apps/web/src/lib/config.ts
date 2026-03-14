@@ -41,6 +41,17 @@ export interface CryonixConfig {
     native_sl_limit_offset: number;
     stagnation_timeout_hours: number;
     stagnation_min_pnl_pct: number;
+    // Tiered exit engine (Phase 3)
+    tiered_exits_enabled?: boolean;
+    min_split_value?: number;
+    t1_atr_mult_scalp?: number; t1_atr_mult_standard?: number; t1_atr_mult_moonshot?: number;
+    t2_atr_mult_scalp?: number; t2_atr_mult_standard?: number; t2_atr_mult_moonshot?: number;
+    t1_pct_scalp?: number; t1_pct_standard?: number; t1_pct_moonshot?: number;
+    t2_pct_scalp?: number; t2_pct_standard?: number; t2_pct_moonshot?: number;
+    t3_pct_scalp?: number; t3_pct_standard?: number; t3_pct_moonshot?: number;
+    stagnation_scalp?: number; stagnation_standard?: number; stagnation_moonshot?: number;
+    ratchet_5pct_mult?: number; ratchet_10pct_mult?: number; ratchet_20pct_mult?: number;
+    ratchet_stale_hours?: number;
   };
   indicators: {
     rsi_period: number; rsi_oversold: number; rsi_overbought: number;
@@ -127,6 +138,25 @@ export interface CryonixConfig {
     severity_ttl_emergency?: number;
     freshness_max_hours?: number;
     min_confirmations_for_action?: number;
+  };
+  moonshot?: {
+    volume_threshold?: number;
+    scalp_threshold?: number;
+    moonshot_threshold?: number;
+  };
+  polymarket?: {
+    enabled?: boolean;
+    poll_interval_seconds?: number;
+    crypto_bearish_dv_boost?: number;
+    crypto_bullish_penalty?: number;
+    fed_dovish_threshold?: number;
+    fed_dovish_boost?: number;
+    fed_hawkish_threshold?: number;
+    fed_hawkish_penalty?: number;
+    geopolitik_risk_threshold?: number;
+    geopolitik_btc_only?: boolean;
+    oil_bullish_threshold?: number;
+    oil_risk_penalty?: number;
   };
 }
 

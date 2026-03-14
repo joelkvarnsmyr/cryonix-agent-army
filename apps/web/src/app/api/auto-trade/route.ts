@@ -193,6 +193,291 @@ interface OpenPosition {
   stagnationWarned?: boolean; // True once stagnation warning Telegram sent
   moonshot_score?: number;
   trade_type?: string;
+  exitPlan?: ExitPlan;
+}
+
+// ============================================================================
+// TIERED EXIT ENGINE — T1/T2/T3 partial sells + ratcheting trail (Phase 3)
+// ============================================================================
+
+interface ExitTier {
+  name: 'T1' | 'T2' | 'T3';
+  targetPrice: number;
+  sellPct: number;
+  status: 'pending' | 'filled' | 'skipped';
+  filledAt?: string;
+  filledPrice?: number;
+  filledQty?: number;
+}
+
+interface ExitPlan {
+  tradeType: 'scalp' | 'standard' | 'moonshot';
+  moonshotScore: number;
+  atr: number;
+  tiers: ExitTier[];
+  originalQuantity: number;
+  remainingQuantity: number;
+  breakeven: boolean;
+  highWaterMarkAt: string;
+  ratchetTrailPrice: number;
+  ratchetActive: boolean;
+  stagnationHours: number;
+}
+
+// ── 3a. Replace native SL order ──────────────────────────────────────
+
+async function replaceNativeSl(
+  symbol: string,
+  newQty: number,
+  newStopPrice: number,
+  oldOrderId?: string,
+): Promise<string | undefined> {
+  const ex = getExchange();
+  // Cancel old SL (non-fatal if already triggered)
+  if (oldOrderId) {
+    try {
+      await ex.cancelOrder(oldOrderId, symbol);
+      console.log(`[TIERED-EXIT] Cancelled old native SL ${oldOrderId}`);
+    } catch {
+      // May already be triggered or expired
+    }
+  }
+  try {
+    const slPrice = ex.priceToPrecision(symbol, newStopPrice);
+    const slLimitPrice = ex.priceToPrecision(symbol, newStopPrice * (1 - (TOML?.exits.native_sl_limit_offset ?? 0.005)));
+    const roundedQty = parseFloat(ex.amountToPrecision(symbol, newQty));
+    if (roundedQty <= 0) return undefined;
+    const slOrder = await ex.createOrder(
+      symbol,
+      'STOP_LOSS_LIMIT',
+      'sell',
+      roundedQty,
+      parseFloat(slLimitPrice),
+      { stopPrice: parseFloat(slPrice) },
+    );
+    console.log(`[TIERED-EXIT] Native SL placed: ${slOrder.id} @ $${slPrice} (qty=${roundedQty}, limit $${slLimitPrice})`);
+    return slOrder.id;
+  } catch (err) {
+    console.warn(`[TIERED-EXIT] Native SL placement failed (software SL active):`, err instanceof Error ? err.message : String(err));
+    return undefined;
+  }
+}
+
+// ── 3b. Create exit plan for a new position ──────────────────────────
+
+function createExitPlan(
+  signal: Signal,
+  executedPrice: number,
+  executedQty: number,
+  atr: number,
+): ExitPlan | undefined {
+  if (!TOML?.exits?.tiered_exits_enabled) return undefined;
+  if (atr <= 0) return undefined;
+
+  const tradeType: ExitPlan['tradeType'] =
+    signal.trade_type === 'moonshot' ? 'moonshot' :
+    signal.trade_type === 'scalp' ? 'scalp' : 'standard';
+  const moonshotScore = signal.moonshot_score ?? 0;
+
+  // ATR multipliers per trade type
+  const t1Mult = TOML.exits[`t1_atr_mult_${tradeType}` as keyof typeof TOML.exits] as number ?? 2.0;
+  const t2Mult = TOML.exits[`t2_atr_mult_${tradeType}` as keyof typeof TOML.exits] as number ?? 4.0;
+
+  // Allocation percentages
+  const t1Pct = TOML.exits[`t1_pct_${tradeType}` as keyof typeof TOML.exits] as number ?? 0.40;
+  const t2Pct = TOML.exits[`t2_pct_${tradeType}` as keyof typeof TOML.exits] as number ?? 0.30;
+  const t3Pct = TOML.exits[`t3_pct_${tradeType}` as keyof typeof TOML.exits] as number ?? 0.30;
+
+  const t1Target = executedPrice + t1Mult * atr;
+  const t2Target = executedPrice + t2Mult * atr;
+
+  // Min split value check: if T1 portion notional is too small, degenerate plan
+  const minSplit = TOML.exits.min_split_value ?? 7.50;
+  const t1Qty = executedQty * t1Pct;
+  const t1Value = t1Qty * t1Target;
+
+  let tiers: ExitTier[];
+  if (t1Value < minSplit) {
+    // Degenerate: single exit at T2 price with 100% qty
+    tiers = [
+      { name: 'T1', targetPrice: t2Target, sellPct: 1.0, status: 'pending' },
+      { name: 'T2', targetPrice: t2Target, sellPct: 0, status: 'skipped' },
+      { name: 'T3', targetPrice: 0, sellPct: 0, status: 'skipped' },
+    ];
+  } else {
+    tiers = [
+      { name: 'T1', targetPrice: t1Target, sellPct: t1Pct, status: 'pending' },
+      { name: 'T2', targetPrice: t2Target, sellPct: t2Pct, status: 'pending' },
+      { name: 'T3', targetPrice: 0, sellPct: t3Pct, status: 'pending' }, // T3 = ratcheting trail, no fixed target
+    ];
+  }
+
+  const stagnationKey = `stagnation_${tradeType}` as keyof typeof TOML.exits;
+  const stagnationHours = TOML.exits[stagnationKey] as number ?? 16;
+
+  return {
+    tradeType,
+    moonshotScore,
+    atr,
+    tiers,
+    originalQuantity: executedQty,
+    remainingQuantity: executedQty,
+    breakeven: false,
+    highWaterMarkAt: new Date().toISOString(),
+    ratchetTrailPrice: 0,
+    ratchetActive: false,
+    stagnationHours,
+  };
+}
+
+// ── 3c. Migration helper for existing positions ──────────────────────
+
+function createDefaultExitPlan(pos: OpenPosition): ExitPlan | undefined {
+  if (!TOML?.exits?.tiered_exits_enabled) return undefined;
+
+  const tpAtr = TOML.exits.tp_atr_multiplier ?? 6.0;
+  const derivedAtr = tpAtr > 0 ? (pos.takeProfit - pos.entryPrice) / tpAtr : 0;
+  if (derivedAtr <= 0) return undefined;
+
+  const tradeType: ExitPlan['tradeType'] =
+    pos.trade_type === 'moonshot' ? 'moonshot' :
+    pos.trade_type === 'scalp' ? 'scalp' : 'standard';
+
+  const t1Pct = TOML.exits[`t1_pct_${tradeType}` as keyof typeof TOML.exits] as number ?? 0.40;
+  const t2Pct = TOML.exits[`t2_pct_${tradeType}` as keyof typeof TOML.exits] as number ?? 0.30;
+  const t3Pct = TOML.exits[`t3_pct_${tradeType}` as keyof typeof TOML.exits] as number ?? 0.30;
+
+  const t1Target = (pos.entryPrice + pos.takeProfit) / 2; // Midpoint
+  const t2Target = pos.takeProfit;
+
+  const stagnationKey = `stagnation_${tradeType}` as keyof typeof TOML.exits;
+  const stagnationHours = TOML.exits[stagnationKey] as number ?? 16;
+
+  return {
+    tradeType,
+    moonshotScore: pos.moonshot_score ?? 0,
+    atr: derivedAtr,
+    tiers: [
+      { name: 'T1', targetPrice: t1Target, sellPct: t1Pct, status: 'pending' },
+      { name: 'T2', targetPrice: t2Target, sellPct: t2Pct, status: 'pending' },
+      { name: 'T3', targetPrice: 0, sellPct: t3Pct, status: 'pending' },
+    ],
+    originalQuantity: pos.quantity,
+    remainingQuantity: pos.quantity,
+    breakeven: false,
+    highWaterMarkAt: pos.openedAt || new Date().toISOString(),
+    ratchetTrailPrice: 0,
+    ratchetActive: false,
+    stagnationHours,
+  };
+}
+
+// ── 3d. Execute a partial sell ───────────────────────────────────────
+
+async function executePartialSell(
+  pos: OpenPosition,
+  sellQty: number,
+  tier: ExitTier,
+  currentPrice: number,
+): Promise<{ success: boolean; filledQty?: number; filledPrice?: number; fee?: number; error?: string }> {
+  if (!IS_PRODUCTION) {
+    console.log(`[DEV-MODE] Would partial sell ${pos.symbol} ${tier.name} — blocked`);
+    return { success: false, error: 'blocked in dev mode' };
+  }
+
+  const ex = getExchange();
+  try {
+    await ex.loadMarkets();
+    const roundedQty = parseFloat(ex.amountToPrecision(pos.symbol, sellQty));
+    if (roundedQty <= 0) return { success: false, error: 'qty rounds to 0' };
+
+    const notionalValue = roundedQty * currentPrice;
+    if (notionalValue < CONFIG.MIN_ORDER_VALUE) {
+      return { success: false, error: `notional $${notionalValue.toFixed(2)} < min $${CONFIG.MIN_ORDER_VALUE}` };
+    }
+
+    const order = await ex.createMarketOrder(pos.symbol, 'sell', roundedQty);
+    const filledPrice = order.average || order.price || currentPrice;
+    const filledQty = Number(order.filled) || roundedQty;
+    const fee = order.fee?.cost || 0;
+
+    console.log(`[TIERED-EXIT] ${tier.name} partial sell ${pos.symbol}: qty=${filledQty}, price=$${filledPrice}, fee=$${fee.toFixed(4)}`);
+    return { success: true, filledQty, filledPrice, fee };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    // NOTIONAL error: qty too small — caller should fallback to full sell
+    console.warn(`[TIERED-EXIT] ${tier.name} partial sell failed for ${pos.symbol}: ${errMsg}`);
+    return { success: false, error: errMsg };
+  }
+}
+
+// ── 3e. Ratcheting trail multiplier ──────────────────────────────────
+
+function getRatchetTrailMult(profitPct: number): number {
+  if (profitPct >= 20) return TOML?.exits?.ratchet_20pct_mult ?? 3.0;
+  if (profitPct >= 10) return TOML?.exits?.ratchet_10pct_mult ?? 2.5;
+  if (profitPct >= 5) return TOML?.exits?.ratchet_5pct_mult ?? 2.0;
+  return 1.0; // Base trailing_stop_pct
+}
+
+// ── 3f. Archive a partial exit ───────────────────────────────────────
+
+async function archivePartialExit(
+  pos: OpenPosition,
+  tier: ExitTier,
+  result: { filledQty?: number; filledPrice?: number; fee?: number },
+  closeReason: string,
+): Promise<void> {
+  const filledQty = result.filledQty ?? 0;
+  const filledPrice = result.filledPrice ?? 0;
+  const pnl = (filledPrice - pos.entryPrice) * filledQty - (result.fee ?? 0);
+  const pnlPct = pos.entryPrice > 0 ? ((filledPrice - pos.entryPrice) / pos.entryPrice) * 100 : 0;
+
+  try {
+    await archivePosition({
+      symbol: pos.symbol,
+      side: pos.side,
+      quantity: String(filledQty),
+      entryPrice: String(pos.entryPrice),
+      exitPrice: String(filledPrice),
+      stopLoss: String(pos.stopLoss),
+      takeProfit: String(pos.takeProfit),
+      pnl: String(pnl),
+      pnlPercent: String(pnlPct),
+      fees: String(result.fee ?? 0),
+      holdingPeriod: Math.round((Date.now() - new Date(pos.openedAt || Date.now()).getTime()) / 1000),
+      openedAt: new Date(pos.openedAt || Date.now()),
+      closedAt: new Date(),
+      closeReason,
+      pattern: pos.pattern,
+      metadata: { tier: tier.name, partial: true, configVersion: getConfigVersion() },
+      agentId: 'auto-trader',
+    });
+  } catch (err) {
+    console.warn(`[TIERED-EXIT] Archive partial exit failed (non-critical):`, err);
+  }
+
+  // Log partial trade
+  try {
+    await logTrade({
+      symbol: pos.symbol,
+      side: 'SELL',
+      quantity: String(filledQty),
+      entryPrice: String(pos.entryPrice),
+      exitPrice: String(filledPrice),
+      pnl: String(pnl),
+      fees: String(result.fee ?? 0),
+      confidence: String(pos.confidence),
+      pattern: pos.pattern,
+      reasoning: `${tier.name} partial sell (${(tier.sellPct * 100).toFixed(0)}%)`,
+      status: 'CLOSED',
+      agentId: 'auto-trader',
+      configVersion: getConfigVersion(),
+    });
+  } catch { /* non-critical */ }
+
+  // Track partial PnL in daily state
+  try { await addDailyPnl(pnl); } catch { }
 }
 
 // ============================================================================
@@ -507,7 +792,7 @@ function getScalpExits(entryPrice: number): { stopLoss: number; takeProfit: numb
 
 interface MonitorResult {
   symbol: string;
-  action: 'HOLD' | 'SOLD_TP' | 'SOLD_SL' | 'SOLD_TRAILING' | 'SOLD_STAGNATION' | 'SOLD_DUST' | 'ERROR';
+  action: 'HOLD' | 'SOLD_TP' | 'SOLD_SL' | 'SOLD_TRAILING' | 'SOLD_STAGNATION' | 'SOLD_DUST' | 'SOLD_T1' | 'SOLD_T2' | 'SOLD_T3' | 'ERROR';
   currentPrice?: number;
   pnl?: number;
   pnlPct?: number;
@@ -766,61 +1051,243 @@ async function monitorPositions(): Promise<MonitorResult[]> {
         exitReason = `Dust prevention: value $${currentValue.toFixed(2)} approaching NOTIONAL minimum`;
       }
 
-      // Stagnation exit (REFACTORED)
-      if (!shouldSell && pos.openedAt) {
-        const stagnation = TimingService.isStagnant(pos.openedAt, pnlPct, {
-          isScalp: pos.isScalpPosition,
-          overrideHours: pos.stagnationOverrideHours,
-          defaultTimeout: TOML?.exits?.stagnation_timeout_hours,
-          minPnl: TOML?.exits?.stagnation_min_pnl_pct,
-          scalpMaxHoldMins: TOML?.scalp?.max_hold_minutes
-        });
+      // ── TIERED EXIT ENGINE (Phase 3) ──────────────────────────────────
+      // For non-grid LONG positions with tiered_exits_enabled:
+      // T1 partial sell → T2 partial sell → T3 ratcheting trail → full close
+      // Falls through to legacy SL/TP/trailing for grid, SHORT, or feature off.
+      const tieredEnabled = !!(TOML?.exits?.tiered_exits_enabled) && !pos.isGridPosition && pos.side !== 'SELL';
 
-        if (stagnation.stagnant) {
-          shouldSell = true;
-          exitReason = `Stagnation exit: ${stagnation.ageHours.toFixed(1)}h old (limit ${stagnation.timeout}h), movement ${pnlPct.toFixed(2)}%`;
-        }
-
-        // 3. Stagnation warning — 2h before auto-exit
-        if (!stagnation.stagnant && !pos.stagnationWarned) {
-          const hoursRemaining = stagnation.timeout - stagnation.ageHours;
-          if (hoursRemaining > 0 && hoursRemaining <= 2) {
-            pos.stagnationWarned = true;
-            await sendTelegramAlert(
-              `⏳ <b>Stagnation-varning: ${pos.symbol}</b>\n\nPosition har rört sig ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% på ${stagnation.ageHours.toFixed(1)}h\nAuto-exit om ~${hoursRemaining.toFixed(1)}h om ingen rörelse\nTimeout: ${stagnation.timeout}h | Tröskel: ±1.0%`
-            );
+      if (tieredEnabled && !shouldSell) {
+        // Auto-create exitPlan for legacy positions that don't have one
+        if (!pos.exitPlan) {
+          pos.exitPlan = createDefaultExitPlan(pos);
+          if (pos.exitPlan) {
+            console.log(`[TIERED-EXIT] Default plan created for legacy position ${pos.symbol}: T1=$${pos.exitPlan.tiers[0].targetPrice.toFixed(4)}, T2=$${pos.exitPlan.tiers[1].targetPrice.toFixed(4)}`);
           }
         }
+
+        if (pos.exitPlan) {
+          const ep = pos.exitPlan;
+          const t1 = ep.tiers[0];
+          const t2 = ep.tiers[1];
+          const t3 = ep.tiers[2];
+          const profitPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+
+          // ── T1: First partial sell ──
+          if (t1.status === 'pending' && currentPrice >= t1.targetPrice) {
+            const sellQty = ep.originalQuantity * t1.sellPct;
+            const result = await executePartialSell(pos, sellQty, t1, currentPrice);
+
+            if (result.success) {
+              t1.status = 'filled';
+              t1.filledAt = new Date().toISOString();
+              t1.filledPrice = result.filledPrice;
+              t1.filledQty = result.filledQty;
+              ep.remainingQuantity -= result.filledQty!;
+              pos.quantity = ep.remainingQuantity;
+
+              // Move SL to breakeven
+              ep.breakeven = true;
+              pos.stopLoss = pos.entryPrice * 1.0005; // Tiny profit above entry
+
+              // Replace native SL with new qty + breakeven price
+              const newSlId = await replaceNativeSl(pos.symbol, ep.remainingQuantity, pos.stopLoss, pos.nativeSlOrderId);
+              if (newSlId) pos.nativeSlOrderId = newSlId;
+
+              // Update display TP to T2
+              pos.takeProfit = t2.status !== 'skipped' ? t2.targetPrice : t1.targetPrice;
+
+              await archivePartialExit(pos, t1, result, 'SOLD_T1');
+              const t1Pnl = ((result.filledPrice! - pos.entryPrice) / pos.entryPrice * 100).toFixed(2);
+              await sendTelegramAlert(
+                `🎯 <b>T1 HIT: ${pos.symbol}</b>\n\nSåld ${(t1.sellPct * 100).toFixed(0)}% @ $${result.filledPrice!.toFixed(4)} (+${t1Pnl}%)\nSL → breakeven ($${pos.stopLoss.toFixed(4)})\nKvar: ${(ep.remainingQuantity).toFixed(6)} (${((1 - t1.sellPct) * 100).toFixed(0)}%)`
+              );
+              console.log(`[TIERED-EXIT] T1 HIT ${pos.symbol}: sold ${result.filledQty} @ $${result.filledPrice}, SL→breakeven, remaining=${ep.remainingQuantity}`);
+            } else if (result.error?.includes('NOTIONAL') || result.error?.includes('MIN_NOTIONAL')) {
+              // Fallback: sell everything as T1
+              t1.sellPct = 1.0;
+              t2.status = 'skipped';
+              t3.status = 'skipped';
+              shouldSell = true;
+              exitReason = `T1 NOTIONAL fallback: partial too small, selling 100% @ $${currentPrice.toFixed(4)}`;
+            }
+            // else: stay pending, retry next cycle
+          }
+
+          // ── T2: Second partial sell ──
+          if (!shouldSell && t1.status === 'filled' && t2.status === 'pending' && currentPrice >= t2.targetPrice) {
+            let t2SellQty = ep.originalQuantity * t2.sellPct;
+
+            // Dust check: if remaining after T2 < MIN_ORDER_VALUE, sell 100%
+            const remainingAfterT2 = ep.remainingQuantity - t2SellQty;
+            const remainingValue = remainingAfterT2 * currentPrice;
+            if (remainingValue < CONFIG.MIN_ORDER_VALUE) {
+              t2SellQty = ep.remainingQuantity; // Sell everything
+              t3.status = 'skipped';
+              console.log(`[TIERED-EXIT] ${pos.symbol} T2 absorbing T3 dust (remaining would be $${remainingValue.toFixed(2)})`);
+            }
+
+            const result = await executePartialSell(pos, t2SellQty, t2, currentPrice);
+
+            if (result.success) {
+              t2.status = 'filled';
+              t2.filledAt = new Date().toISOString();
+              t2.filledPrice = result.filledPrice;
+              t2.filledQty = result.filledQty;
+              ep.remainingQuantity -= result.filledQty!;
+              pos.quantity = ep.remainingQuantity;
+
+              if (t3.status === 'skipped' || ep.remainingQuantity <= 0) {
+                // All sold — full close
+                shouldSell = false; // Already handled by partial sells
+                await removePosition(pos.symbol);
+                try { await closePositionBySymbol(pos.symbol, String(result.filledPrice), String(0), String(profitPct)); } catch { }
+                await archivePartialExit(pos, t2, result, 'SOLD_T2');
+                const t2Pnl = ((result.filledPrice! - pos.entryPrice) / pos.entryPrice * 100).toFixed(2);
+                await sendTelegramAlert(
+                  `🎯🎯 <b>T2 HIT (full close): ${pos.symbol}</b>\n\nSåld resterande @ $${result.filledPrice!.toFixed(4)} (+${t2Pnl}%)\nAlla tiers klara!`
+                );
+                results.push({
+                  symbol: pos.symbol,
+                  action: 'SOLD_T2',
+                  currentPrice: result.filledPrice!,
+                  pnl: (result.filledPrice! - pos.entryPrice) * result.filledQty!,
+                  pnlPct: profitPct,
+                  reason: 'T2 full close (T3 absorbed)',
+                });
+                continue; // Skip further monitoring for this position
+              }
+
+              // Activate ratcheting trail for T3
+              ep.ratchetActive = true;
+              const ratchetMult = getRatchetTrailMult(profitPct);
+              const baseTrailPct = TOML?.exits?.trailing_stop_pct ?? 3.0;
+              ep.ratchetTrailPrice = currentPrice * (1 - (baseTrailPct * ratchetMult) / 100);
+              ep.highWaterMarkAt = new Date().toISOString();
+
+              // Replace native SL for remaining qty
+              const newSlId = await replaceNativeSl(pos.symbol, ep.remainingQuantity, ep.ratchetTrailPrice, pos.nativeSlOrderId);
+              if (newSlId) pos.nativeSlOrderId = newSlId;
+
+              await archivePartialExit(pos, t2, result, 'SOLD_T2');
+              const t2Pnl = ((result.filledPrice! - pos.entryPrice) / pos.entryPrice * 100).toFixed(2);
+              await sendTelegramAlert(
+                `🎯🎯 <b>T2 HIT: ${pos.symbol}</b>\n\nSåld ${(t2.sellPct * 100).toFixed(0)}% @ $${result.filledPrice!.toFixed(4)} (+${t2Pnl}%)\nRatchet trail aktiv (trail=$${ep.ratchetTrailPrice.toFixed(4)})\nKvar: ${ep.remainingQuantity.toFixed(6)} (${(t3.sellPct * 100).toFixed(0)}%)`
+              );
+              console.log(`[TIERED-EXIT] T2 HIT ${pos.symbol}: sold ${result.filledQty} @ $${result.filledPrice}, ratchet trail active @ $${ep.ratchetTrailPrice.toFixed(4)}`);
+            }
+          }
+
+          // ── T3: Ratcheting trailing stop ──
+          if (!shouldSell && ep.ratchetActive && t3.status === 'pending') {
+            // Update trail on new highs
+            if (currentPrice > pos.highWaterMark) {
+              const ratchetMult = getRatchetTrailMult(profitPct);
+              const baseTrailPct = TOML?.exits?.trailing_stop_pct ?? 3.0;
+              const newTrail = currentPrice * (1 - (baseTrailPct * ratchetMult) / 100);
+              if (newTrail > ep.ratchetTrailPrice) {
+                ep.ratchetTrailPrice = newTrail;
+                ep.highWaterMarkAt = new Date().toISOString();
+              }
+            }
+
+            // Check if trail triggered
+            if (currentPrice <= ep.ratchetTrailPrice && ep.ratchetTrailPrice > pos.entryPrice) {
+              shouldSell = true;
+              exitReason = `T3 ratchet trail hit: $${currentPrice.toFixed(4)} <= $${ep.ratchetTrailPrice.toFixed(4)} (high: $${pos.highWaterMark.toFixed(4)})`;
+            }
+          }
+
+          // ── Tiered stagnation: use per-type timeout ──
+          if (!shouldSell && pos.openedAt) {
+            const ageMs = Date.now() - new Date(pos.openedAt).getTime();
+            const ageHours = ageMs / (1000 * 60 * 60);
+            const timeout = ep.stagnationHours;
+            const minPnl = TOML?.exits?.stagnation_min_pnl_pct ?? 1.0;
+
+            if (ageHours >= timeout && Math.abs(pnlPct) < minPnl) {
+              shouldSell = true;
+              exitReason = `Tiered stagnation exit: ${ageHours.toFixed(1)}h old (limit ${timeout}h, type=${ep.tradeType}), movement ${pnlPct.toFixed(2)}%`;
+            }
+
+            // Stagnation warning — 2h before auto-exit
+            if (!shouldSell && !pos.stagnationWarned) {
+              const hoursRemaining = timeout - ageHours;
+              if (hoursRemaining > 0 && hoursRemaining <= 2) {
+                pos.stagnationWarned = true;
+                await sendTelegramAlert(
+                  `⏳ <b>Stagnation-varning: ${pos.symbol}</b>\n\n${ep.tradeType} position (${ageHours.toFixed(1)}h)\nRörelse: ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%\nAuto-exit om ~${hoursRemaining.toFixed(1)}h\nTimeout: ${timeout}h (${ep.tradeType})`
+                );
+              }
+            }
+          }
+
+          // SL still applies even with tiered exits
+          if (!shouldSell && currentPrice <= pos.stopLoss) {
+            shouldSell = true;
+            exitReason = `Stop-loss hit: $${currentPrice.toFixed(4)} <= $${pos.stopLoss.toFixed(4)}`;
+          }
+        }
+        // If no exitPlan could be created, fall through to legacy logic below
       }
 
-      if (pos.side === 'SELL') {
-        // SHORT position: exit by buying back
-        // TP hit when price drops below target
-        if (currentPrice <= pos.takeProfit) {
-          shouldSell = true;
-          exitReason = `Short TP hit: $${currentPrice.toFixed(4)} <= $${pos.takeProfit.toFixed(4)}`;
+      // ── LEGACY EXIT LOGIC (grid positions, SHORT, feature off, or no exitPlan) ──
+      if (!tieredEnabled || !pos.exitPlan) {
+        if (!shouldSell) {
+          // Stagnation exit (REFACTORED)
+          if (pos.openedAt) {
+            const stagnation = TimingService.isStagnant(pos.openedAt, pnlPct, {
+              isScalp: pos.isScalpPosition,
+              overrideHours: pos.stagnationOverrideHours,
+              defaultTimeout: TOML?.exits?.stagnation_timeout_hours,
+              minPnl: TOML?.exits?.stagnation_min_pnl_pct,
+              scalpMaxHoldMins: TOML?.scalp?.max_hold_minutes
+            });
+
+            if (stagnation.stagnant) {
+              shouldSell = true;
+              exitReason = `Stagnation exit: ${stagnation.ageHours.toFixed(1)}h old (limit ${stagnation.timeout}h), movement ${pnlPct.toFixed(2)}%`;
+            }
+
+            // Stagnation warning — 2h before auto-exit
+            if (!stagnation.stagnant && !pos.stagnationWarned) {
+              const hoursRemaining = stagnation.timeout - stagnation.ageHours;
+              if (hoursRemaining > 0 && hoursRemaining <= 2) {
+                pos.stagnationWarned = true;
+                await sendTelegramAlert(
+                  `⏳ <b>Stagnation-varning: ${pos.symbol}</b>\n\nPosition har rört sig ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% på ${stagnation.ageHours.toFixed(1)}h\nAuto-exit om ~${hoursRemaining.toFixed(1)}h om ingen rörelse\nTimeout: ${stagnation.timeout}h | Tröskel: ±1.0%`
+                );
+              }
+            }
+          }
         }
-        // SL hit when price rises above stop
-        else if (currentPrice >= pos.stopLoss) {
-          shouldSell = true;
-          exitReason = `Short SL hit: $${currentPrice.toFixed(4)} >= $${pos.stopLoss.toFixed(4)}`;
-        }
-      } else {
-        // LONG position: exit by selling
-        // 1. Take-profit hit
-        if (currentPrice >= pos.takeProfit) {
-          shouldSell = true;
-          exitReason = `Take-profit hit: $${currentPrice.toFixed(4)} >= $${pos.takeProfit.toFixed(4)}`;
-        }
-        // 2. Stop-loss hit
-        else if (currentPrice <= pos.stopLoss) {
-          shouldSell = true;
-          exitReason = `Stop-loss hit: $${currentPrice.toFixed(4)} <= $${pos.stopLoss.toFixed(4)}`;
-        }
-        // 3. Trailing stop hit (only active when in profit)
-        else if (pnl > 0 && currentPrice <= pos.trailingStop && pos.trailingStop > pos.entryPrice) {
-          shouldSell = true;
-          exitReason = `Trailing stop hit: $${currentPrice.toFixed(4)} <= $${pos.trailingStop.toFixed(4)} (high: $${pos.highWaterMark.toFixed(4)})`;
+
+        if (!shouldSell) {
+          if (pos.side === 'SELL') {
+            // SHORT position: exit by buying back
+            if (currentPrice <= pos.takeProfit) {
+              shouldSell = true;
+              exitReason = `Short TP hit: $${currentPrice.toFixed(4)} <= $${pos.takeProfit.toFixed(4)}`;
+            }
+            else if (currentPrice >= pos.stopLoss) {
+              shouldSell = true;
+              exitReason = `Short SL hit: $${currentPrice.toFixed(4)} >= $${pos.stopLoss.toFixed(4)}`;
+            }
+          } else {
+            // LONG position: exit by selling
+            if (currentPrice >= pos.takeProfit) {
+              shouldSell = true;
+              exitReason = `Take-profit hit: $${currentPrice.toFixed(4)} >= $${pos.takeProfit.toFixed(4)}`;
+            }
+            else if (currentPrice <= pos.stopLoss) {
+              shouldSell = true;
+              exitReason = `Stop-loss hit: $${currentPrice.toFixed(4)} <= $${pos.stopLoss.toFixed(4)}`;
+            }
+            else if (pnl > 0 && currentPrice <= pos.trailingStop && pos.trailingStop > pos.entryPrice) {
+              shouldSell = true;
+              exitReason = `Trailing stop hit: $${currentPrice.toFixed(4)} <= $${pos.trailingStop.toFixed(4)} (high: $${pos.highWaterMark.toFixed(4)})`;
+            }
+          }
         }
       }
 
@@ -928,10 +1395,24 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             closeParams.marginMode = CONFIG.MARGIN_TYPE;
             closeParams.type = 'margin';
           }
+
+          // Use actual Binance balance instead of pos.quantity to handle fee-adjusted amounts
+          let sellQty = pos.quantity;
+          if (closeSide === 'sell') {
+            const baseAsset = pos.symbol.split('/')[0];
+            const bal = (await ex.fetchBalance()) as any;
+            const freeBalance = Number(bal.free?.[baseAsset] || 0);
+            if (freeBalance > 0 && freeBalance < sellQty) {
+              console.log(`[MONITOR] ${pos.symbol}: adjusting sell qty from ${sellQty} to ${freeBalance} (fee-adjusted balance)`);
+              sellQty = freeBalance;
+            }
+          }
+
+          const roundedSellQty = parseFloat(ex.amountToPrecision(pos.symbol, sellQty));
           const closeOrder = await ex.createMarketOrder(
             pos.symbol,
             closeSide,
-            pos.quantity,
+            roundedSellQty,
             undefined,
             closeParams
           );
@@ -971,8 +1452,11 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             configVersion: getConfigVersion(),
           });
 
-          const exitType = exitReason.startsWith('Stagnation') ? 'SOLD_STAGNATION' :
+          const exitType = exitReason.startsWith('T3 ratchet') ? 'SOLD_T3' :
+            exitReason.startsWith('Tiered stagnation') ? 'SOLD_STAGNATION' :
+            exitReason.startsWith('Stagnation') ? 'SOLD_STAGNATION' :
             exitReason.startsWith('Dust') ? 'SOLD_DUST' :
+            exitReason.startsWith('T1 NOTIONAL') ? 'SOLD_T1' :
             currentPrice >= pos.takeProfit ? 'SOLD_TP' :
             currentPrice <= pos.stopLoss ? 'SOLD_SL' : 'SOLD_TRAILING';
 
@@ -1357,11 +1841,19 @@ async function executeRotationClose(
       }
     }
 
-    // Market sell
+    // Market sell — use actual balance to handle fee-adjusted amounts
+    let rotationSellQty = victim.quantity;
+    const baseAsset = victim.symbol.split('/')[0];
+    const rotBal = (await ex.fetchBalance()) as any;
+    const rotFree = Number(rotBal.free?.[baseAsset] || 0);
+    if (rotFree > 0 && rotFree < rotationSellQty) {
+      console.log(`[ROTATION] ${victim.symbol}: adjusting qty from ${rotationSellQty} to ${rotFree}`);
+      rotationSellQty = rotFree;
+    }
     const closeOrder = await ex.createMarketOrder(
       victim.symbol,
       'sell',
-      victim.quantity,
+      parseFloat(ex.amountToPrecision(victim.symbol, rotationSellQty)),
     );
 
     const closePrice = closeOrder.average || closeOrder.price || currentPrice;
@@ -1995,6 +2487,16 @@ async function executeBuy(signal: Signal): Promise<{
       console.warn(`[AUTO-TRADE] Native SL failed (software SL active):`, slErr instanceof Error ? slErr.message : String(slErr));
     }
 
+    // Create tiered exit plan (Phase 3)
+    const signalAtr = signal.indicators?.atr ?? 0;
+    const exitPlan = createExitPlan(signal, executedPrice, executedQty, signalAtr as number);
+    if (exitPlan) {
+      console.log(`[TIERED-EXIT] Plan created for ${signal.symbol}: type=${exitPlan.tradeType}, ATR=${signalAtr}, T1=$${exitPlan.tiers[0].targetPrice.toFixed(4)}, T2=$${exitPlan.tiers[1].targetPrice.toFixed(4)}`);
+    }
+
+    // If exitPlan exists, use T1 as initial display TP for backward compat
+    const displayTp = exitPlan ? exitPlan.tiers[0].targetPrice : signal.target_price;
+
     // Store position in Redis for monitoring
     await addPosition({
       symbol: signal.symbol,
@@ -2002,7 +2504,7 @@ async function executeBuy(signal: Signal): Promise<{
       entryPrice: executedPrice,
       quantity: executedQty,
       stopLoss: signal.stop_loss,
-      takeProfit: signal.target_price,
+      takeProfit: displayTp,
       trailingStop: signal.stop_loss,   // Starts at stop-loss
       highWaterMark: executedPrice,      // Starts at entry
       orderId: order.id,
@@ -2017,6 +2519,7 @@ async function executeBuy(signal: Signal): Promise<{
       stagnationOverrideHours: signal.stagnationOverrideHours,
       moonshot_score: signal.moonshot_score,
       trade_type: signal.trade_type,
+      exitPlan,
     });
 
     // Sync to Postgres positions table
@@ -2658,6 +3161,7 @@ export async function POST() {
 
     // STEP 3e: Polymarket prediction market adjustments
     try {
+      console.log(`[POLYMARKET] Step 3e: checking ${parsed.length} signals against prediction market data`);
       const [pmCryptoRaw, pmFedRaw, pmGeoRaw, pmOilRaw] = await Promise.all([
         redis.get('polymarket:crypto'),
         redis.get('polymarket:fed'),
@@ -2681,11 +3185,13 @@ export async function POST() {
             const boost = TOML?.polymarket?.crypto_bearish_dv_boost ?? 0.06;
             p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
             p.signal.reason += ` | 🔮 Polymarket crypto very_bearish, contrarian DV +${(boost * 100).toFixed(0)}%`;
+            console.log(`[POLYMARKET] 🔮 ${p.signal.symbol}: contrarian DV boost +${(boost * 100).toFixed(0)}% (crypto score: ${crypto.score})`);
           } else if (crypto.score >= 80) {
             // Very bullish = possible FOMO, slight penalty
             const penalty = TOML?.polymarket?.crypto_bullish_penalty ?? 0.05;
             p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
             p.signal.reason += ` | 🔮 Polymarket crypto euphoria -${(penalty * 100).toFixed(0)}%`;
+            console.log(`[POLYMARKET] 🔮 ${p.signal.symbol}: FOMO penalty -${(penalty * 100).toFixed(0)}% (crypto score: ${crypto.score})`);
           }
         }
 
@@ -2698,6 +3204,7 @@ export async function POST() {
             const boost = TOML?.polymarket?.fed_dovish_boost ?? 0.04;
             p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
             p.signal.reason += ` | 🔮 Fed dovish (${fed.score}) +${(boost * 100).toFixed(0)}%`;
+            console.log(`[POLYMARKET] 🔮 ${p.signal.symbol}: Fed dovish boost +${(boost * 100).toFixed(0)}% (fed score: ${fed.score})`);
           } else if (fed.score <= hawkishThreshold) {
             const penalty = TOML?.polymarket?.fed_hawkish_penalty ?? 0.05;
             p.signal.confidence = Math.max(0, p.signal.confidence - penalty);

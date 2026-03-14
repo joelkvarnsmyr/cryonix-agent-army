@@ -326,6 +326,42 @@ stagnation_min_pnl_pct = 1.0
 # during fast moves. Too wide and you get worse fill prices.
 native_sl_limit_offset = 0.005
 
+# ── Tiered Exit Engine (Phase 3) ─────────────────────────────────────
+# Replaces single TP/SL with T1/T2/T3 partial sells + ratcheting trail.
+# Deploy with enabled = false, verify exitPlan in Redis, then flip on.
+tiered_exits_enabled = false
+min_split_value = 7.50         # Below this notional: single TP, no tiers
+
+# T1/T2 ATR multipliers per trade type
+t1_atr_mult_scalp = 1.5
+t1_atr_mult_standard = 2.0
+t1_atr_mult_moonshot = 3.0
+t2_atr_mult_scalp = 3.0
+t2_atr_mult_standard = 4.0
+t2_atr_mult_moonshot = 6.0
+
+# Tier allocation (fraction of original qty)
+t1_pct_scalp = 0.50
+t1_pct_standard = 0.40
+t1_pct_moonshot = 0.25
+t2_pct_scalp = 0.30
+t2_pct_standard = 0.30
+t2_pct_moonshot = 0.30
+t3_pct_scalp = 0.20
+t3_pct_standard = 0.30
+t3_pct_moonshot = 0.45
+
+# Stagnation per type (hours)
+stagnation_scalp = 4
+stagnation_standard = 16
+stagnation_moonshot = 48
+
+# Ratcheting trail — multiplier on base trailing_stop_pct at profit thresholds
+ratchet_5pct_mult = 2.0
+ratchet_10pct_mult = 2.5
+ratchet_20pct_mult = 3.0
+ratchet_stale_hours = 24
+
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  TECHNICAL INDICATORS                                                  ║
