@@ -287,6 +287,23 @@ services:
         condition: service_healthy
 
   # ============================================================
+  # ============================================================
+  # Polymarket Scanner (Prediction market intelligence)
+  # ============================================================
+
+  polymarket-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile.polymarket
+    restart: always
+    environment:
+      - KV_URL=redis://redis:6379
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
   # Caddy Reverse Proxy (Handles HTTPS and routing)
   # ============================================================
 
