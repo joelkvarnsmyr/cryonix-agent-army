@@ -23,6 +23,8 @@ export class CopynixAgent extends BaseAgent {
 
     private lastResetDay = new Date().getUTCDate();
     private tradesToday = 0;
+    private pollCount = 0;
+    private lastHeartbeat = 0;
 
     private tomlConfig = loadCopynixConfig();
 
@@ -114,10 +116,20 @@ export class CopynixAgent extends BaseAgent {
                 }
 
                 // 1. Poll tracked wallets for new trades
+                this.pollCount++;
                 const newTrades = await this.walletMonitor!.pollNewTrades();
 
                 if (newTrades.length > 0) {
                     this.log('info', `[POLL] ${newTrades.length} new trade(s) from tracked wallets`);
+                }
+
+                // Heartbeat every 5 minutes
+                const now = Date.now();
+                if (now - this.lastHeartbeat >= 300_000) {
+                    const acct = this.executor!.getAccountState();
+                    const pending = this.consensusEngine!.getPending().size;
+                    this.log('info', `[HEARTBEAT] poll #${this.pollCount} | ${acct.totalPositions} pos | $${acct.portfolioValue.toFixed(0)} value | ${pending} pending consensus | ${this.tradesToday} trades today`);
+                    this.lastHeartbeat = now;
                 }
 
                 // 2. Feed trades into consensus engine
@@ -333,24 +345,24 @@ export class CopynixAgent extends BaseAgent {
         const positions = this.executor!.getPositions();
 
         try {
-            await this.statePublisher.publish({
-                positions: positions.map(p => ({
+            // Use StatePublisher's existing methods with copynix namespace
+            await this.statePublisher.publishPositions(
+                positions.map(p => ({
                     symbol: p.tokenSymbol,
                     qty: p.qty,
                     avgEntryPrice: p.avgEntryPrice,
                     currentPrice: p.currentPrice,
                     unrealizedPl: p.unrealizedPl,
-                    pnlPct: ((p.currentPrice - p.avgEntryPrice) / p.avgEntryPrice) * 100,
+                    side: 'long' as const,
                 })),
-                portfolio: {
-                    cash: acct.usdcBalance,
-                    portfolioValue: acct.portfolioValue,
-                    totalPositions: acct.totalPositions,
-                },
-                trackedWallets: this.walletMonitor!.walletCount,
-                tradesToday: this.tradesToday,
-                pendingConsensus: this.consensusEngine!.getPending().size,
+            );
+            await this.statePublisher.publishAccount({
+                buyingPower: acct.usdcBalance,
+                settledCash: acct.usdcBalance,
+                portfolioValue: acct.portfolioValue,
+                isPatternDayTrader: false,
             });
+            await this.statePublisher.publishStatus('running');
         } catch {
             // Non-critical, skip
         }
