@@ -117,7 +117,12 @@ export class CopynixAgent extends BaseAgent {
 
                 // 1. Poll tracked wallets for new trades
                 this.pollCount++;
+                const pollStart = Date.now();
                 const newTrades = await this.walletMonitor!.pollNewTrades();
+                const pollMs = Date.now() - pollStart;
+                if (pollMs > 5000) {
+                    this.log('info', `[SLOW POLL] pollNewTrades took ${(pollMs / 1000).toFixed(1)}s`);
+                }
 
                 if (newTrades.length > 0) {
                     this.log('info', `[POLL] ${newTrades.length} new trade(s) from tracked wallets`);

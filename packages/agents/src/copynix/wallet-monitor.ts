@@ -40,8 +40,14 @@ export class WalletMonitor {
         const allTrades: WalletTrade[] = [];
 
         for (const wallet of this.trackedWallets) {
+            const label = wallet.slice(0, 8);
             try {
-                const trades = await this.fetchWalletSwaps(wallet);
+                const trades = await Promise.race([
+                    this.fetchWalletSwaps(wallet),
+                    new Promise<WalletTrade[]>((_, reject) =>
+                        setTimeout(() => reject(new Error(`Wallet ${label} poll timeout (15s)`)), 15_000),
+                    ),
+                ]);
                 const lastSeen = this.lastSeenTx.get(wallet);
 
                 for (const trade of trades) {
@@ -54,8 +60,8 @@ export class WalletMonitor {
                 if (trades.length > 0) {
                     this.lastSeenTx.set(wallet, trades[0].txSignature);
                 }
-            } catch {
-                // Skip wallet on error, continue with others
+            } catch (err) {
+                console.error(`[WalletMonitor] ${label}... error: ${err instanceof Error ? err.message : String(err)}`);
             }
 
             // Rate limit between wallets
@@ -80,18 +86,24 @@ export class WalletMonitor {
 
         const url = `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions?api-key=${heliusKey}&type=SWAP&limit=10`;
 
-        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-        if (!res.ok) return [];
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10_000);
+        try {
+            const res = await fetch(url, { signal: controller.signal });
+            if (!res.ok) return [];
 
-        const txns = (await res.json()) as HeliusTransaction[];
-        const trades: WalletTrade[] = [];
+            const txns = (await res.json()) as HeliusTransaction[];
+            const trades: WalletTrade[] = [];
 
-        for (const tx of txns) {
-            const swap = this.parseHeliusSwap(walletAddress, tx);
-            if (swap) trades.push(swap);
+            for (const tx of txns) {
+                const swap = this.parseHeliusSwap(walletAddress, tx);
+                if (swap) trades.push(swap);
+            }
+
+            return trades;
+        } finally {
+            clearTimeout(timeoutId);
         }
-
-        return trades;
     }
 
     private parseHeliusSwap(walletAddress: string, tx: HeliusTransaction): WalletTrade | null {
