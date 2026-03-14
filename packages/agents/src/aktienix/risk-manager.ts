@@ -88,6 +88,7 @@ export class RiskManager {
     resetDaily(): void {
         this.dailyPnlDollar = 0;
         this.tradesToday = 0;
+        this.consecutiveLosses = 0; // new day = fresh start, prevents permanent block
     }
 
     resetWeekly(): void {

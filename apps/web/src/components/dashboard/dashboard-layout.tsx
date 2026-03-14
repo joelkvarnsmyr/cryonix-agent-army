@@ -51,6 +51,16 @@ const NAV_GROUPS = [
       { href: '/solanix', label: 'Solana', icon: CircleDollarSign, desc: 'DEX trading agent' },
     ],
   },
+  {
+    id: 'copynix',
+    label: 'COPYNIX',
+    accent: 'text-cyan-400',
+    dot: 'bg-cyan-400',
+    glow: 'shadow-[0_0_8px_rgba(34,211,238,0.5)]',
+    items: [
+      { href: '/copynix', label: 'Copy Trade', icon: CircleDollarSign, desc: 'Solana copy-trading agent' },
+    ],
+  },
 ] as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

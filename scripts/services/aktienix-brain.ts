@@ -59,27 +59,16 @@ async function checkAndRun() {
         await runBrain(triggerReason);
     } finally {
         isRunning = false;
-        // Write cooldown timestamp so shouldRun() won't fire again within 1h
-        // (runBrain in Task 5 will write the full last_run JSON with actions/analysis)
-        const existing = await redis.get('aktienix:brain:last_run').catch(() => null);
-        if (!existing) {
-            await redis.set('aktienix:brain:last_run',
-                JSON.stringify({ timestamp: new Date().toISOString() }),
-                'EX', 172800
-            ).catch(() => {});
-        }
+        // Always write cooldown timestamp — even on failure — to prevent retry spam.
+        // runBrain() writes a richer last_run on success; this is the fallback for failures.
+        await redis.set('aktienix:brain:cooldown', '1', 'EX', 3600).catch(() => {});
     }
 }
 
 async function shouldRun(): Promise<string | null> {
-    // Cooldown check
-    const lastRun = await redis.get('aktienix:brain:last_run');
-    if (lastRun) {
-        const lastRunData = (() => { try { return JSON.parse(lastRun); } catch { return null; } })();
-        if (!lastRunData) return null; // corrupt data — skip cooldown, let it re-run
-        const lastTs = new Date(lastRunData.timestamp).getTime();
-        if (Date.now() - lastTs < COOLDOWN_MS) return null;
-    }
+    // Cooldown check — separate key with 1h TTL (survives CLI failures)
+    const cooldown = await redis.get('aktienix:brain:cooldown').catch(() => null);
+    if (cooldown) return null;
 
     // Scheduled trigger: 09:00 ET or 16:30 ET
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));

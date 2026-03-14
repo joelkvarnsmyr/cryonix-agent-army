@@ -49,6 +49,10 @@ COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 # Copy shared lib (plain JS, no TS needed)
 COPY --from=builder /app/scripts/lib/ ./scripts/lib/
 
+# Copy TOML configs for API routes
+COPY --from=builder /app/cryonix.toml ./cryonix.toml
+COPY --from=builder /app/copynix.toml ./copynix.toml
+
 USER nextjs
 EXPOSE 3000
 

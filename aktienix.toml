@@ -143,18 +143,15 @@ min_order_value = 5.00
 # Total simultaneous open positions. With T+1 settlement locking funds,
 # having 3-5 positions spread across sectors is optimal.
 # Increase only as account grows above $25k (margin available).
-max_open_positions = 5
+max_open_positions = 8
 
-# Maximum trades per day. On a cash account with T+1, you realistically
-# can only cycle 2-3 positions per day before running out of settled cash.
-# This acts as a safety net against overtrading.
-max_trades_per_day = 5
+# Maximum trades per day. Paper account has no T+1 settlement constraints,
+# so we allow more trades to gather performance data faster.
+max_trades_per_day = 20
 
 # Maximum day-trades per rolling 5-day window. PDT rule: 3 or fewer.
-# A "day trade" = opening AND closing the same position in one day.
-# Set to 2 (one below the regulatory limit) for safety margin.
-# If account_type = "margin" AND equity > $25k, set to 999 (unlimited).
-max_day_trades_per_5d = 2
+# Paper account with $100k is exempt from PDT (equity > $25k).
+max_day_trades_per_5d = 15
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -226,9 +223,9 @@ counter_trend_penalty = 0.50
 
 [risk]
 
-# Minimum confidence to execute. Stock signals are subtler than crypto,
-# so 0.60 is appropriate. Crypto uses 0.65+ due to higher noise.
-min_confidence = 0.38  # Lowered for paper trading exploration (was 0.60)
+# Minimum confidence to execute. Lowered for paper trading to generate
+# more data. Will tighten once we have 50+ trades for analysis.
+min_confidence = 0.38
 
 # T+1 safety: never trade with less than $1 settled cash.
 # In a cash account, unsettled funds from yesterday's sale CANNOT
@@ -245,9 +242,9 @@ max_daily_loss_pct = 0.02
 # 0.05 = 5% weekly. Tighter than crypto's 10%.
 max_weekly_loss_pct = 0.05
 
-# Consecutive losses before pausing. After N losses in a row,
-# pause for 1 trading day (cooling period).
-max_consecutive_losses = 3
+# Consecutive losses before pausing. Resets each new trading day.
+# 5 is generous enough for paper trading — prevents permanent blocks.
+max_consecutive_losses = 5
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗

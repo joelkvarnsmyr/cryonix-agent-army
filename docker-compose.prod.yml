@@ -304,6 +304,27 @@ services:
       redis:
         condition: service_healthy
 
+  # ============================================================
+  # Copynix — Solana Copy Trading Agent
+  # ============================================================
+
+  copynix:
+    build:
+      context: .
+      dockerfile: Dockerfile.copynix
+    restart: unless-stopped
+    volumes:
+      - ./copynix.toml:/app/copynix.toml:ro
+    environment:
+      - NODE_ENV=production
+      - KV_URL=redis://redis:6379
+      - HELIUS_API_KEY=${HELIUS_API_KEY:-}
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
   # Caddy Reverse Proxy (Handles HTTPS and routing)
   # ============================================================
 

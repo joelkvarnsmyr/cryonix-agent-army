@@ -375,6 +375,55 @@ export class AktienixAgent extends BaseAgent {
             if (blockedByMacro) return;
         }
 
+        // Polymarket prediction market overlays
+        try {
+            if (this.statePublisher && action === 'BUY') {
+                const [fedRaw, geoRaw, oilRaw] = await Promise.all([
+                    this.statePublisher.get('polymarket:fed'),
+                    this.statePublisher.get('polymarket:geopolitik'),
+                    this.statePublisher.get('polymarket:oil'),
+                ]);
+
+                // Fed dovish → boost growth stocks; hawkish → penalize
+                if (fedRaw) {
+                    const fed = JSON.parse(fedRaw);
+                    if (fed.score >= 70) {
+                        confidence = Math.min(1.0, confidence + 0.04);
+                        this.log('info', `POLYMARKET: Fed dovish (${fed.score}) → +4% confidence for ${symbol}`);
+                    } else if (fed.score <= 30) {
+                        confidence = Math.max(0, confidence - 0.05);
+                        this.log('info', `POLYMARKET: Fed hawkish (${fed.score}) → -5% confidence for ${symbol}`);
+                    }
+                }
+
+                // Geopolitical risk → block non-defensive buys
+                if (geoRaw) {
+                    const geo = JSON.parse(geoRaw);
+                    const defensiveTickers = ['XLE', 'XOM', 'CVX', 'USO', 'GLD', 'TLT'];
+                    if (geo.score <= 30 && !defensiveTickers.includes(symbol)) {
+                        this.log('warn', `POLYMARKET: Geo risk high (${geo.score}) → blocking ${symbol} (non-defensive)`);
+                        return;
+                    }
+                }
+
+                // Oil bullish → boost energy, penalize airlines/logistics
+                if (oilRaw) {
+                    const oil = JSON.parse(oilRaw);
+                    const energyTickers = ['XLE', 'XOM', 'CVX', 'USO'];
+                    const oilVictims = ['UAL', 'DAL', 'FDX', 'UPS'];
+                    if (oil.score >= 70) {
+                        if (energyTickers.includes(symbol)) {
+                            confidence = Math.min(1.0, confidence + 0.06);
+                            this.log('info', `POLYMARKET: Oil bullish (${oil.score}) → energy boost +6% for ${symbol}`);
+                        } else if (oilVictims.includes(symbol)) {
+                            confidence = Math.max(0, confidence - 0.06);
+                            this.log('info', `POLYMARKET: Oil bullish (${oil.score}) → headwind -6% for ${symbol}`);
+                        }
+                    }
+                }
+            }
+        } catch { /* Polymarket data unavailable — skip */ }
+
         // Minimum confidence threshold (from TOML risk config)
         const minConfidence = config.risk.min_confidence;
         if (confidence < minConfidence) {
