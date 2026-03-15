@@ -4,7 +4,7 @@ import { join } from 'path';
 
 export interface CopynixTomlConfig {
     broker: { paper_trading: boolean };
-    wallets: { tracked: string[]; max_tracked: number; discovery_interval_hours: number };
+    wallets: { tracked: string[]; max_tracked: number; discovery_enabled: boolean; discovery_interval_hours: number; scores: Record<string, number> };
     consensus: { min_wallets_strong: number; min_wallets_medium: number; time_window_minutes: number; cooldown_hours: number };
     capital: { max_position_size_usd: number; max_capital_per_trade_pct: number; min_order_value: number };
     limits: { max_open_positions: number; max_trades_per_day: number };
@@ -16,7 +16,7 @@ export interface CopynixTomlConfig {
 
 export const COPYNIX_DEFAULTS: CopynixTomlConfig = {
     broker: { paper_trading: true },
-    wallets: { tracked: [], max_tracked: 5, discovery_interval_hours: 168 },
+    wallets: { tracked: [], max_tracked: 10, discovery_enabled: true, discovery_interval_hours: 24, scores: {} },
     consensus: { min_wallets_strong: 3, min_wallets_medium: 2, time_window_minutes: 15, cooldown_hours: 4 },
     capital: { max_position_size_usd: 50, max_capital_per_trade_pct: 0.20, min_order_value: 5.0 },
     limits: { max_open_positions: 5, max_trades_per_day: 10 },

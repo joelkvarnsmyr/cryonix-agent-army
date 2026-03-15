@@ -8,6 +8,7 @@ import { CopyExecutor } from './copy-executor';
 import { CopyRiskGate } from './risk-gate';
 import { loadCopynixConfig } from './config';
 import { PolymarketIntelligence } from '../shared/polymarket-intelligence';
+import { WalletDiscovery } from './wallet-discovery';
 import type { CopyPosition, CopySignal, WalletTrade } from './types';
 
 export class CopynixAgent extends BaseAgent {
@@ -20,6 +21,9 @@ export class CopynixAgent extends BaseAgent {
     private statePublisher: StatePublisher | null = null;
     private riskManager = new RiskManager();
     private polymarket = new PolymarketIntelligence(300_000);
+
+    private walletDiscovery: WalletDiscovery | null = null;
+    private lastDiscoveryTime = 0;
 
     private lastResetDay = new Date().getUTCDate();
     private tradesToday = 0;
@@ -79,7 +83,18 @@ export class CopynixAgent extends BaseAgent {
         const acct = this.executor.getAccountState();
         this.riskManager.updatePortfolioValue(acct.portfolioValue);
 
+        // Wallet discovery (finds new wallets on trending tokens)
+        if (config.wallets.discovery_enabled) {
+            this.walletDiscovery = new WalletDiscovery({
+                helius_api_key: process.env.HELIUS_API_KEY ?? null,
+                existing_wallets: config.wallets.tracked,
+                max_tracked: config.wallets.max_tracked,
+            });
+            this.log('info', 'Wallet discovery enabled');
+        }
+
         this.log('info', `Tracked wallets: ${this.walletMonitor.walletCount}`);
+        this.log('info', `Single-whale mode: ${Object.keys(config.wallets.scores).length} scored wallets`);
         this.log('info', `Paper trading: $${acct.usdcBalance} USDC`);
         this.log('info', 'Copynix initialized.');
     }
@@ -156,6 +171,9 @@ export class CopynixAgent extends BaseAgent {
                 // 5. Publish state
                 await this.publishState();
 
+                // 6. Wallet discovery (periodic)
+                await this.runDiscovery();
+
             } catch (err) {
                 this.log('error', `Loop error: ${err instanceof Error ? err.message : String(err)}`);
             }
@@ -183,6 +201,16 @@ export class CopynixAgent extends BaseAgent {
 
         if (signal) {
             await this.executeSignal(signal);
+        } else {
+            // Single-whale mode: high-score wallets can trigger alone
+            const walletScore = this.tomlConfig.wallets.scores[trade.walletAddress] ?? 0;
+            if (walletScore >= 80) {
+                const whaleSignal = this.consensusEngine!.createSingleWhaleSignal(trade, walletScore);
+                if (whaleSignal) {
+                    this.log('info', `[WHALE] Single-whale signal from ${trade.walletAddress.slice(0, 8)}... (score ${walletScore})`);
+                    await this.executeSignal(whaleSignal);
+                }
+            }
         }
     }
 
@@ -393,6 +421,40 @@ export class CopynixAgent extends BaseAgent {
             }
         } catch {
             // Skip price update on error
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Wallet Discovery
+    // -------------------------------------------------------------------------
+
+    private async runDiscovery(): Promise<void> {
+        if (!this.walletDiscovery) return;
+
+        const intervalMs = this.tomlConfig.wallets.discovery_interval_hours * 3_600_000;
+        if (Date.now() - this.lastDiscoveryTime < intervalMs) return;
+        this.lastDiscoveryTime = Date.now();
+
+        try {
+            this.log('info', '[DISCOVERY] Searching for new wallets...');
+            const newWallets = await this.walletDiscovery.discover();
+
+            if (newWallets.length === 0) {
+                this.log('info', '[DISCOVERY] No new wallets found');
+                return;
+            }
+
+            for (const w of newWallets) {
+                this.walletMonitor!.addWallet(w.address);
+                // Give discovered wallets a starting score of 70 (below single-whale threshold)
+                // They need to prove themselves before getting single-whale privileges
+                this.tomlConfig.wallets.scores[w.address] = w.score >= 80 ? w.score : 70;
+                this.log('info', `[DISCOVERY] Added wallet ${w.label} (${w.address.slice(0, 8)}...) score=${w.score} WR=${w.winRate.toFixed(0)}%`);
+            }
+
+            this.log('info', `[DISCOVERY] Total tracked wallets: ${this.walletMonitor!.walletCount}`);
+        } catch (err) {
+            this.log('error', `[DISCOVERY] Error: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
 
