@@ -341,10 +341,12 @@ export class SolanaAgent extends BaseAgent {
                     symbols: newSymbols,
                     min_signal_score: config.signals.min_signal_score,
                 });
-                // Register discovered mint addresses with broker
+                // Register discovered mint addresses with broker + signal generator
                 for (const t of tokens) {
                     if (t.mintAddress) {
                         this.brokerClient?.addDynamicToken(t.symbol, t.mintAddress);
+                        // Ensure dynamic tokens (not in MINT_ADDRESS_MAP) get TA signals too
+                        this.signalGenerator.addSymbol(t.symbol, t.mintAddress);
                     }
                 }
                 this.log('info', `Watchlist refreshed: ${newSymbols.length} symbols — ${newSymbols.join(', ')}`);
