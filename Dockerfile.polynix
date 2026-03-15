@@ -1,0 +1,24 @@
+FROM node:20-alpine
+
+RUN apk add --no-cache git
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY packages/agents/package.json packages/agents/
+COPY packages/types/package.json packages/types/
+
+# Install dependencies
+RUN npm i -g pnpm && pnpm install --frozen-lockfile
+
+# Copy source
+COPY packages/agents/ packages/agents/
+COPY packages/types/ packages/types/
+COPY scripts/services/polynix-runner.ts scripts/services/
+COPY polynix.toml ./
+
+# Install tsx for TypeScript execution
+RUN pnpm add -w tsx
+
+CMD ["npx", "tsx", "scripts/services/polynix-runner.ts"]

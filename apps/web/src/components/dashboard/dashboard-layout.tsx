@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import {
   Activity, BarChart3, LineChart, Settings, Wifi, WifiOff,
-  FlaskConical, TrendingUp, CircleDollarSign, ChevronRight,
+  FlaskConical, TrendingUp, CircleDollarSign, ChevronRight, Target,
 } from 'lucide-react';
 import { Button } from '@cryonix/ui';
 import { useSystemHealth } from '@/hooks/useSystemHealth';
@@ -49,6 +49,16 @@ const NAV_GROUPS = [
     glow: 'shadow-[0_0_8px_rgba(251,191,36,0.5)]',
     items: [
       { href: '/solanix', label: 'Solana', icon: CircleDollarSign, desc: 'DEX trading agent' },
+    ],
+  },
+  {
+    id: 'polynix',
+    label: 'POLYNIX',
+    accent: 'text-orange-400',
+    dot: 'bg-orange-400',
+    glow: 'shadow-[0_0_8px_rgba(251,146,60,0.5)]',
+    items: [
+      { href: '/polynix', label: 'Polymarket', icon: Target, desc: 'Binary options agent' },
     ],
   },
   {

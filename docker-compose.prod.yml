@@ -325,6 +325,51 @@ services:
       redis:
         condition: service_healthy
 
+  # ============================================================
+  # Polynix — Polymarket Binary Options Agent
+  # ============================================================
+
+  polynix:
+    build:
+      context: .
+      dockerfile: Dockerfile.polynix
+    container_name: polynix
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - KV_URL=redis://redis:6379
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ============================================================
+  # Solanix — Solana DEX Trading Agent
+  # ============================================================
+
+  solanix:
+    build:
+      context: .
+      dockerfile: Dockerfile.solanix
+    container_name: solanix
+    restart: unless-stopped
+    volumes:
+      - ./solanix.toml:/app/solanix.toml:ro
+    environment:
+      - NODE_ENV=production
+      - KV_URL=redis://redis:6379
+      - HELIUS_API_KEY=${HELIUS_API_KEY:-}
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL:-}
+      - SOLANA_PRIVATE_KEY=${SOLANA_PRIVATE_KEY:-}
+      - XAI_API_KEY=${XAI_API_KEY:-}
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
   # Caddy Reverse Proxy (Handles HTTPS and routing)
   # ============================================================
 
