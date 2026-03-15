@@ -1,0 +1,28 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install build tools for pyswisseph C extension
+RUN apt-get update && apt-get install -y \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies directly (no Poetry needed for this service)
+RUN pip install --no-cache-dir \
+    pyswisseph>=2.10 \
+    redis>=5.0 \
+    ccxt>=4.2 \
+    httpx>=0.26
+
+# Copy vedic module from engine
+COPY packages/engine/src/vedic ./packages/engine/src/vedic
+COPY packages/engine/src/__init__.py ./packages/engine/src/__init__.py
+
+# Copy the trader script
+COPY scripts/services/vedic-trader.py ./scripts/services/vedic-trader.py
+
+# Set Python path so imports work
+ENV PYTHONPATH=/app/packages/engine
+
+CMD ["python", "scripts/services/vedic-trader.py"]

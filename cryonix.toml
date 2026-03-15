@@ -946,6 +946,49 @@ oil_bullish_threshold = 70
 oil_risk_penalty = 0.03
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  VEDIC ASTROLOGY — Vedic astro intelligence layer                      ║
+# ║  Pure local computation via Swiss Ephemeris (pyswisseph).              ║
+# ║  No external API calls, no rate limits.                                ║
+# ║  Provides: planetary positions, nakshatras, muhurta, transits.         ║
+# ║  Used by auto-trader for confidence adjustments.                       ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[vedic]
+
+# Master switch. When false, VedicScout does not run.
+enabled = true
+
+# Poll interval in seconds. 900 = 15 min.
+# Planetary positions change slowly, 15 min is more than enough.
+poll_interval_seconds = 900
+
+# ── Muhurta adjustments ─────────────────────────────────────────────
+# When muhurta is "very_auspicious": boost confidence on BUY signals.
+muhurta_auspicious_boost = 0.05
+
+# When muhurta is "inauspicious" or "very_inauspicious": penalty.
+muhurta_inauspicious_penalty = 0.05
+
+# ── Mercury Retrograde ─────────────────────────────────────────────
+# When Mercury is retrograde: penalize all new positions.
+# Mercury rules communication and technology — retro = higher risk.
+mercury_retrograde_penalty = 0.08
+
+# ── Moon Nakshatra ──────────────────────────────────────────────────
+# When Moon is in Pushya (most auspicious): boost buy signals.
+pushya_nakshatra_boost = 0.06
+
+# When Moon is in Mula (destructive): penalize.
+mula_nakshatra_penalty = 0.05
+
+# ── Per-symbol transit adjustments ──────────────────────────────────
+# When a symbol has bullish transits (score > 30): boost.
+transit_bullish_boost = 0.04
+
+# When bearish transits (score < -30): penalize.
+transit_bearish_penalty = 0.04
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  COINGLASS — Derivatives market intelligence                           ║
 # ║  Provides funding rates, open interest, and long/short ratio.          ║
 # ║  Fallback: CCXT Binance futures (funding + OI, no L/S ratio).          ║

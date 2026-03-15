@@ -305,6 +305,25 @@ services:
         condition: service_healthy
 
   # ============================================================
+  # Vedic Trader — Pure astrology paper trading experiment
+  # ============================================================
+
+  vedic-trader:
+    build:
+      context: .
+      dockerfile: Dockerfile.vedic-trader
+    restart: always
+    environment:
+      - KV_URL=redis://redis:6379
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ============================================================
   # Copynix — Solana Copy Trading Agent
   # ============================================================
 
