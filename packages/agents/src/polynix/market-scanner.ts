@@ -16,7 +16,7 @@ interface GammaMarketEntry {
     conditionId: string;
     questionID: string;
     question: string;
-    outcomes: string[];
+    outcomes: string;           // JSON string: '["Yes", "No"]'
     outcomePrices: string;
     clobTokenIds: string;
     closed: boolean;
@@ -32,9 +32,9 @@ interface GammaMarketDirect {
     conditionId: string;
     questionID: string;
     question: string;
-    outcomes: string[];
-    outcomePrices: string;
-    clobTokenIds?: string;
+    outcomes: string;           // JSON string: '["Yes", "No"]'
+    outcomePrices: string;      // JSON string: '["0.55", "0.45"]'
+    clobTokenIds?: string;      // JSON string: '["token1", "token2"]'
     tokens?: Array<{ token_id: string; outcome: string }>;
     closed: boolean;
     active: boolean;
@@ -107,8 +107,14 @@ export class MarketScanner {
             for (const m of markets) {
                 if (m.closed || !m.active) continue;
 
-                // Must be binary
-                if (!m.outcomes || m.outcomes.length !== 2) continue;
+                // Must be binary (outcomes is a JSON string)
+                let outcomes: string[];
+                try {
+                    outcomes = typeof m.outcomes === 'string'
+                        ? JSON.parse(m.outcomes)
+                        : m.outcomes;
+                } catch { continue; }
+                if (!outcomes || outcomes.length !== 2) continue;
 
                 // Must have token IDs
                 const tokenIds = this.extractTokenIds(m);
@@ -191,8 +197,14 @@ export class MarketScanner {
             for (const m of markets) {
                 if (m.closed) continue;
 
-                // Must be binary
-                if (!m.outcomes || m.outcomes.length !== 2) continue;
+                // Must be binary (outcomes is JSON string from API)
+                let parsedOutcomes: string[];
+                try {
+                    parsedOutcomes = typeof m.outcomes === 'string'
+                        ? JSON.parse(m.outcomes)
+                        : m.outcomes;
+                } catch { continue; }
+                if (!parsedOutcomes || parsedOutcomes.length !== 2) continue;
 
                 // Must have CLOB token IDs
                 let tokenIds: { yes: string; no: string } | null = null;
