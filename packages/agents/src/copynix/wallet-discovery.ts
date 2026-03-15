@@ -1,14 +1,14 @@
 import type { TrackedWallet } from './types';
+import { WalletProfiler } from './wallet-profiler';
 
 /**
  * WalletDiscovery — finds new profitable Solana wallets to copy.
  *
- * Strategy: analyze recent top-performing trades on trending tokens
- * and identify wallets that consistently profit.
- *
- * Sources (all free, no auth):
- *   1. DexScreener trending tokens → top traders via Helius
- *   2. Helius enhanced API: analyze swap history of candidate wallets
+ * Pipeline:
+ *   1. DexScreener trending tokens → find early buyers via Helius
+ *   2. WalletProfiler: deep-verify candidate's ENTIRE swap history
+ *      (win rate, PnL, trade frequency across ALL tokens — not just one)
+ *   3. Only wallets with proven multi-token profitability are added
  */
 
 interface CandidateWallet {
@@ -94,45 +94,72 @@ export class WalletDiscovery {
 
         console.log(`[WalletDiscovery] Analyzed ${tokensAnalyzed} tokens → ${totalCandidates} raw candidates → ${candidates.size} unique wallets`);
 
-        // Step 3: Filter and score candidates
-        // Require: ≥2 trades (relaxed from 3), ≥50% win rate
-        // Note: totalPnlUsd is estimated — a completed buy+sell cycle counts as a "win"
-        const qualified = Array.from(candidates.values())
-            .filter(c => {
-                const winRate = c.trades > 0 ? c.wins / c.trades : 0;
-                return c.trades >= 2 && winRate >= 0.5;
-            })
-            .sort((a, b) => {
-                // Score: win rate * trade count * recency
-                const recencyA = Math.max(0, 1 - (Date.now() - a.lastSeen) / (7 * 86_400_000));
-                const recencyB = Math.max(0, 1 - (Date.now() - b.lastSeen) / (7 * 86_400_000));
-                const scoreA = (a.wins / a.trades) * Math.sqrt(a.trades) * (0.5 + 0.5 * recencyA);
-                const scoreB = (b.wins / b.trades) * Math.sqrt(b.trades) * (0.5 + 0.5 * recencyB);
-                return scoreB - scoreA;
-            })
-            .slice(0, slotsAvailable);
+        // Step 3: Pre-filter by basic metrics (min 2 trades on trending tokens)
+        const preFiltered = Array.from(candidates.values())
+            .filter(c => c.trades >= 2)
+            .sort((a, b) => b.trades - a.trades)
+            .slice(0, 10); // Top 10 candidates for deep profiling
 
-        if (qualified.length === 0) {
-            console.log(`[WalletDiscovery] No qualifying wallets (need ≥2 trades, ≥50% WR)`);
+        if (preFiltered.length === 0) {
+            console.log(`[WalletDiscovery] No candidates with ≥2 trades on trending tokens`);
             return [];
         }
 
-        console.log(`[WalletDiscovery] ${qualified.length} wallet(s) qualified:`);
-        for (const c of qualified) {
-            const wr = ((c.wins / c.trades) * 100).toFixed(0);
-            console.log(`  ${c.address.slice(0, 8)}... trades=${c.trades} WR=${wr}%`);
+        console.log(`[WalletDiscovery] ${preFiltered.length} candidates for deep profiling...`);
+
+        // Step 4: Deep profile each candidate's ENTIRE swap history
+        const profiler = new WalletProfiler(this.heliusKey!);
+        const qualified: Array<{ candidate: CandidateWallet; winRate: number; pnl: number; totalTrades: number; uniqueTokens: number }> = [];
+
+        for (const candidate of preFiltered) {
+            try {
+                const profile = await profiler.profile(candidate.address);
+
+                if (profile.isQualified) {
+                    qualified.push({
+                        candidate,
+                        winRate: profile.winRate,
+                        pnl: profile.estimatedPnlUsd,
+                        totalTrades: profile.totalTrades,
+                        uniqueTokens: profile.uniqueTokens,
+                    });
+                }
+
+                // Rate limit between profiles (2s per Helius call)
+                await new Promise(r => setTimeout(r, 2000));
+            } catch (err) {
+                console.warn(`[WalletDiscovery] Profile error ${candidate.address.slice(0, 8)}:`, err);
+            }
+
+            if (qualified.length >= slotsAvailable) break;
         }
 
-        // Step 4: Convert to TrackedWallet format
+        if (qualified.length === 0) {
+            console.log(`[WalletDiscovery] No wallets passed deep profiling (need ≥3 trades, ≥50% WR, positive PnL)`);
+            return [];
+        }
+
+        // Step 5: Sort by composite score and convert to TrackedWallet
+        qualified.sort((a, b) => {
+            const scoreA = (a.winRate / 100) * Math.sqrt(a.totalTrades) * Math.log10(Math.max(1, a.pnl));
+            const scoreB = (b.winRate / 100) * Math.sqrt(b.totalTrades) * Math.log10(Math.max(1, b.pnl));
+            return scoreB - scoreA;
+        });
+
+        console.log(`[WalletDiscovery] ${qualified.length} wallet(s) VERIFIED:`);
+        for (const q of qualified) {
+            console.log(`  ${q.candidate.address.slice(0, 8)}... WR=${q.winRate.toFixed(0)}% PnL=$${q.pnl.toFixed(0)} trades=${q.totalTrades} tokens=${q.uniqueTokens}`);
+        }
+
         const now = Date.now();
-        return qualified.map(c => ({
-            address: c.address,
-            label: `discovered-${c.address.slice(0, 6)}`,
-            score: Math.min(100, Math.round((c.wins / c.trades) * 80 + Math.min(20, c.trades * 2))),
-            winRate: (c.wins / c.trades) * 100,
-            tradeCount30d: c.trades,
+        return qualified.slice(0, slotsAvailable).map(q => ({
+            address: q.candidate.address,
+            label: `discovered-${q.candidate.address.slice(0, 6)}`,
+            score: Math.min(100, Math.round(q.winRate * 0.6 + Math.min(40, q.totalTrades * 2))),
+            winRate: q.winRate,
+            tradeCount30d: q.totalTrades,
             roi30d: 0,
-            lastActive: c.lastSeen,
+            lastActive: q.candidate.lastSeen,
             addedAt: now,
             source: 'discovery' as const,
         }));
