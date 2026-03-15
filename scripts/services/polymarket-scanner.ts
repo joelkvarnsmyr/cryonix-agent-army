@@ -4,6 +4,7 @@
 // writes to Redis for consumption by auto-trade (crypto) and aktienix (stocks).
 
 import Redis from 'ioredis';
+import { PolymarketSpreadScanner } from '../../packages/agents/src/shared/polymarket-spread-scanner';
 
 const GAMMA_API = 'https://gamma-api.polymarket.com';
 const REDIS_URL = process.env.KV_URL ?? 'redis://localhost:6379';
@@ -215,7 +216,7 @@ async function fetchEvents(): Promise<GammaEvent[]> {
     return await res.json() as GammaEvent[];
 }
 
-async function scan(redis: Redis): Promise<void> {
+async function scan(redis: Redis, spreadScanner: PolymarketSpreadScanner): Promise<void> {
     const events = await fetchEvents();
     console.log(`[polymarket] Fetched ${events.length} events from Gamma API`);
 
@@ -257,20 +258,62 @@ async function scan(redis: Redis): Promise<void> {
 
     await pipeline.exec();
     console.log(`[polymarket] Written to Redis (TTL ${REDIS_TTL}s). Overall sentiment: ${overallSentiment}/100`);
+
+    // ── Spread Arbitrage Scan ──────────────────────────────────────────────
+    try {
+        const spreadResult = await spreadScanner.scan();
+        const { opportunities, nearMisses, marketsScanned, scanDurationMs, avgCombinedCost, tightestCombinedCost } = spreadResult;
+
+        console.log(`[spread-scanner] Scanned ${marketsScanned} markets in ${scanDurationMs}ms`);
+        console.log(`[spread-scanner] Avg combined cost: ${avgCombinedCost.toFixed(4)}, tightest: ${tightestCombinedCost.toFixed(4)}`);
+
+        if (opportunities.length > 0) {
+            console.log(`[spread-scanner] Found ${opportunities.length} arbitrage opportunities:`);
+            for (const opp of opportunities) {
+                console.log(`[spread-scanner]   "${opp.question.slice(0, 60)}" YES=${opp.yesBuyPrice.toFixed(3)} + NO=${opp.noBuyPrice.toFixed(3)} = ${opp.combinedCost.toFixed(4)} (net profit: ${(opp.profitAfterFees * 100).toFixed(2)}%, liq: $${opp.liquidity.toFixed(0)})`);
+            }
+        } else {
+            console.log(`[spread-scanner] No arb found (tightest: ${tightestCombinedCost.toFixed(4)}, gap: ${((1 - tightestCombinedCost) * 100).toFixed(2)}%)`);
+        }
+
+        if (nearMisses.length > 0) {
+            console.log(`[spread-scanner] Near-misses (${nearMisses.length}):`);
+            for (const nm of nearMisses.slice(0, 3)) {
+                console.log(`[spread-scanner]   ${nm.combinedCost.toFixed(4)} (${nm.gapPct.toFixed(2)}%) "${nm.question.slice(0, 50)}"`);
+            }
+        }
+
+        // Write spread scan results to Redis
+        const spreadPipeline = redis.pipeline();
+        spreadPipeline.set('polymarket:spreads', JSON.stringify(spreadResult), 'EX', REDIS_TTL);
+
+        // If opportunities exist, write them separately for easy consumption
+        if (opportunities.length > 0) {
+            spreadPipeline.set('polymarket:spreads:opportunities', JSON.stringify(opportunities), 'EX', REDIS_TTL);
+        } else {
+            spreadPipeline.del('polymarket:spreads:opportunities');
+        }
+
+        await spreadPipeline.exec();
+    } catch (err: any) {
+        console.warn(`[spread-scanner] Scan failed: ${err.message}`);
+    }
 }
 
 // ── Main Loop ──────────────────────────────────────────────────────────────
 
 async function main() {
-    console.log('[polymarket] Starting PolymarketScanner...');
+    console.log('[polymarket] Starting PolymarketScanner + SpreadScanner...');
     console.log(`[polymarket] Poll interval: ${POLL_INTERVAL_MS / 1000}s, Redis TTL: ${REDIS_TTL}s`);
 
     const redis = new Redis(REDIS_URL);
     redis.on('error', err => console.error('[polymarket] Redis error:', err.message));
 
+    const spreadScanner = new PolymarketSpreadScanner();
+
     // Run immediately on startup
     try {
-        await scan(redis);
+        await scan(redis, spreadScanner);
     } catch (err: any) {
         console.error('[polymarket] Initial scan failed:', err.message);
     }
@@ -278,7 +321,7 @@ async function main() {
     // Then poll on interval
     setInterval(async () => {
         try {
-            await scan(redis);
+            await scan(redis, spreadScanner);
         } catch (err: any) {
             console.error('[polymarket] Scan failed:', err.message);
         }

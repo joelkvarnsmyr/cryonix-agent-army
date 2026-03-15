@@ -1,7 +1,8 @@
-# Polymarket prediction market scanner
+# Polymarket prediction market scanner + spread arbitrage detector
 FROM node:20-alpine
 WORKDIR /app
 RUN npm install --no-save ioredis@5 tsx@4 typescript@5
 COPY scripts/services/polymarket-scanner.ts ./scripts/services/
+COPY packages/agents/src/shared/polymarket-spread-scanner.ts ./packages/agents/src/shared/
 USER node
 CMD ["npx", "tsx", "scripts/services/polymarket-scanner.ts"]
