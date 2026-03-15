@@ -85,6 +85,10 @@ symbols = [
     "JPM",   # Financials
     "JNJ",   # Healthcare
 
+    # Crypto-correlated — move 2-3x BTC, Polymarket crypto overlay applies
+    "MSTR",  # MicroStrategy — largest corporate BTC holder
+    "COIN",  # Coinbase — crypto exchange
+
     # Energy — benefits from oil price rises (oil_supply_shock bullish tickers)
     "XOM",   # ExxonMobil — largest US E&P
     "CVX",   # Chevron
@@ -321,3 +325,27 @@ macro_confidence_boost = 0.15
 # If a strong BEARISH macro event is detected for a sector, block ALL new BUY
 # orders for that sector, regardless of how good the TA looks.
 macro_bearish_block = true
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  POLYMARKET OVERLAYS                                                    ║
+# ║  Prediction market sentiment overlays for signal evaluation.            ║
+# ║  Crypto-correlated stocks get a separate, stronger overlay since        ║
+# ║  MSTR/COIN move 2-3x BTC. Delta detection alerts on rapid shifts.      ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[polymarket]
+
+# Tickers directly correlated to crypto markets (BTC miners, exchanges, payment).
+# These receive the crypto sentiment overlay in evaluateSignal().
+crypto_correlated_tickers = ["MSTR", "COIN", "RIOT", "MARA", "SQ", "PYPL"]
+
+# Confidence adjustment for crypto-correlated tickers when crypto score is extreme.
+# +8% / -8% — stronger than fed/oil because crypto tickers are more sentiment-driven.
+crypto_boost = 0.08
+crypto_penalty = 0.08
+
+# Delta detection threshold. A score shift >= this value in a single 15-min scan
+# triggers a Telegram alert + Redis delta key for Aktienix to consume.
+# 20 = significant macro shift (e.g. surprise Fed statement, geopolitical event).
+delta_threshold = 20

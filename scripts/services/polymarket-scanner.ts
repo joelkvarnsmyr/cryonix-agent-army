@@ -10,6 +10,11 @@ const GAMMA_API = 'https://gamma-api.polymarket.com';
 const REDIS_URL = process.env.KV_URL ?? 'redis://localhost:6379';
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 const REDIS_TTL = 1800; // 30 minutes (2x poll interval)
+const DELTA_THRESHOLD = 20; // Score shift >= 20 = significant macro event
+
+// Telegram alert config
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? '';
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID ?? '';
 
 // ── Category Classification ────────────────────────────────────────────────
 
@@ -203,6 +208,21 @@ function computeCategoryScore(
     };
 }
 
+// ── Telegram Alert ────────────────────────────────────────────────────────
+
+async function sendTelegramAlert(text: string): Promise<void> {
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+    try {
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text }),
+        });
+    } catch (err: any) {
+        console.warn('[polymarket] Telegram alert failed:', err.message);
+    }
+}
+
 // ── Scanner ────────────────────────────────────────────────────────────────
 
 async function fetchEvents(): Promise<GammaEvent[]> {
@@ -242,6 +262,33 @@ async function scan(redis: Redis, spreadScanner: PolymarketSpreadScanner): Promi
         const evtCount = catEvents.length;
         const mktCount = score.marketCount;
         console.log(`[polymarket]   ${cat}: score=${score.score} (${score.label}), ${evtCount} events, ${mktCount} markets`);
+
+        // Delta detection: compare with previous score
+        const prevRaw = await redis.get(`polymarket:${cat}:prev`);
+        const prevScore = prevRaw ? JSON.parse(prevRaw).score : 50;
+        const delta = score.score - prevScore;
+
+        if (Math.abs(delta) >= DELTA_THRESHOLD) {
+            const direction = delta > 0 ? 'BULLISH SHIFT' : 'BEARISH SHIFT';
+            const topEvent = score.topEvents[0]?.title ?? 'N/A';
+            console.log(`[polymarket] DELTA ALERT: ${cat} ${direction} (${prevScore}→${score.score}, Δ${delta > 0 ? '+' : ''}${delta})`);
+
+            await sendTelegramAlert(
+                `📊 POLYMARKET ${cat.toUpperCase()} ${direction}\n\n` +
+                `Score: ${prevScore} → ${score.score} (Δ${delta > 0 ? '+' : ''}${delta})\n` +
+                `Top event: ${topEvent}`
+            );
+
+            // Write delta key for Aktienix to consume (1h TTL)
+            pipeline.set(`polymarket:${cat}:delta`, JSON.stringify({
+                delta, from: prevScore, to: score.score,
+                direction: delta > 0 ? 'bullish' : 'bearish',
+                timestamp: new Date().toISOString(),
+            }), 'EX', 3600);
+        }
+
+        // Save current as prev for next cycle (2h TTL, survives 1 missed scan)
+        pipeline.set(`polymarket:${cat}:prev`, JSON.stringify({ score: score.score }), 'EX', 7200);
     }
 
     // Summary key

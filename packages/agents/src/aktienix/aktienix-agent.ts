@@ -43,17 +43,19 @@ class TradeLogger {
         reasoning?: string;
         exitReason?: string;
         orderId?: string;
+        metadata?: string;
     }): Promise<void> {
         if (!this.pg) return;
         try {
             await this.pg.query(
-                `INSERT INTO aktienix_trades (timestamp, symbol, side, qty, fill_price, dollar_amount, realized_pnl, confidence, reasoning, exit_reason, broker, paper_trading, is_day_trade, order_id)
-                 VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8, $9, 'alpaca', true, false, $10)`,
+                `INSERT INTO aktienix_trades (timestamp, symbol, side, qty, fill_price, dollar_amount, realized_pnl, confidence, reasoning, exit_reason, broker, paper_trading, is_day_trade, order_id, metadata)
+                 VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8, $9, 'alpaca', true, false, $10, $11)`,
                 [
                     params.symbol, params.side, params.qty, params.fillPrice,
                     params.dollarAmount, params.realizedPnl ?? null,
                     params.confidence ?? null, params.reasoning ?? null,
                     params.exitReason ?? null, params.orderId ?? null,
+                    params.metadata ?? null,
                 ],
             );
         } catch (err: any) {
@@ -328,6 +330,25 @@ export class AktienixAgent extends BaseAgent {
                     }
                 }
 
+                // 6c. Polymarket delta-reaction: force rescan on significant shifts
+                if (this.statePublisher) {
+                    for (const cat of ['fed', 'geopolitik', 'oil', 'crypto'] as const) {
+                        try {
+                            const deltaRaw = await this.statePublisher.get(`polymarket:${cat}:delta`);
+                            if (!deltaRaw) continue;
+                            const delta = JSON.parse(deltaRaw);
+
+                            if (delta.direction === 'bearish' && (cat === 'geopolitik' || cat === 'fed')) {
+                                this.log('warn', `POLYMARKET SHIFT: ${cat} ${delta.from}→${delta.to} — tightening exits, forcing rescan`);
+                                this.lastSignalScanTime = 0;
+                            } else if (delta.direction === 'bullish') {
+                                this.log('info', `POLYMARKET SHIFT: ${cat} ${delta.from}→${delta.to} — opportunity scan`);
+                                this.lastSignalScanTime = 0;
+                            }
+                        } catch { /* delta key missing or unparseable — skip */ }
+                    }
+                }
+
                 // 7. Scan for Macro Intelligence
                 const nowTs = Date.now();
                 const scanIntervalMs = this.tradingConfig.intelligence?.news_scan_interval_ms
@@ -488,17 +509,21 @@ export class AktienixAgent extends BaseAgent {
         }
 
         // Polymarket prediction market overlays
+        const polyContext: Record<string, any> = {};
+        const baseConfidence = confidence;
         try {
             if (this.statePublisher && action === 'BUY') {
-                const [fedRaw, geoRaw, oilRaw] = await Promise.all([
+                const [fedRaw, geoRaw, oilRaw, cryptoRaw] = await Promise.all([
                     this.statePublisher.get('polymarket:fed'),
                     this.statePublisher.get('polymarket:geopolitik'),
                     this.statePublisher.get('polymarket:oil'),
+                    this.statePublisher.get('polymarket:crypto'),
                 ]);
 
                 // Fed dovish → boost growth stocks; hawkish → penalize
                 if (fedRaw) {
                     const fed = JSON.parse(fedRaw);
+                    polyContext.fed = fed.score;
                     if (fed.score >= 70) {
                         confidence = Math.min(1.0, confidence + 0.04);
                         this.log('info', `POLYMARKET: Fed dovish (${fed.score}) → +4% confidence for ${symbol}`);
@@ -511,6 +536,7 @@ export class AktienixAgent extends BaseAgent {
                 // Geopolitical risk → block non-defensive buys
                 if (geoRaw) {
                     const geo = JSON.parse(geoRaw);
+                    polyContext.geo = geo.score;
                     const defensiveTickers = ['XLE', 'XOM', 'CVX', 'USO', 'GLD', 'TLT'];
                     if (geo.score <= 30 && !defensiveTickers.includes(symbol)) {
                         this.log('warn', `POLYMARKET: Geo risk high (${geo.score}) → blocking ${symbol} (non-defensive)`);
@@ -521,6 +547,7 @@ export class AktienixAgent extends BaseAgent {
                 // Oil bullish → boost energy, penalize airlines/logistics
                 if (oilRaw) {
                     const oil = JSON.parse(oilRaw);
+                    polyContext.oil = oil.score;
                     const energyTickers = ['XLE', 'XOM', 'CVX', 'USO'];
                     const oilVictims = ['UAL', 'DAL', 'FDX', 'UPS'];
                     if (oil.score >= 70) {
@@ -530,6 +557,26 @@ export class AktienixAgent extends BaseAgent {
                         } else if (oilVictims.includes(symbol)) {
                             confidence = Math.max(0, confidence - 0.06);
                             this.log('info', `POLYMARKET: Oil bullish (${oil.score}) → headwind -6% for ${symbol}`);
+                        }
+                    }
+                }
+
+                // Crypto sentiment → boost/penalize crypto-correlated stocks
+                if (cryptoRaw) {
+                    const crypto = JSON.parse(cryptoRaw);
+                    polyContext.crypto = crypto.score;
+                    const polyConfig = config.polymarket ?? ({} as any);
+                    const cryptoTickers: string[] = polyConfig.crypto_correlated_tickers ?? ['MSTR', 'COIN', 'RIOT', 'MARA', 'SQ', 'PYPL'];
+                    const boost = polyConfig.crypto_boost ?? 0.08;
+                    const penalty = polyConfig.crypto_penalty ?? 0.08;
+
+                    if (cryptoTickers.includes(symbol)) {
+                        if (crypto.score >= 70) {
+                            confidence = Math.min(1.0, confidence + boost);
+                            this.log('info', `POLYMARKET: Crypto bullish (${crypto.score}) → +${(boost * 100).toFixed(0)}% for ${symbol}`);
+                        } else if (crypto.score <= 30) {
+                            confidence = Math.max(0, confidence - penalty);
+                            this.log('info', `POLYMARKET: Crypto bearish (${crypto.score}) → -${(penalty * 100).toFixed(0)}% for ${symbol}`);
                         }
                     }
                 }
@@ -590,8 +637,11 @@ export class AktienixAgent extends BaseAgent {
                 reasoning: reasoning ?? '',
                 timestamp: Date.now(),
             });
-            // Log BUY to Postgres
+            // Log BUY to Postgres with Polymarket context metadata
             const dollarEstimate = qty * (currentPrice ?? 0);
+            const metadata = Object.keys(polyContext).length > 0
+                ? JSON.stringify({ polymarket: polyContext, baseConfidence, finalConfidence: confidence })
+                : undefined;
             await this.tradeLogger.logTrade({
                 symbol,
                 side: 'BUY',
@@ -601,6 +651,7 @@ export class AktienixAgent extends BaseAgent {
                 confidence,
                 reasoning: reasoning ?? undefined,
                 orderId: result.orderId,
+                metadata,
             });
         } else {
             this.log('error', `Order failed: ${result.message}`);

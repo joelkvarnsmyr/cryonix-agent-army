@@ -22,6 +22,7 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@playwright/test": "^1.58.2",
     "@resvg/resvg-js": "2",
+    "@types/pg": "^8.18.0",
     "@vitest/coverage-v8": "^4.0.17",
     "@vitest/ui": "^4.0.17",
     "satori": "0.12",

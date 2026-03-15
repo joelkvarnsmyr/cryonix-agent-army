@@ -165,7 +165,9 @@ PolymarketScanner (TypeScript, every 15min, no auth needed)
   -> Classify: crypto, fed, oil, geopolitik (keyword-based)
   -> Volume-weighted sentiment scoring (0-100 per category)
   -> Write to Redis: polymarket:crypto, polymarket:fed, polymarket:oil, polymarket:geopolitik, polymarket:summary
-  -> Consumed by: auto-trade (crypto confidence adjustments) + aktienix (sector overlays)
+  -> Delta detection: compare with polymarket:{cat}:prev, alert on >=20pt shift
+  -> Write polymarket:{cat}:delta (1h TTL) + Telegram alert on significant shifts
+  -> Consumed by: auto-trade (crypto confidence adjustments) + aktienix (sector overlays + crypto-correlated tickers + delta-triggered rescans)
 
 Auto-Trader (Node, every 30s)
   -> GET /api/auto-trade
@@ -275,7 +277,7 @@ CMC_API_KEY=...                      # CoinMarketCap Free tier API key (engine)
 ## Key Conventions
 
 - Python engine packages use `echo` skip for `pnpm build` since they run in Docker
-- Redis key patterns: `trades:pending`, `trades:approved`, `positions:open`, `sentiment:{SYMBOL}`, `agent:{NAME}:status`, `risk:portfolio_state`, `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:{channel}:{symbol}:{action}`, `cmc:global`, `cmc:fear_greed`, `cmc:mcap:{SYMBOL}`, `brain:acute_trigger`, `brain:loss_streak`, `brain:blocked_patterns`, `evolution:directives`, `aktienix:state`, `aktienix:risk`, `aktienix:brain:last_run`, `aktienix:brain:cooldown`, `polymarket:crypto`, `polymarket:fed`, `polymarket:oil`, `polymarket:geopolitik`, `polymarket:summary`
+- Redis key patterns: `trades:pending`, `trades:approved`, `positions:open`, `sentiment:{SYMBOL}`, `agent:{NAME}:status`, `risk:portfolio_state`, `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:{channel}:{symbol}:{action}`, `cmc:global`, `cmc:fear_greed`, `cmc:mcap:{SYMBOL}`, `brain:acute_trigger`, `brain:loss_streak`, `brain:blocked_patterns`, `evolution:directives`, `aktienix:state`, `aktienix:risk`, `aktienix:brain:last_run`, `aktienix:brain:cooldown`, `polymarket:crypto`, `polymarket:fed`, `polymarket:oil`, `polymarket:geopolitik`, `polymarket:summary`, `polymarket:{cat}:prev`, `polymarket:{cat}:delta`
 - Docker networking: containers use service names (web, engine, redis, postgres) not localhost
 - `host.docker.internal` for dev Docker -> host communication
 - Auto-trader is SPOT_ONLY (rejects SELL signals, only BUY)

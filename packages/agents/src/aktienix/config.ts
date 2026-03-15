@@ -77,6 +77,12 @@ export interface AktienixTomlConfig {
         macro_confidence_boost: number;
         macro_bearish_block: boolean;
     };
+    polymarket: {
+        crypto_correlated_tickers: string[];
+        crypto_boost: number;
+        crypto_penalty: number;
+        delta_threshold: number;
+    };
 }
 
 // ============================================================================
@@ -100,6 +106,7 @@ const DEFAULTS: AktienixTomlConfig = {
     exits: { take_profit_pct: 5.0, stop_loss_pct: 3.0, trailing_stop_pct: 4.0, trailing_activation_pct: 2.0, stagnation_timeout_days: 10, stagnation_min_pnl_pct: 0.5 },
     timing: { poll_interval_ms: 60_000, signal_scan_interval_ms: 900_000 },
     intelligence: { enabled: true, news_scan_interval_ms: 900_000, macro_confidence_boost: 0.15, macro_bearish_block: true },
+    polymarket: { crypto_correlated_tickers: ['MSTR', 'COIN', 'RIOT', 'MARA', 'SQ', 'PYPL'], crypto_boost: 0.08, crypto_penalty: 0.08, delta_threshold: 20 },
 };
 
 // ============================================================================
