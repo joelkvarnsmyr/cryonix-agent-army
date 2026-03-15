@@ -117,7 +117,8 @@ export class CopynixAgent extends BaseAgent {
     private tradeLogger = new CopynixTradeLogger();
 
     private walletDiscovery: WalletDiscovery | null = null;
-    private lastDiscoveryTime = 0;
+    // Delay first discovery by 5 minutes to avoid Helius rate limit on startup
+    private lastDiscoveryTime = Date.now();
 
     private lastResetDay = new Date().getUTCDate();
     private tradesToday = 0;

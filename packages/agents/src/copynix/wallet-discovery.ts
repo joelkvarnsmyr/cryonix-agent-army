@@ -85,8 +85,8 @@ export class WalletDiscovery {
                     }
                 }
 
-                // Rate limit between tokens
-                await new Promise(r => setTimeout(r, 500));
+                // Rate limit between tokens (2s to stay under Helius 10 RPS)
+                await new Promise(r => setTimeout(r, 2000));
             } catch (err) {
                 console.warn(`[WalletDiscovery] Error analyzing mint ${mint.slice(0, 8)}:`, err);
             }

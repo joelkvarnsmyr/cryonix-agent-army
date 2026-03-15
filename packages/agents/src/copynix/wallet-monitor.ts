@@ -76,9 +76,9 @@ export class WalletMonitor {
                 console.error(`[WalletMonitor] ${label}... error: ${err instanceof Error ? err.message : String(err)}`);
             }
 
-            // Rate limit between wallets
+            // Rate limit between wallets (1s to stay under Helius 10 RPS free tier)
             if (this.trackedWallets.size > 1) {
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 1000));
             }
         }
 
