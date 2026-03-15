@@ -46,7 +46,7 @@ async function processSignals() {
     if (data.rejected > 0) {
       const reasons = (data.buyResults || [])
         .filter(r => r.status !== 'EXECUTED')
-        .map(r => `${r.symbol}: ${r.status} — ${r.reason || 'unknown'}`)
+        .map(r => `${r.symbol}: ${r.status} — ${r.reason || r.error || 'unknown'}`)
         .join(' | ');
       console.log(`[CYCLE ${cycleCount}] Rejected ${data.rejected}: ${reasons || '(no details)'}`);
     }
