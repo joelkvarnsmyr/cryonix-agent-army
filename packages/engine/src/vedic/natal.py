@@ -14,26 +14,68 @@ from .ephemeris import (
 from .nakshatras import nakshatra_at_longitude
 
 
-# ── Genesis timestamps (UTC) ─────────────────────────────────────────
-# These are the "birth times" of major cryptocurrencies
+# ── Genesis data (UTC + geographic coordinates) ──────────────────────
+# Each crypto has a "birth moment" and a "birth location" (founding team HQ).
+# Location is needed for Lagna (Ascendant) calculation.
 
-CRYPTO_GENESIS: Dict[str, datetime] = {
-    "BTC": datetime(2009, 1, 3, 18, 15, 0, tzinfo=timezone.utc),   # Genesis block
-    "ETH": datetime(2015, 7, 30, 15, 26, 0, tzinfo=timezone.utc),  # Frontier launch
-    "BNB": datetime(2017, 7, 25, 0, 0, 0, tzinfo=timezone.utc),    # ICO launch
-    "SOL": datetime(2020, 3, 16, 0, 0, 0, tzinfo=timezone.utc),    # Mainnet beta
-    "ADA": datetime(2017, 9, 29, 0, 0, 0, tzinfo=timezone.utc),    # Mainnet launch
-    "XRP": datetime(2012, 6, 2, 0, 0, 0, tzinfo=timezone.utc),     # Ledger launch
-    "AVAX": datetime(2020, 9, 21, 0, 0, 0, tzinfo=timezone.utc),   # Mainnet
-    "DOT": datetime(2020, 5, 26, 0, 0, 0, tzinfo=timezone.utc),    # Mainnet
-    "LINK": datetime(2017, 9, 19, 0, 0, 0, tzinfo=timezone.utc),   # Mainnet
-    "ATOM": datetime(2019, 3, 14, 0, 0, 0, tzinfo=timezone.utc),   # Cosmos Hub
-    "DOGE": datetime(2013, 12, 6, 0, 0, 0, tzinfo=timezone.utc),   # Genesis block
-    "NEAR": datetime(2020, 10, 13, 0, 0, 0, tzinfo=timezone.utc),  # Mainnet
-    "SUI": datetime(2023, 5, 3, 0, 0, 0, tzinfo=timezone.utc),     # Mainnet
-    "UNI": datetime(2018, 11, 2, 0, 0, 0, tzinfo=timezone.utc),    # V1 deploy
-    "AAVE": datetime(2017, 11, 27, 0, 0, 0, tzinfo=timezone.utc),  # ETHLend launch
-    "LTC": datetime(2011, 10, 7, 0, 0, 0, tzinfo=timezone.utc),    # Genesis block
+@dataclass
+class GenesisData:
+    """Birth data for a cryptocurrency."""
+    time: datetime
+    lat: float       # Geographic latitude
+    lon: float       # Geographic longitude
+    city: str        # Birth city (for reference)
+
+
+CRYPTO_GENESIS: Dict[str, GenesisData] = {
+    # ── BTC: London, UK — Satoshi's Times headline + activity analysis ──
+    "BTC": GenesisData(datetime(2009, 1, 3, 18, 15, 0, tzinfo=timezone.utc),
+                       51.5074, -0.1278, "London"),
+    # ── ETH: Zug, Switzerland — Ethereum Foundation HQ ──
+    "ETH": GenesisData(datetime(2015, 7, 30, 15, 26, 0, tzinfo=timezone.utc),
+                       47.1660, 8.5155, "Zug"),
+    # ── BNB: Shanghai, China — Binance pre-ban HQ ──
+    "BNB": GenesisData(datetime(2017, 7, 25, 0, 0, 0, tzinfo=timezone.utc),
+                       31.2304, 121.4737, "Shanghai"),
+    # ── SOL: San Francisco, CA — Solana Labs HQ ──
+    "SOL": GenesisData(datetime(2020, 3, 16, 0, 0, 0, tzinfo=timezone.utc),
+                       37.7749, -122.4194, "San Francisco"),
+    # ── ADA: Hong Kong — IOHK HQ at launch ──
+    "ADA": GenesisData(datetime(2017, 9, 29, 0, 0, 0, tzinfo=timezone.utc),
+                       22.3193, 114.1694, "Hong Kong"),
+    # ── XRP: San Francisco, CA — Ripple/OpenCoin HQ ──
+    "XRP": GenesisData(datetime(2012, 6, 2, 0, 0, 0, tzinfo=timezone.utc),
+                       37.7749, -122.4194, "San Francisco"),
+    # ── AVAX: New York City — Ava Labs HQ ──
+    "AVAX": GenesisData(datetime(2020, 9, 21, 0, 0, 0, tzinfo=timezone.utc),
+                        40.7128, -74.0060, "New York City"),
+    # ── DOT: Zug, Switzerland — Web3 Foundation ──
+    "DOT": GenesisData(datetime(2020, 5, 26, 0, 0, 0, tzinfo=timezone.utc),
+                       47.1660, 8.5155, "Zug"),
+    # ── LINK: San Francisco, CA — SmartContract.com / Chainlink Labs ──
+    "LINK": GenesisData(datetime(2017, 9, 19, 0, 0, 0, tzinfo=timezone.utc),
+                        37.7749, -122.4194, "San Francisco"),
+    # ── ATOM: San Francisco, CA — Tendermint Inc ──
+    "ATOM": GenesisData(datetime(2019, 3, 14, 0, 0, 0, tzinfo=timezone.utc),
+                        37.7749, -122.4194, "San Francisco"),
+    # ── DOGE: Portland, OR — Billy Markus (genesis miner) ──
+    "DOGE": GenesisData(datetime(2013, 12, 6, 0, 0, 0, tzinfo=timezone.utc),
+                        45.5152, -122.6784, "Portland"),
+    # ── NEAR: San Francisco, CA — NEAR Protocol HQ ──
+    "NEAR": GenesisData(datetime(2020, 10, 13, 0, 0, 0, tzinfo=timezone.utc),
+                        37.7749, -122.4194, "San Francisco"),
+    # ── SUI: Palo Alto, CA — Mysten Labs HQ ──
+    "SUI": GenesisData(datetime(2023, 5, 3, 0, 0, 0, tzinfo=timezone.utc),
+                       37.4419, -122.1430, "Palo Alto"),
+    # ── UNI: New York City — Hayden Adams / Uniswap Labs ──
+    "UNI": GenesisData(datetime(2018, 11, 2, 0, 0, 0, tzinfo=timezone.utc),
+                       40.7128, -74.0060, "New York City"),
+    # ── AAVE: Helsinki, Finland — Stani Kulechov / ETHLend ──
+    "AAVE": GenesisData(datetime(2017, 11, 27, 0, 0, 0, tzinfo=timezone.utc),
+                        60.1699, 24.9384, "Helsinki"),
+    # ── LTC: Mountain View, CA — Charlie Lee at Google ──
+    "LTC": GenesisData(datetime(2011, 10, 7, 0, 0, 0, tzinfo=timezone.utc),
+                       37.3861, -122.0839, "Mountain View"),
 }
 
 # Natal charts are cached after first computation
@@ -67,7 +109,7 @@ def get_natal_chart(symbol: str) -> Optional[SkyState]:
         return None
 
     if symbol not in _natal_cache:
-        _natal_cache[symbol] = get_sky_state(CRYPTO_GENESIS[symbol])
+        _natal_cache[symbol] = get_sky_state(CRYPTO_GENESIS[symbol].time)
 
     return _natal_cache[symbol]
 
@@ -204,7 +246,7 @@ def analyze_transits(symbol: str, current_sky: SkyState) -> Optional[NatalTransi
 
     return NatalTransitReport(
         symbol=symbol,
-        genesis_date=CRYPTO_GENESIS[symbol],
+        genesis_date=CRYPTO_GENESIS[symbol].time,
         hits=hits,
         transit_score=round(transit_score, 3),
         summary=summary,

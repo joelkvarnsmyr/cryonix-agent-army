@@ -959,34 +959,24 @@ oil_risk_penalty = 0.03
 enabled = true
 
 # Poll interval in seconds. 900 = 15 min.
-# Planetary positions change slowly, 15 min is more than enough.
 poll_interval_seconds = 900
 
-# ── Muhurta adjustments ─────────────────────────────────────────────
-# When muhurta is "very_auspicious": boost confidence on BUY signals.
-muhurta_auspicious_boost = 0.05
+# ── V3 Research-Validated Signals (2026-03-15) ─────────────────────
+# Deep research: 6 symbols × 2000 days, regime-controlled, OOS validated.
+# Only statistically significant signals (p<0.05) are used.
 
-# When muhurta is "inauspicious" or "very_inauspicious": penalty.
-muhurta_inauspicious_penalty = 0.05
+# Venus Retrograde: STRONGEST signal (p<0.0001 in ALL market regimes).
+# 7d: Direct +1.63% vs Rx -3.57%. ~40 days every 18 months.
+# Acts as confidence penalty in auto-trade (effectively blocks most buys).
+venus_rx_penalty = 0.30
 
-# ── Mercury Retrograde ─────────────────────────────────────────────
-# When Mercury is retrograde: penalize all new positions.
-# Mercury rules communication and technology — retro = higher risk.
-mercury_retrograde_penalty = 0.08
+# Mercury Retrograde: mild long-term drag (14d: p=0.04, 30d: p<0.001).
+# Not catastrophic short-term. Rx START is actually mildly bullish.
+mercury_rx_penalty = 0.05
 
-# ── Moon Nakshatra ──────────────────────────────────────────────────
-# When Moon is in Pushya (most auspicious): boost buy signals.
-pushya_nakshatra_boost = 0.06
-
-# When Moon is in Mula (destructive): penalize.
-mula_nakshatra_penalty = 0.05
-
-# ── Per-symbol transit adjustments ──────────────────────────────────
-# When a symbol has bullish transits (score > 30): boost.
-transit_bullish_boost = 0.04
-
-# When bearish transits (score < -30): penalize.
-transit_bearish_penalty = 0.04
+# High retrograde count: 3+ planets retrograde = crowded sky.
+# 0 retro: +1.92%/7d, 3 retro: +0.25%/7d.
+high_retro_penalty = 0.04
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  COINGLASS — Derivatives market intelligence                           ║

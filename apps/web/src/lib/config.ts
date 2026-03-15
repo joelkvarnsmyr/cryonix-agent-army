@@ -159,6 +159,12 @@ export interface CryonixConfig {
     oil_bullish_threshold?: number;
     oil_risk_penalty?: number;
   };
+  vedic?: {
+    // V3: Research-validated signals only (p<0.05, regime-independent)
+    venus_rx_penalty?: number;      // Venus Rx: strongest signal (default 0.30)
+    mercury_rx_penalty?: number;    // Mercury Rx: mild drag (default 0.05)
+    high_retro_penalty?: number;    // 3+ retrogrades penalty (default 0.04)
+  };
 }
 
 let _tomlConfig: CryonixConfig | null = null;

@@ -136,7 +136,7 @@ def compute_dasha_for_symbol(
     sequence = _get_dasha_sequence_from(start_lord)
 
     # Walk forward through Maha Dashas
-    cursor = genesis
+    cursor = genesis.time
     maha_lord = None
     maha_start = None
     maha_end = None

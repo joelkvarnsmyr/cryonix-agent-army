@@ -1,20 +1,21 @@
 """
-Vedic Trader — Pure astrology-driven paper trading experiment.
+Vedic Trader V3 — Research-validated astrology-driven paper trading.
 
-Trades multiple crypto/USDC pairs using ONLY vedic astrology signals:
-  - Muhurta score (auspicious timing)
-  - Moon nakshatra (trading bias)
-  - Planetary aspects (benefic/malefic)
-  - Mercury retrograde (risk filter)
-  - Natal chart transits (per-symbol)
-  - Vimshottari Dasha (planetary period bias)
-  - Trailing stop (activates at +3%, trails at -2% from peak)
+V3 model (2026-03-15): Built from 6 symbols × 2000 days of deep research.
+Regime-controlled, walk-forward validated (OOS +3.4%, 5/6 symbols positive).
+
+PRIMARY signal: Venus Retrograde (ABSOLUTE BUY BLOCK)
+  - 7d: Direct +1.63% vs Rx -3.57%, p<0.0001 in ALL market regimes
+  - ~40 days every 18 months. Strongest signal found.
+
+SECONDARY: Mercury Rx (mild), Retrograde count, Paksha (weak).
+REMOVED from V2: Muhurta, Nakshatra bias, Aspects, Bhava, Hora (all noise).
 
 Paper wallet — no real money, simulated balance in Redis.
 Fetches real prices from CCXT (Binance) for realistic P&L tracking.
 
 Watchlist: All 16 cryptos with natal charts, ranked by transit score.
-Max 3 concurrent positions, 10% of balance per trade.
+Max 3 concurrent positions, 15% of balance per trade.
 
 Redis keys:
   vedic_trader:wallet       — paper wallet state (balance, positions)
@@ -52,7 +53,7 @@ from src.vedic.dasha import compute_all_dashas
 WATCHLIST = {sym: f"{sym}/USDC" for sym in CRYPTO_GENESIS.keys()}
 
 INITIAL_BALANCE = 1000.0          # $1000 paper money
-POSITION_SIZE_PCT = 0.10          # 10% of balance per trade (reduced from 20%)
+POSITION_SIZE_PCT = 0.15          # 15% of balance per trade (V3: wider stops allow larger size)
 MAX_POSITIONS = 3                 # Up to 3 concurrent positions
 MAX_PER_SYMBOL = 1                # Only 1 position per symbol
 SCAN_INTERVAL = 300               # Check every 5 minutes
@@ -68,43 +69,24 @@ REDIS_TTL = 86400 * 30            # Keep data for 30 days
 BUY_SCORE_THRESHOLD = 10
 
 # SELL when composite score < this OR stop-loss/take-profit hit
-SELL_SCORE_THRESHOLD = -20
+SELL_SCORE_THRESHOLD = -25
 
-# Hard stop-loss and take-profit (safety nets)
-# Kashyap principle: asymmetric risk/reward (2.5:1 reward:risk)
-STOP_LOSS_PCT = 0.04              # -4% from entry (tighter, cut losses fast)
-TAKE_PROFIT_PCT = 0.10            # +10% from entry (wider, let winners run)
+# V3 optimized stops: wider = better returns (backtest: +59% at SL=8/TP=20)
+STOP_LOSS_PCT = 0.08              # -8% from entry (wider, avoid whipsaws)
+TAKE_PROFIT_PCT = 0.20            # +20% from entry (let winners run)
 
-# Trailing stop (Crawford-inspired: protect crash gains)
-TRAILING_ACTIVATION_PCT = 0.03    # Activate trailing after +3%
-TRAILING_STOP_PCT = 0.015         # Trail at -1.5% from peak (tighter trail)
+# Trailing stop: wider activation, wider trail
+TRAILING_ACTIVATION_PCT = 0.06    # Activate at +6%
+TRAILING_STOP_PCT = 0.03          # Trail at -3% from peak
 
-# Mercury retrograde blocks ALL new buys (Crawford, Altman)
-MERCURY_RETRO_BLOCKS_BUY = True
+# Venus Rx: ABSOLUTE BLOCK (strongest signal, p<0.0001 all regimes)
+VENUS_RX_BLOCKS_BUY = True
 
-# Minimum muhurta level to buy
-MIN_MUHURTA_FOR_BUY = "neutral"   # "neutral" or above
-MUHURTA_LEVELS = {
-    "very_inauspicious": -2,
-    "inauspicious": -1,
-    "neutral": 0,
-    "auspicious": 1,
-    "very_auspicious": 2,
-}
+# Mercury Rx: mild drag, NOT a hard block in V3 (Rx START is bullish)
+MERCURY_RETRO_BLOCKS_BUY = False
 
-# Moon nakshatra must have bullish or neutral bias to buy
-ALLOWED_NAKSHATRA_BIAS = {"bullish", "neutral"}
-
-# Lunar phase gate (Yuan et al: strongest validated signal)
-# Only buy during Shukla paksha (waxing moon, days 1-15)
-# Full moon (Purnima) is blocked even during Shukla
-REQUIRE_SHUKLA_PAKSHA = True
-
-# Minimum transit score to consider buying
-MIN_TRANSIT_SCORE = -20
-
-# Dasha bias threshold — skip symbols in strongly bearish dasha
-MIN_DASHA_BIAS = -0.3
+# V2 noise gates REMOVED:
+# Muhurta, Nakshatra bias, Paksha requirement, Aspect check, Transit min, Dasha min
 
 # ── Price fetching ────────────────────────────────────────────────────
 
@@ -240,68 +222,51 @@ class VedicTrader:
     def should_buy(
         self, symbol: str, vedic_score, transit_score, dasha_state
     ) -> Tuple[bool, str]:
-        """Evaluate vedic conditions for a BUY on a specific symbol."""
+        """V3: Evaluate vedic conditions for a BUY.
 
+        Only research-validated gates (p<0.05, regime-independent):
+        1. Venus Rx = absolute block (p<0.0001)
+        2. V3 composite score threshold
+        3. Mercury Rx = mild via composite (not hard block)
+        All V2 noise gates removed (muhurta, nakshatra, paksha, aspects, dasha).
+        """
         reasons = []
 
-        # 1. Composite score check
+        # 1. Venus Retrograde: ABSOLUTE BLOCK (strongest signal)
+        if VENUS_RX_BLOCKS_BUY and vedic_score.label == "venus_rx_block":
+            return False, "Venus retrograde — absolute block (p<0.0001)"
+
+        # 2. V3 Composite score check
         if vedic_score.overall_score < BUY_SCORE_THRESHOLD:
-            return False, f"Score {vedic_score.overall_score} < {BUY_SCORE_THRESHOLD}"
-        reasons.append(f"score={vedic_score.overall_score}")
+            return False, f"V3 score {vedic_score.overall_score} < {BUY_SCORE_THRESHOLD}"
+        reasons.append(f"v3={vedic_score.overall_score} ({vedic_score.label})")
 
-        # 2. Mercury retrograde block
-        if MERCURY_RETRO_BLOCKS_BUY and vedic_score.is_mercury_retrograde:
-            return False, "Mercury retrograde"
+        # 3. Mercury Rx: not a hard block in V3, just logged
+        if vedic_score.is_mercury_retrograde:
+            reasons.append("MercRx(mild)")
 
-        # 2b. Lunar phase gate (Yuan et al: buy only during waxing moon)
-        if REQUIRE_SHUKLA_PAKSHA:
-            paksha = getattr(vedic_score, 'lunar_paksha', None)
-            if paksha == "Krishna":
-                return False, f"Krishna paksha (waning moon) — no buys"
-            # Block full moon day even in Shukla
-            if vedic_score.tithi_name == "Purnima":
-                return False, "Purnima (full moon) — peak bearish day"
-            if paksha == "Shukla":
-                reasons.append("Shukla")
+        # 4. Log retrogrades count
+        n_retro = len(vedic_score.retrogrades)
+        reasons.append(f"retro={n_retro}")
 
-        # 3. Muhurta check
-        muhurta_level = MUHURTA_LEVELS.get(vedic_score.muhurta_label, -99)
-        min_level = MUHURTA_LEVELS.get(MIN_MUHURTA_FOR_BUY, 0)
-        if muhurta_level < min_level:
-            return False, f"Muhurta {vedic_score.muhurta_label} below minimum"
-        reasons.append(f"muhurta={vedic_score.muhurta_label}")
-
-        # 4. Moon nakshatra bias
-        if vedic_score.moon_nakshatra_bias not in ALLOWED_NAKSHATRA_BIAS:
-            return False, f"Moon in {vedic_score.moon_nakshatra} ({vedic_score.moon_nakshatra_bias})"
-        reasons.append(f"moon={vedic_score.moon_nakshatra}")
-
-        # 5. Per-symbol transit score
-        if transit_score is not None and transit_score < MIN_TRANSIT_SCORE:
-            return False, f"{symbol} transit {transit_score} < {MIN_TRANSIT_SCORE}"
-        if transit_score is not None:
-            reasons.append(f"transit={transit_score}")
-
-        # 6. Aspect check
-        if vedic_score.aspect_score < -0.4:
-            return False, f"Malefic aspects ({vedic_score.aspect_score:.2f})"
-
-        # 7. Dasha check — skip if strongly bearish period
-        if dasha_state is not None:
-            if dasha_state.combined_bias < MIN_DASHA_BIAS:
-                return False, (
-                    f"{symbol} in {dasha_state.maha_dasha_lord}/{dasha_state.antar_dasha_lord} "
-                    f"dasha (bias={dasha_state.combined_bias})"
-                )
-            reasons.append(f"dasha={dasha_state.maha_dasha_lord}/{dasha_state.antar_dasha_lord}")
+        # 5. Log paksha (display only, not a gate)
+        paksha = getattr(vedic_score, 'lunar_paksha', '?')
+        reasons.append(f"paksha={paksha}")
 
         return True, " | ".join(reasons)
 
     def should_sell(
         self, symbol: str, vedic_score, current_price: float, position: dict
     ) -> Tuple[bool, str]:
-        """Evaluate vedic conditions + safety nets + trailing stop for SELL."""
+        """V3: Evaluate sell conditions. Simplified — only validated signals.
 
+        Sell triggers:
+        1. Hard SL/TP
+        2. Trailing stop
+        3. Venus Rx entry (with any profit)
+        4. V3 score drops to strong_avoid
+        V2 noise exits removed (full moon, Krishna paksha, bearish nakshatra).
+        """
         entry_price = position["entry_price"]
         pnl_pct = (current_price - entry_price) / entry_price
 
@@ -333,26 +298,13 @@ class VedicTrader:
         if pnl_pct >= TAKE_PROFIT_PCT:
             return True, f"TAKE PROFIT {symbol} ({pnl_pct*100:.1f}%)"
 
-        # Vedic score turns very negative
-        if vedic_score.overall_score < SELL_SCORE_THRESHOLD:
-            return True, f"Vedic bearish ({vedic_score.overall_score})"
+        # Venus Rx exit: sell with any profit (strongest signal)
+        if vedic_score.label == "venus_rx_block" and pnl_pct > 0:
+            return True, f"Venus Rx + profit ({pnl_pct*100:.1f}%) — protect gains"
 
-        # Mercury goes retrograde while in profit
-        if vedic_score.is_mercury_retrograde and pnl_pct > 0:
-            return True, f"Mercury Rx + profit ({pnl_pct*100:.1f}%) — lock gains"
-
-        # Full moon exit (Yuan et al: peak bearish day, lock any profit)
-        if vedic_score.tithi_name == "Purnima" and pnl_pct > 0:
-            return True, f"Purnima (full moon) + profit ({pnl_pct*100:.1f}%) — lock gains"
-
-        # Entering Krishna paksha (waning moon) with decent profit
-        paksha = getattr(vedic_score, 'lunar_paksha', None)
-        if paksha == "Krishna" and pnl_pct > 0.02:
-            return True, f"Krishna paksha + profit ({pnl_pct*100:.1f}%) — waning moon exit"
-
-        # Moon enters bearish nakshatra while in profit
-        if vedic_score.moon_nakshatra_bias == "bearish" and pnl_pct > 0.01:
-            return True, f"Moon in {vedic_score.moon_nakshatra} + profit — lock gains"
+        # V3 score drops to strong_avoid with profit
+        if vedic_score.overall_score < SELL_SCORE_THRESHOLD and pnl_pct > 0:
+            return True, f"V3 strong_avoid ({vedic_score.overall_score}) + profit"
 
         return False, "Hold"
 

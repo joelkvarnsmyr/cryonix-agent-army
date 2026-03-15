@@ -67,10 +67,13 @@ class VedicScout:
         # ── 4. Write everything to Redis ──
         pipe = self.redis.pipeline()
 
-        # Overall score
+        # Overall score (V3: includes venus_rx flag)
         score_data = {
             "score": vedic_score.overall_score,
             "label": vedic_score.label,
+            "venus_rx": vedic_score.label == "venus_rx_block",
+            "mercury_rx": vedic_score.is_mercury_retrograde,
+            "n_retrogrades": len(vedic_score.retrogrades),
             "muhurta_score": vedic_score.muhurta_score,
             "nakshatra_score": vedic_score.nakshatra_score,
             "aspect_score": vedic_score.aspect_score,
@@ -164,7 +167,7 @@ class VedicScout:
             pipe.set(f"vedic:dasha:{symbol}", json.dumps(dasha_data), ex=REDIS_TTL)
             dashas_written += 1
 
-        # Per-symbol transits
+        # Per-symbol transits (now includes lagna/bhava)
         symbols_with_transits = 0
         for symbol, ts in transit_scores.items():
             transit_data = {
@@ -172,6 +175,8 @@ class VedicScout:
                 "label": ts.label,
                 "hits": ts.hits,
                 "summary": ts.summary,
+                "lagna_sign": ts.lagna_sign,
+                "bhava_score": ts.bhava_score,
                 "timestamp": ts.timestamp,
             }
             pipe.set(f"vedic:transit:{symbol}", json.dumps(transit_data), ex=REDIS_TTL)
