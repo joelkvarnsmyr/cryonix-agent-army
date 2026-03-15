@@ -42,9 +42,13 @@ async function processSignals() {
       console.log(`[CYCLE ${cycleCount}] BOUGHT ${data.buys} trades!`, data.buyResults?.filter(r => r.status === 'EXECUTED'));
     }
 
-    // Log rejections
+    // Log rejections with reasons
     if (data.rejected > 0) {
-      console.log(`[CYCLE ${cycleCount}] Rejected ${data.rejected} (non-qualifying)`);
+      const reasons = (data.buyResults || [])
+        .filter(r => r.status !== 'EXECUTED')
+        .map(r => `${r.symbol}: ${r.status} — ${r.reason || 'unknown'}`)
+        .join(' | ');
+      console.log(`[CYCLE ${cycleCount}] Rejected ${data.rejected}: ${reasons || '(no details)'}`);
     }
 
     // Position P&L summary every 10th cycle
