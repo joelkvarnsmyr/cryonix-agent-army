@@ -124,6 +124,8 @@ export class CopynixAgent extends BaseAgent {
     private tradesToday = 0;
     private pollCount = 0;
     private lastHeartbeat = 0;
+    private lastWalletScanTime = 0;
+    private walletScanBackoff = 1; // multiplier for backoff on 429
 
     private tomlConfig = loadCopynixConfig();
 
@@ -230,17 +232,33 @@ export class CopynixAgent extends BaseAgent {
                     this.log('info', '[DAILY RESET] Trade counter and risk state cleared');
                 }
 
-                // 1. Poll tracked wallets for new trades
+                // 1. Poll tracked wallets for new trades (time-gated to avoid Helius rate limits)
                 this.pollCount++;
-                const pollStart = Date.now();
-                const newTrades = await this.walletMonitor!.pollNewTrades();
-                const pollMs = Date.now() - pollStart;
-                if (pollMs > 5000) {
-                    this.log('info', `[SLOW POLL] pollNewTrades took ${(pollMs / 1000).toFixed(1)}s`);
-                }
+                const walletScanInterval = this.tomlConfig.timing.wallet_scan_interval_ms * this.walletScanBackoff;
+                let newTrades: WalletTrade[] = [];
 
-                if (newTrades.length > 0) {
-                    this.log('info', `[POLL] ${newTrades.length} new trade(s) from tracked wallets`);
+                if (now - this.lastWalletScanTime >= walletScanInterval) {
+                    const pollStart = Date.now();
+                    newTrades = await this.walletMonitor!.pollNewTrades();
+                    const pollMs = Date.now() - pollStart;
+                    this.lastWalletScanTime = Date.now();
+
+                    // Check for 429 errors and apply backoff
+                    const stats = this.walletMonitor!.getStats();
+                    if (stats.errors > 0 && newTrades.length === 0) {
+                        this.walletScanBackoff = Math.min(this.walletScanBackoff * 2, 10);
+                        this.log('warn', `[RATE LIMIT] Backing off wallet scans to ${(walletScanInterval * 2 / 1000).toFixed(0)}s`);
+                    } else if (this.walletScanBackoff > 1) {
+                        this.walletScanBackoff = 1; // Reset backoff on success
+                    }
+
+                    if (pollMs > 5000) {
+                        this.log('info', `[SLOW POLL] pollNewTrades took ${(pollMs / 1000).toFixed(1)}s`);
+                    }
+
+                    if (newTrades.length > 0) {
+                        this.log('info', `[POLL] ${newTrades.length} new trade(s) from tracked wallets`);
+                    }
                 }
 
                 // Heartbeat every 5 minutes

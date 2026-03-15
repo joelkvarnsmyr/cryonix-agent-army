@@ -63,6 +63,12 @@ stagnation_timeout_hours = 48
 stagnation_min_pnl_pct = 2.0
 
 [timing]
+# Main loop interval — controls exit checks, price updates, state publishing
 poll_interval_ms = 30000
-wallet_scan_interval_ms = 30000
+# Wallet scan interval — Helius API calls (3 wallets × 1 call each)
+# 300s = 5 min. Helius free tier: 1M credits/month. At 5min intervals with
+# 3 wallets: ~864 calls/day ≈ 26K/month. Well within budget.
+# Auto-backoff doubles this on 429 errors (up to 10x = 50 min).
+wallet_scan_interval_ms = 300000
+# Discovery interval (7 days). Discovery uses ~10 extra Helius calls.
 discovery_interval_ms = 604800000

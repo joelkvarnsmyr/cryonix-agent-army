@@ -10,7 +10,7 @@ export class WalletMonitor {
     private trackedWallets: Set<string>;
     private lastSeenTx = new Map<string, string>(); // wallet -> last tx signature
     private pollIntervalMs: number;
-    private pollStats = { calls: 0, errors: 0, swapsFound: 0 };
+    private pollStats = { calls: 0, errors: 0, rateLimited: 0, swapsFound: 0 };
 
     constructor(config: {
         wallets: string[];
@@ -110,7 +110,15 @@ export class WalletMonitor {
         try {
             const res = await fetch(url, { signal: controller.signal });
             if (!res.ok) {
-                console.warn(`[WalletMonitor] ${label}... Helius HTTP ${res.status}: ${res.statusText}`);
+                if (res.status === 429) {
+                    this.pollStats.rateLimited++;
+                    // Only log 429 once per backoff cycle (not every wallet)
+                    if (this.pollStats.rateLimited <= 1 || this.pollStats.rateLimited % 10 === 0) {
+                        console.warn(`[WalletMonitor] Helius rate limited (429) — backoff active`);
+                    }
+                } else {
+                    console.warn(`[WalletMonitor] ${label}... Helius HTTP ${res.status}: ${res.statusText}`);
+                }
                 return [];
             }
 
