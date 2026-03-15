@@ -41,14 +41,20 @@ export class PolynixRiskManager {
             return { canTrade: false, reason: 'max_exposure', suggestedSize: 0 };
         }
 
-        // Kelly sizing
-        const size = this.kellySizing(
-            edge,
-            winProb,
-            bankroll,
-            config.risk.kelly_fraction,
-            config.capital.max_bet_size_usd,
-        );
+        // For arb bets (winProb >= 0.95), skip Kelly and use max bet
+        // Kelly degenerates for near-certain bets with low payout odds
+        let size: number;
+        if (winProb >= 0.95) {
+            size = config.capital.max_bet_size_usd;
+        } else {
+            size = this.kellySizing(
+                edge,
+                winProb,
+                bankroll,
+                config.risk.kelly_fraction,
+                config.capital.max_bet_size_usd,
+            );
+        }
 
         return { canTrade: size > 0, suggestedSize: size };
     }
