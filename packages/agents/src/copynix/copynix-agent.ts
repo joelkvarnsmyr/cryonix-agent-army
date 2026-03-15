@@ -234,22 +234,26 @@ export class CopynixAgent extends BaseAgent {
 
                 // 1. Poll tracked wallets for new trades (time-gated to avoid Helius rate limits)
                 this.pollCount++;
+                const now = Date.now();
                 const walletScanInterval = this.tomlConfig.timing.wallet_scan_interval_ms * this.walletScanBackoff;
                 let newTrades: WalletTrade[] = [];
 
                 if (now - this.lastWalletScanTime >= walletScanInterval) {
+                    const errorsBefore = this.walletMonitor!.getStats().rateLimited;
                     const pollStart = Date.now();
                     newTrades = await this.walletMonitor!.pollNewTrades();
                     const pollMs = Date.now() - pollStart;
                     this.lastWalletScanTime = Date.now();
 
                     // Check for 429 errors and apply backoff
-                    const stats = this.walletMonitor!.getStats();
-                    if (stats.errors > 0 && newTrades.length === 0) {
+                    const errorsAfter = this.walletMonitor!.getStats().rateLimited;
+                    if (errorsAfter > errorsBefore) {
                         this.walletScanBackoff = Math.min(this.walletScanBackoff * 2, 10);
-                        this.log('warn', `[RATE LIMIT] Backing off wallet scans to ${(walletScanInterval * 2 / 1000).toFixed(0)}s`);
+                        const nextInterval = (this.tomlConfig.timing.wallet_scan_interval_ms * this.walletScanBackoff / 1000).toFixed(0);
+                        this.log('warn', `[RATE LIMIT] Helius 429 — backing off wallet scans to ${nextInterval}s`);
                     } else if (this.walletScanBackoff > 1) {
-                        this.walletScanBackoff = 1; // Reset backoff on success
+                        this.walletScanBackoff = 1;
+                        this.log('info', '[RATE LIMIT] Helius responding — backoff reset');
                     }
 
                     if (pollMs > 5000) {
@@ -262,7 +266,6 @@ export class CopynixAgent extends BaseAgent {
                 }
 
                 // Heartbeat every 5 minutes
-                const now = Date.now();
                 if (now - this.lastHeartbeat >= 300_000) {
                     const acct = this.executor!.getAccountState();
                     const pending = this.consensusEngine!.getPending().size;
