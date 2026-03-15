@@ -2,10 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies (gcc needed for pyswisseph C extension)
+# Install system dependencies (gcc/g++ needed for pyswisseph C/C++ extension)
 RUN apt-get update && apt-get install -y \
     curl \
     gcc \
+    g++ \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
