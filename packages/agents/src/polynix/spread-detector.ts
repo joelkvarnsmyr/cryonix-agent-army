@@ -1,12 +1,12 @@
 import type { CryptoMicroMarket, ArbOpportunity, PolynixConfig } from './types';
 
-interface ClobOrderbook {
-    market: string;
-    asset_id: string;
-    bids: { price: string; size: string }[];
-    asks: { price: string; size: string }[];
-}
-
+/**
+ * SpreadDetector — finds YES+NO arbitrage on Polymarket.
+ *
+ * Uses CLOB /price endpoint (AMM-inclusive pricing) instead of /book
+ * (which only shows thin limit orders). /price returns the real price
+ * you'd actually pay to buy a token.
+ */
 export class SpreadDetector {
     private clobUrl: string;
 
@@ -14,102 +14,90 @@ export class SpreadDetector {
         this.clobUrl = config.broker.clob_api_url;
     }
 
+    /**
+     * Check if a market has a spread arb opportunity.
+     * Returns non-null only if profitable after round-trip fees.
+     */
     async check(market: CryptoMicroMarket, config: PolynixConfig): Promise<ArbOpportunity | null> {
-        const [yesBook, noBook] = await Promise.all([
-            this.fetchOrderbook(market.yesTokenId),
-            this.fetchOrderbook(market.noTokenId),
+        const [yesBuyPrice, noBuyPrice] = await Promise.all([
+            this.fetchPrice(market.yesTokenId, 'buy'),
+            this.fetchPrice(market.noTokenId, 'buy'),
         ]);
 
-        if (!yesBook || !noBook) return null;
+        if (yesBuyPrice === null || noBuyPrice === null) return null;
 
-        // Best ask = cheapest available to buy
-        const yesBestAsk = this.bestAsk(yesBook);
-        const noBestAsk = this.bestAsk(noBook);
+        const combinedCost = yesBuyPrice + noBuyPrice;
 
-        if (!yesBestAsk || !noBestAsk) return null;
+        // Sanity: combined cost < 0.50 usually means illiquid / bad data
+        if (combinedCost < 0.50) return null;
 
-        const combinedCost = yesBestAsk.price + noBestAsk.price;
         const grossEdge = 1.0 - combinedCost;
-
-        // Net edge after round-trip fees (buy both sides)
         const roundTripFees = 2 * config.risk.fee_rate;
         const netEdge = grossEdge - roundTripFees;
 
-        // Only return if profitable after fees
+        // Only return if profitable after fees AND below threshold
         if (netEdge <= 0) return null;
-
-        // Also check threshold
         if (combinedCost >= config.strategy.arb_threshold) return null;
 
-        const yesLiquidity = yesBestAsk.size * yesBestAsk.price;
-        const noLiquidity = noBestAsk.size * noBestAsk.price;
+        // Estimate liquidity from the market object
+        const liquidity = market.liquidity || 0;
+        const halfLiq = liquidity / 2;
 
         return {
             market,
-            yesBestAsk: yesBestAsk.price,
-            noBestAsk: noBestAsk.price,
+            yesBestAsk: yesBuyPrice,
+            noBestAsk: noBuyPrice,
             combinedCost,
             grossEdge,
             netEdge,
-            yesLiquidity,
-            noLiquidity,
-            maxSize: Math.min(yesBestAsk.size, noBestAsk.size),
+            yesLiquidity: halfLiq,
+            noLiquidity: halfLiq,
+            maxSize: Math.min(halfLiq, config.capital.max_bet_size_usd),
         };
     }
 
-    private async fetchOrderbook(tokenId: string): Promise<ClobOrderbook | null> {
-        const url = `${this.clobUrl}/book?token_id=${tokenId}`;
+    /**
+     * Get the YES midpoint price for directional comparison.
+     */
+    async getYesMidpoint(market: CryptoMicroMarket): Promise<number | null> {
+        return this.fetchMidpoint(market.yesTokenId);
+    }
+
+    /**
+     * Fetch the actual AMM-inclusive price to buy/sell a token.
+     */
+    private async fetchPrice(tokenId: string, side: 'buy' | 'sell'): Promise<number | null> {
         try {
-            const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+            const url = `${this.clobUrl}/price?token_id=${tokenId}&side=${side}`;
+            const res = await fetch(url, {
+                headers: { 'Accept': 'application/json' },
+                signal: AbortSignal.timeout(8_000),
+            });
             if (!res.ok) return null;
-            return await res.json() as ClobOrderbook;
+            const data = await res.json() as { price: string };
+            const price = parseFloat(data.price);
+            return isNaN(price) || price <= 0 ? null : price;
         } catch {
             return null;
         }
     }
 
-    private bestAsk(book: ClobOrderbook): { price: number; size: number } | null {
-        if (!book.asks || book.asks.length === 0) return null;
-
-        // Asks sorted ascending — first is best (lowest price)
-        let best: { price: number; size: number } | null = null;
-        for (const ask of book.asks) {
-            const price = parseFloat(ask.price);
-            const size = parseFloat(ask.size);
-            if (isNaN(price) || isNaN(size) || size <= 0) continue;
-            if (!best || price < best.price) {
-                best = { price, size };
-            }
-        }
-        return best;
-    }
-
     /**
-     * Get the YES midpoint price for a market (used by directional engine).
+     * Fetch midpoint price for a token.
      */
-    async getYesMidpoint(market: CryptoMicroMarket): Promise<number | null> {
-        const book = await this.fetchOrderbook(market.yesTokenId);
-        if (!book) return null;
-
-        const bestBid = this.bestBid(book);
-        const bestAsk = this.bestAsk(book);
-        if (!bestBid || !bestAsk) return bestAsk?.price ?? bestBid?.price ?? null;
-
-        return (bestBid.price + bestAsk.price) / 2;
-    }
-
-    private bestBid(book: ClobOrderbook): { price: number; size: number } | null {
-        if (!book.bids || book.bids.length === 0) return null;
-
-        let best: { price: number; size: number } | null = null;
-        for (const bid of book.bids) {
-            const price = parseFloat(bid.price);
-            const size = parseFloat(bid.size);
-            if (isNaN(price) || isNaN(size) || size <= 0) continue;
-            if (!best || price > best.price) {
-                best = { price, size };
-            }
+    private async fetchMidpoint(tokenId: string): Promise<number | null> {
+        try {
+            const url = `${this.clobUrl}/midpoint?token_id=${tokenId}`;
+            const res = await fetch(url, {
+                headers: { 'Accept': 'application/json' },
+                signal: AbortSignal.timeout(8_000),
+            });
+            if (!res.ok) return null;
+            const data = await res.json() as { mid: string };
+            const mid = parseFloat(data.mid);
+            return isNaN(mid) ? null : mid;
+        } catch {
+            return null;
         }
-        return best;
     }
 }

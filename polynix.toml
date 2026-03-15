@@ -13,8 +13,11 @@ max_exposure_pct = 50
 arb_threshold = 0.96
 min_edge_pct = 2.0
 momentum_lookback_seconds = 60
-min_time_to_expiry_s = 60
-max_time_to_expiry_s = 240
+min_time_to_expiry_s = 3600        # 1 hour minimum (skip nearly-expired)
+max_time_to_expiry_s = 7776000     # 90 days max
+scan_all_for_arb = true            # Scan all high-liquidity markets for YES+NO arb
+min_liquidity_usd = 500            # Min $500 liquidity to consider
+max_markets_per_scan = 80          # Max markets per arb scan cycle
 
 [risk]
 kelly_fraction = 0.25
@@ -23,8 +26,8 @@ max_consecutive_losses = 5
 fee_rate = 0.0156
 
 [timing]
-scan_interval_ms = 5000
-settlement_check_ms = 10000
+scan_interval_ms = 60000           # 60s between scans (long-duration markets)
+settlement_check_ms = 300000       # 5 min settlement checks
 
 [data_sources]
 binance_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]

@@ -19,8 +19,11 @@ export const POLYNIX_DEFAULTS: PolynixConfig = {
         arb_threshold: 0.96,
         min_edge_pct: 2.0,
         momentum_lookback_seconds: 60,
-        min_time_to_expiry_s: 60,
-        max_time_to_expiry_s: 240,
+        min_time_to_expiry_s: 3600,         // 1 hour minimum (avoid nearly-expired)
+        max_time_to_expiry_s: 90 * 86400,   // 90 days max
+        scan_all_for_arb: true,             // Scan all markets for spread arb
+        min_liquidity_usd: 500,             // Min $500 liquidity
+        max_markets_per_scan: 80,           // Max markets per cycle
     },
     risk: {
         kelly_fraction: 0.25,
@@ -29,8 +32,8 @@ export const POLYNIX_DEFAULTS: PolynixConfig = {
         fee_rate: 0.0156,
     },
     timing: {
-        scan_interval_ms: 5000,
-        settlement_check_ms: 10000,
+        scan_interval_ms: 60_000,           // 60s (markets don't change every second)
+        settlement_check_ms: 300_000,       // 5 min (long-duration markets)
     },
     data_sources: {
         binance_symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],

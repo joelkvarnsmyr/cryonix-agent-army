@@ -8,7 +8,7 @@ import { PolynixRiskManager } from './risk-manager';
 import { PositionTracker } from './position-tracker';
 import { OrderManager } from './order-manager';
 import { loadPolynixConfig } from './config';
-import type { PolynixConfig, PolynixAccountState } from './types';
+import type { PolynixConfig, PolynixAccountState, CryptoMicroMarket } from './types';
 
 export class PolynixAgent extends BaseAgent {
     private isRunning = false;
@@ -49,7 +49,7 @@ export class PolynixAgent extends BaseAgent {
     }
 
     async initialize(): Promise<void> {
-        this.log('info', 'Initializing Polynix Agent (Polymarket 5-min binary options)...');
+        this.log('info', 'Initializing Polynix Agent (Polymarket binary options)...');
 
         const kvUrl = process.env.KV_URL;
         if (kvUrl) {
@@ -67,6 +67,8 @@ export class PolynixAgent extends BaseAgent {
         this.log('info', `Starting balance: $${this.tomlConfig.capital.starting_balance_usd}`);
         this.log('info', `Arb threshold: ${this.tomlConfig.strategy.arb_threshold} (net after ${(this.tomlConfig.risk.fee_rate * 200).toFixed(1)}% round-trip fees)`);
         this.log('info', `Min directional edge: ${this.tomlConfig.strategy.min_edge_pct}%`);
+        this.log('info', `Scan interval: ${this.tomlConfig.timing.scan_interval_ms / 1000}s`);
+        this.log('info', `Arb scan all markets: ${this.tomlConfig.strategy.scan_all_for_arb}`);
         this.log('info', 'Initialization complete.');
     }
 
@@ -84,9 +86,8 @@ export class PolynixAgent extends BaseAgent {
                 this.log('error', `Loop error: ${error.message}`);
             }
 
-            // Interruptible sleep
             const pollMs = this.tomlConfig.timing.scan_interval_ms;
-            const tick = 250;
+            const tick = 500;
             for (let elapsed = 0; elapsed < pollMs && this.isRunning; elapsed += tick) {
                 await this.sleep(Math.min(tick, pollMs - elapsed));
             }
@@ -137,50 +138,44 @@ export class PolynixAgent extends BaseAgent {
         // 2. Fetch latest CEX prices
         await this.directionalEngine.fetchPrices(this.tomlConfig);
 
-        // 3. Scan for active markets
-        const markets = await this.scanner.scan(this.tomlConfig);
+        // 3. Scan for markets (crypto + arb)
+        const { cryptoMarkets, arbMarkets } = await this.scanner.scan(this.tomlConfig);
+
+        // Deduplicate: arb markets that are also crypto markets
+        const cryptoIds = new Set(cryptoMarkets.map(m => m.conditionId));
+        const arbOnlyMarkets = arbMarkets.filter(m => !cryptoIds.has(m.conditionId));
+
+        // Combine all unique markets for arb scanning
+        const allMarketsForArb = [...cryptoMarkets, ...arbOnlyMarkets];
 
         let arbsFound = 0;
+        let arbsExecuted = 0;
         let signalsFound = 0;
+        let signalsExecuted = 0;
 
-        for (const market of markets) {
-            // 4a. Check for arbitrage
-            try {
-                const arb = await this.spreadDetector.check(market, this.tomlConfig);
-                if (arb && arb.netEdge > 0) {
+        // 4a. Check ALL markets for arb opportunities
+        const arbBatchSize = 10;
+        for (let i = 0; i < allMarketsForArb.length; i += arbBatchSize) {
+            const batch = allMarketsForArb.slice(i, i + arbBatchSize);
+            const results = await Promise.allSettled(
+                batch.map(m => this.checkArb(m))
+            );
+
+            for (const result of results) {
+                if (result.status === 'fulfilled' && result.value) {
                     arbsFound++;
-                    const risk = this.riskManager.check(
-                        arb.netEdge,
-                        0.99, // 99% win probability for arb
-                        this.tomlConfig,
-                        this.positionTracker.getOpenCount(),
-                        this.positionTracker.getExposure(),
-                    );
-
-                    if (risk.canTrade) {
-                        const size = Math.min(risk.suggestedSize, arb.maxSize);
-                        const orders = await this.orderManager.placeArbOrders(arb, size);
-
-                        if (orders.yesOrder.status === 'filled' && orders.noOrder.status === 'filled') {
-                            const costBasis = arb.combinedCost * size;
-                            this.positionTracker.addPosition(
-                                market, 'arb', 'BOTH',
-                                arb.combinedCost, size, costBasis,
-                            );
-                            this.accountState.balance -= costBasis;
-                            this.log('info', `ARB ENTRY: ${market.title} | cost=$${arb.combinedCost.toFixed(4)} | edge=${(arb.netEdge * 100).toFixed(2)}% | size=$${size.toFixed(2)} | expires=${market.timeToExpiry.toFixed(0)}s`);
-
-                            await this.logSignal('arb', market.title, arb.netEdge, 'BOTH', true);
-                        }
-                    } else {
-                        this.log('info', `ARB blocked: ${market.title} (${risk.reason})`);
-                    }
+                    if (result.value === 'executed') arbsExecuted++;
                 }
-            } catch (err: any) {
-                this.log('warn', `Arb check error for ${market.title}: ${err.message}`);
             }
 
-            // 4b. Check for directional signal
+            // Rate limit between batches
+            if (i + arbBatchSize < allMarketsForArb.length) {
+                await this.sleep(200);
+            }
+        }
+
+        // 4b. Check crypto markets for directional opportunities
+        for (const market of cryptoMarkets) {
             try {
                 const signal = await this.directionalEngine.evaluate(market, this.spreadDetector, this.tomlConfig);
                 if (signal && signal.edge > this.tomlConfig.strategy.min_edge_pct / 100) {
@@ -205,8 +200,8 @@ export class PolynixAgent extends BaseAgent {
                                 price, risk.suggestedSize, costBasis,
                             );
                             this.accountState.balance -= costBasis;
-                            this.log('info', `DIRECTIONAL ${signal.direction}: ${market.title} | edge=${(signal.edge * 100).toFixed(2)}% | momentum=${signal.priceChangePct.toFixed(3)}% | conf=${signal.confidence} | size=$${risk.suggestedSize.toFixed(2)}`);
-
+                            signalsExecuted++;
+                            this.log('info', `DIRECTIONAL ${signal.direction}: ${market.title} | edge=${(signal.edge * 100).toFixed(2)}% | price=$${signal.currentPrice.toFixed(2)} | conf=${signal.confidence} | size=$${risk.suggestedSize.toFixed(2)}`);
                             await this.logSignal('directional', market.title, signal.edge, signal.direction, true);
                         }
                     } else {
@@ -230,16 +225,57 @@ export class PolynixAgent extends BaseAgent {
             this.lastHeartbeatLog = now;
             this.log('info', [
                 `Heartbeat #${this.scanCount}:`,
-                `markets=${markets.length}`,
-                `arbs=${arbsFound}`,
-                `signals=${signalsFound}`,
+                `crypto=${cryptoMarkets.length}`,
+                `arb_scan=${allMarketsForArb.length}`,
+                `arbs=${arbsFound}(${arbsExecuted}x)`,
+                `signals=${signalsFound}(${signalsExecuted}x)`,
                 `open=${this.accountState.openPositions}`,
-                `balance=$${this.accountState.balance.toFixed(2)}`,
+                `bal=$${this.accountState.balance.toFixed(2)}`,
                 `pnl=$${this.accountState.totalPnl.toFixed(2)}`,
                 `trades=${this.accountState.tradesTotal}`,
                 `WR=${this.accountState.winRate.toFixed(0)}%`,
-                `losses_streak=${this.riskManager.getConsecutiveLosses()}`,
             ].join(' | '));
+        }
+    }
+
+    /**
+     * Check a single market for arb opportunity and execute if profitable.
+     * Returns 'executed' if trade was placed, 'found' if opportunity exists but blocked, null otherwise.
+     */
+    private async checkArb(market: CryptoMicroMarket): Promise<'executed' | 'found' | null> {
+        try {
+            const arb = await this.spreadDetector.check(market, this.tomlConfig);
+            if (!arb || arb.netEdge <= 0) return null;
+
+            const risk = this.riskManager.check(
+                arb.netEdge,
+                0.99,
+                this.tomlConfig,
+                this.positionTracker.getOpenCount(),
+                this.positionTracker.getExposure(),
+            );
+
+            if (risk.canTrade) {
+                const size = Math.min(risk.suggestedSize, arb.maxSize);
+                const orders = await this.orderManager.placeArbOrders(arb, size);
+
+                if (orders.yesOrder.status === 'filled' && orders.noOrder.status === 'filled') {
+                    const costBasis = arb.combinedCost * size;
+                    this.positionTracker.addPosition(
+                        market, 'arb', 'BOTH',
+                        arb.combinedCost, size, costBasis,
+                    );
+                    this.accountState.balance -= costBasis;
+                    this.log('info', `ARB ENTRY: ${market.title} | cost=$${arb.combinedCost.toFixed(4)} | net=${(arb.netEdge * 100).toFixed(2)}% | size=$${size.toFixed(2)} | liq=$${market.liquidity.toFixed(0)}`);
+                    await this.logSignal('arb', market.title, arb.netEdge, 'BOTH', true);
+                    return 'executed';
+                }
+            } else {
+                this.log('info', `ARB blocked: ${market.title} (${risk.reason})`);
+            }
+            return 'found';
+        } catch {
+            return null;
         }
     }
 
@@ -262,6 +298,10 @@ export class PolynixAgent extends BaseAgent {
             await this.statePublisher.set(
                 'polynix:risk',
                 JSON.stringify(this.riskManager.getState()),
+            );
+            await this.statePublisher.set(
+                'polynix:trades',
+                JSON.stringify(this.positionTracker.getSettledTrades().slice(-50)),
             );
         } catch {
             // Non-critical

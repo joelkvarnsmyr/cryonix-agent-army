@@ -6,11 +6,15 @@ export interface CryptoMicroMarket {
     conditionId: string;
     questionId: string;
     title: string;
-    asset: string;
+    asset: string;              // 'BTC', 'ETH', 'SOL', or 'MACRO' for non-crypto arb markets
     expiresAt: number;          // Unix ms
     timeToExpiry: number;       // Seconds remaining
     yesTokenId: string;
     noTokenId: string;
+    priceTarget?: number;       // Extracted price target (e.g. 80000 from "BTC above $80K")
+    targetDirection?: 'above' | 'below'; // Direction of the price target
+    liquidity: number;          // Market liquidity in USD
+    volume24hr: number;         // 24h trading volume
 }
 
 export interface ArbOpportunity {
@@ -91,6 +95,9 @@ export interface PolynixConfig {
         momentum_lookback_seconds: number;
         min_time_to_expiry_s: number;
         max_time_to_expiry_s: number;
+        scan_all_for_arb: boolean;       // Scan all high-liquidity markets for arb (not just crypto)
+        min_liquidity_usd: number;       // Minimum liquidity for arb scanning
+        max_markets_per_scan: number;    // Limit markets per scan cycle
     };
     risk: {
         kelly_fraction: number;
