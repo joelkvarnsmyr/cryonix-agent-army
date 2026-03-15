@@ -138,6 +138,10 @@ class VedicTrader:
         self.redis = aioredis.from_url(kv_url, decode_responses=True)
         self.name = "VedicTrader"
         self.wallet: Optional[PaperWallet] = None
+        # Venus Rx BTD state tracking
+        self.prev_venus_rx = False
+        self.venus_rx_ended_at: Optional[float] = None  # timestamp when Venus went direct
+        self.btd_mode = False  # True = aggressively buying post-Venus-Rx dip
 
     async def load_wallet(self):
         """Load or create paper wallet from Redis. Handles migration from v1 format."""
@@ -220,15 +224,14 @@ class VedicTrader:
     # ── Trading Logic ─────────────────────────────────────────────────
 
     def should_buy(
-        self, symbol: str, vedic_score, transit_score, dasha_state
+        self, symbol: str, vedic_score, transit_score, dasha_state,
+        btd_window: bool = False,
     ) -> Tuple[bool, str]:
         """V3: Evaluate vedic conditions for a BUY.
 
-        Only research-validated gates (p<0.05, regime-independent):
-        1. Venus Rx = absolute block (p<0.0001)
-        2. V3 composite score threshold
-        3. Mercury Rx = mild via composite (not hard block)
-        All V2 noise gates removed (muhurta, nakshatra, paksha, aspects, dasha).
+        Normal mode: Venus Rx block + V3 score threshold.
+        BTD mode: Override score threshold during post-Venus-Rx recovery window.
+        Research: BTD at Day+7, hold 60d = +24.9% avg, 72% WR, p=0.0013.
         """
         reasons = []
 
@@ -236,22 +239,28 @@ class VedicTrader:
         if VENUS_RX_BLOCKS_BUY and vedic_score.label == "venus_rx_block":
             return False, "Venus retrograde — absolute block (p<0.0001)"
 
-        # 2. V3 Composite score check
+        # 2. BTD mode: lower score threshold, buy more aggressively
+        if btd_window:
+            # In BTD window: buy regardless of score (research shows +24.9% avg)
+            # Only gate: Mercury must NOT be Rx (the only losing BTD was Merc+Venus Rx)
+            if vedic_score.is_mercury_retrograde:
+                return False, "BTD window but Mercury Rx — skip (2018-10 lesson)"
+            reasons.append(f"BTD_MODE (post-Venus-Rx recovery)")
+            reasons.append(f"v3={vedic_score.overall_score}")
+            return True, " | ".join(reasons)
+
+        # 3. Normal mode: V3 Composite score check
         if vedic_score.overall_score < BUY_SCORE_THRESHOLD:
             return False, f"V3 score {vedic_score.overall_score} < {BUY_SCORE_THRESHOLD}"
         reasons.append(f"v3={vedic_score.overall_score} ({vedic_score.label})")
 
-        # 3. Mercury Rx: not a hard block in V3, just logged
+        # 4. Mercury Rx: not a hard block in V3, just logged
         if vedic_score.is_mercury_retrograde:
             reasons.append("MercRx(mild)")
 
-        # 4. Log retrogrades count
+        # 5. Log retrogrades count
         n_retro = len(vedic_score.retrogrades)
         reasons.append(f"retro={n_retro}")
-
-        # 5. Log paksha (display only, not a gate)
-        paksha = getattr(vedic_score, 'lunar_paksha', '?')
-        reasons.append(f"paksha={paksha}")
 
         return True, " | ".join(reasons)
 
@@ -290,12 +299,17 @@ class VedicTrader:
                     f"P&L {pnl_pct*100:+.1f}%)"
                 )
 
+        # Check if this is a BTD position (wider stops)
+        is_btd = "BTD_MODE" in position.get("entry_reason", "")
+        sl = 0.12 if is_btd else STOP_LOSS_PCT  # BTD: -12% SL (research: very wide = best)
+        tp = 0.40 if is_btd else TAKE_PROFIT_PCT  # BTD: +40% TP
+
         # Hard stop-loss
-        if pnl_pct <= -STOP_LOSS_PCT:
+        if pnl_pct <= -sl:
             return True, f"STOP LOSS {symbol} ({pnl_pct*100:.1f}%)"
 
         # Hard take-profit
-        if pnl_pct >= TAKE_PROFIT_PCT:
+        if pnl_pct >= tp:
             return True, f"TAKE PROFIT {symbol} ({pnl_pct*100:.1f}%)"
 
         # Venus Rx exit: sell with any profit (strongest signal)
@@ -311,10 +325,12 @@ class VedicTrader:
     # ── Execution ─────────────────────────────────────────────────────
 
     async def execute_buy(
-        self, symbol: str, price: float, reason: str, vedic_score, dasha_state
+        self, symbol: str, price: float, reason: str, vedic_score, dasha_state,
+        pos_size_override: float = None,
     ):
         """Execute a paper BUY for a specific symbol."""
-        size_usd = self.wallet.balance * POSITION_SIZE_PCT
+        pct = pos_size_override or POSITION_SIZE_PCT
+        size_usd = self.wallet.balance * pct
         if size_usd < 5:
             return
 
@@ -516,6 +532,34 @@ class VedicTrader:
             print(f"[{self.name}] No prices — skipping cycle")
             return
 
+        # 4b. Venus Rx BTD mode tracking
+        # Research: After Venus Rx ends, wait 7 days then buy aggressively.
+        # +24.9% avg return at 60d hold, 72% WR, p=0.0013.
+        # BUT: skip if Mercury is also Rx (only losing period was 2018-10 when both Rx).
+        venus_rx_now = vedic_score.label == "venus_rx_block"
+
+        if self.prev_venus_rx and not venus_rx_now:
+            # Venus just went direct! Start BTD countdown.
+            self.venus_rx_ended_at = time.time()
+            print(f"[{self.name}] VENUS WENT DIRECT — BTD countdown started (enter in ~7 days)")
+
+        self.prev_venus_rx = venus_rx_now
+
+        # Check if we're in BTD window (7-60 days after Venus Rx ended)
+        btd_window = False
+        btd_days_since = 0
+        if self.venus_rx_ended_at:
+            btd_days_since = (time.time() - self.venus_rx_ended_at) / 86400
+            if 7 <= btd_days_since <= 60:
+                # Only enter BTD if Mercury is NOT retrograde
+                if not vedic_score.is_mercury_retrograde:
+                    btd_window = True
+                else:
+                    print(f"[{self.name}] BTD window active but Mercury Rx — skipping")
+            elif btd_days_since > 60:
+                self.venus_rx_ended_at = None  # BTD window expired
+                self.btd_mode = False
+
         # 5. Log global state
         n_pos = len(self.wallet.positions)
         pos_str = ", ".join(
@@ -524,13 +568,15 @@ class VedicTrader:
             if s in prices
         )
         paksha = getattr(vedic_score, 'lunar_paksha', '?')
+        btd_str = f" | BTD day {btd_days_since:.0f}" if btd_window else ""
         print(
-            f"[{self.name}] Vedic={vedic_score.overall_score} ({vedic_score.label}) | "
-            f"Muhurta={vedic_score.muhurta_label} | "
-            f"Moon={vedic_score.moon_nakshatra} ({vedic_score.moon_nakshatra_bias}) | "
+            f"[{self.name}] V3={vedic_score.overall_score} ({vedic_score.label}) | "
+            f"Moon={vedic_score.moon_nakshatra} | "
             f"Tithi={vedic_score.tithi_name} ({paksha}) | "
             f"MercRx={vedic_score.is_mercury_retrograde} | "
+            f"Retro={len(vedic_score.retrogrades)} | "
             f"Pos={n_pos}/{MAX_POSITIONS}"
+            f"{btd_str}"
             f"{' | ' + pos_str if pos_str else ''}"
         )
 
@@ -549,6 +595,12 @@ class VedicTrader:
                 await self.save_wallet()
 
         # 7. Check candidates for BUY (if we have open slots)
+        # In BTD mode: use larger position size (25%) and wider stops
+        effective_pos_size = POSITION_SIZE_PCT
+        if btd_window:
+            effective_pos_size = 0.25  # 25% during BTD (research: aggressive works)
+            print(f"[{self.name}] BTD MODE ACTIVE — 25% position size, wide stops")
+
         open_slots = MAX_POSITIONS - len(self.wallet.positions)
         if open_slots > 0:
             for sym, transit_sc in candidates:
@@ -565,9 +617,10 @@ class VedicTrader:
                 t_score = ts.score if ts else None
                 dasha = dashas.get(sym)
 
-                should, reason = self.should_buy(sym, vedic_score, t_score, dasha)
+                should, reason = self.should_buy(sym, vedic_score, t_score, dasha, btd_window)
                 if should:
-                    await self.execute_buy(sym, price, reason, vedic_score, dasha)
+                    await self.execute_buy(sym, price, reason, vedic_score, dasha,
+                                          pos_size_override=effective_pos_size)
                     open_slots -= 1
 
         # 8. Update stats
