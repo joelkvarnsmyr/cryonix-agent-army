@@ -337,11 +337,16 @@ services:
     environment:
       - NODE_ENV=production
       - KV_URL=redis://redis:6379
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
       - HELIUS_API_KEY=${HELIUS_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
     networks:
       - cryonix-net
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   # ============================================================

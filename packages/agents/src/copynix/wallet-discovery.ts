@@ -53,16 +53,24 @@ export class WalletDiscovery {
 
         // Step 1: Find trending tokens on DexScreener
         const trendingMints = await this.getTrendingMints();
-        if (trendingMints.length === 0) return [];
+        if (trendingMints.length === 0) {
+            console.log('[WalletDiscovery] No trending Solana tokens found on DexScreener');
+            return [];
+        }
 
         console.log(`[WalletDiscovery] Found ${trendingMints.length} trending tokens`);
 
         // Step 2: For each trending token, find wallets that bought early + profited
         const candidates = new Map<string, CandidateWallet>();
+        let tokensAnalyzed = 0;
+        let totalCandidates = 0;
 
         for (const mint of trendingMints.slice(0, 5)) {
             try {
                 const earlyBuyers = await this.findEarlyBuyers(mint);
+                tokensAnalyzed++;
+                totalCandidates += earlyBuyers.length;
+
                 for (const buyer of earlyBuyers) {
                     if (this.existing.has(buyer.address)) continue;
 
@@ -84,20 +92,35 @@ export class WalletDiscovery {
             }
         }
 
+        console.log(`[WalletDiscovery] Analyzed ${tokensAnalyzed} tokens → ${totalCandidates} raw candidates → ${candidates.size} unique wallets`);
+
         // Step 3: Filter and score candidates
+        // Require: ≥2 trades (relaxed from 3), ≥50% win rate
+        // Note: totalPnlUsd is estimated — a completed buy+sell cycle counts as a "win"
         const qualified = Array.from(candidates.values())
-            .filter(c => c.trades >= 3 && c.wins / c.trades >= 0.5 && c.totalPnlUsd > 0)
+            .filter(c => {
+                const winRate = c.trades > 0 ? c.wins / c.trades : 0;
+                return c.trades >= 2 && winRate >= 0.5;
+            })
             .sort((a, b) => {
-                // Score: win rate * log(PnL) * recency
-                const scoreA = (a.wins / a.trades) * Math.log10(Math.max(1, a.totalPnlUsd));
-                const scoreB = (b.wins / b.trades) * Math.log10(Math.max(1, b.totalPnlUsd));
+                // Score: win rate * trade count * recency
+                const recencyA = Math.max(0, 1 - (Date.now() - a.lastSeen) / (7 * 86_400_000));
+                const recencyB = Math.max(0, 1 - (Date.now() - b.lastSeen) / (7 * 86_400_000));
+                const scoreA = (a.wins / a.trades) * Math.sqrt(a.trades) * (0.5 + 0.5 * recencyA);
+                const scoreB = (b.wins / b.trades) * Math.sqrt(b.trades) * (0.5 + 0.5 * recencyB);
                 return scoreB - scoreA;
             })
             .slice(0, slotsAvailable);
 
         if (qualified.length === 0) {
-            console.log('[WalletDiscovery] No qualifying wallets found');
+            console.log(`[WalletDiscovery] No qualifying wallets (need ≥2 trades, ≥50% WR)`);
             return [];
+        }
+
+        console.log(`[WalletDiscovery] ${qualified.length} wallet(s) qualified:`);
+        for (const c of qualified) {
+            const wr = ((c.wins / c.trades) * 100).toFixed(0);
+            console.log(`  ${c.address.slice(0, 8)}... trades=${c.trades} WR=${wr}%`);
         }
 
         // Step 4: Convert to TrackedWallet format
@@ -105,7 +128,7 @@ export class WalletDiscovery {
         return qualified.map(c => ({
             address: c.address,
             label: `discovered-${c.address.slice(0, 6)}`,
-            score: Math.min(100, Math.round((c.wins / c.trades) * 100 * 0.8 + Math.min(20, c.totalPnlUsd / 1000))),
+            score: Math.min(100, Math.round((c.wins / c.trades) * 80 + Math.min(20, c.trades * 2))),
             winRate: (c.wins / c.trades) * 100,
             tradeCount30d: c.trades,
             roi30d: 0,
@@ -123,7 +146,10 @@ export class WalletDiscovery {
             // DexScreener token boosted endpoint — shows tokens with most engagement
             const url = 'https://api.dexscreener.com/token-boosts/top/v1';
             const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-            if (!res.ok) return [];
+            if (!res.ok) {
+                console.warn(`[WalletDiscovery] DexScreener trending HTTP ${res.status}`);
+                return [];
+            }
 
             const data = await res.json() as Array<{
                 tokenAddress: string;
@@ -133,11 +159,14 @@ export class WalletDiscovery {
 
             if (!Array.isArray(data)) return [];
 
-            return data
+            const mints = data
                 .filter(t => t.chainId === 'solana')
                 .slice(0, 10)
                 .map(t => t.tokenAddress);
-        } catch {
+
+            return mints;
+        } catch (err) {
+            console.warn(`[WalletDiscovery] DexScreener error: ${err instanceof Error ? err.message : String(err)}`);
             return [];
         }
     }
@@ -145,19 +174,26 @@ export class WalletDiscovery {
     /**
      * Find wallets that bought a token early using Helius enhanced transactions.
      * Looks for wallets that swapped into the token and estimates profit.
+     *
+     * NOTE: Fetches ALL transaction types (not just SWAP) to capture Jupiter
+     * aggregator routes that Helius may classify differently.
      */
     private async findEarlyBuyers(tokenMint: string): Promise<CandidateWallet[]> {
         if (!this.heliusKey) return [];
 
         try {
-            // Use Helius parsed transaction history for the token
-            const url = `https://api.helius.xyz/v0/addresses/${tokenMint}/transactions?api-key=${this.heliusKey}&type=SWAP&limit=50`;
+            // Fetch all types — Jupiter V6 swaps may not be classified as SWAP
+            const url = `https://api.helius.xyz/v0/addresses/${tokenMint}/transactions?api-key=${this.heliusKey}&limit=50`;
             const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-            if (!res.ok) return [];
+            if (!res.ok) {
+                console.warn(`[WalletDiscovery] Helius early buyers HTTP ${res.status} for ${tokenMint.slice(0, 8)}`);
+                return [];
+            }
 
             const txns = await res.json() as Array<{
                 signature: string;
                 timestamp: number;
+                type: string;
                 feePayer: string;
                 events?: {
                     swap?: {
@@ -165,49 +201,76 @@ export class WalletDiscovery {
                         tokenOutputs?: Array<{ mint: string; tokenAmount?: number }>;
                     };
                 };
+                tokenTransfers?: Array<{
+                    mint: string;
+                    fromUserAccount?: string;
+                    toUserAccount?: string;
+                    tokenAmount?: number;
+                }>;
             }>;
 
             if (!Array.isArray(txns)) return [];
 
-            // Group by wallet, count buys
             const stablecoins = new Set([
                 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
                 'So11111111111111111111111111111111111111112',    // SOL
+                'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
             ]);
 
             const walletStats = new Map<string, { buys: number; sells: number; lastSeen: number }>();
 
             for (const tx of txns) {
-                if (!tx.events?.swap) continue;
-                const swap = tx.events.swap;
-                const tokenIn = swap.tokenInputs?.[0];
-                const tokenOut = swap.tokenOutputs?.[0];
-                if (!tokenIn || !tokenOut) continue;
+                let isBuy = false;
+                let isSell = false;
+                let wallet = tx.feePayer;
 
-                const isBuy = stablecoins.has(tokenIn.mint) && tokenOut.mint === tokenMint;
-                const isSell = tokenIn.mint === tokenMint && stablecoins.has(tokenOut.mint);
+                // Method 1: events.swap
+                if (tx.events?.swap) {
+                    const swap = tx.events.swap;
+                    const tokenIn = swap.tokenInputs?.[0];
+                    const tokenOut = swap.tokenOutputs?.[0];
+                    if (tokenIn && tokenOut) {
+                        isBuy = stablecoins.has(tokenIn.mint) && tokenOut.mint === tokenMint;
+                        isSell = tokenIn.mint === tokenMint && stablecoins.has(tokenOut.mint);
+                    }
+                }
+
+                // Method 2: tokenTransfers fallback (Jupiter V6, Raydium, etc.)
+                if (!isBuy && !isSell && tx.tokenTransfers && tx.tokenTransfers.length >= 2) {
+                    for (const t of tx.tokenTransfers) {
+                        if (t.fromUserAccount === wallet && stablecoins.has(t.mint)) {
+                            // Wallet sent stablecoins — potential buy
+                        }
+                        if (t.toUserAccount === wallet && t.mint === tokenMint) {
+                            isBuy = true;
+                        }
+                        if (t.fromUserAccount === wallet && t.mint === tokenMint) {
+                            isSell = true;
+                        }
+                    }
+                    // If both buy and sell in same tx, skip (it's a swap route)
+                    if (isBuy && isSell) { isBuy = false; isSell = false; }
+                }
 
                 if (!isBuy && !isSell) continue;
 
-                const wallet = tx.feePayer;
                 const stats = walletStats.get(wallet) ?? { buys: 0, sells: 0, lastSeen: 0 };
-
                 if (isBuy) stats.buys++;
                 if (isSell) stats.sells++;
                 stats.lastSeen = Math.max(stats.lastSeen, tx.timestamp * 1000);
-
                 walletStats.set(wallet, stats);
             }
 
-            // Convert to candidates — wallets that both bought and sold (completed trades)
+            // Convert to candidates — wallets with activity
             const candidates: CandidateWallet[] = [];
             for (const [address, stats] of walletStats) {
                 if (stats.buys === 0) continue;
 
                 candidates.push({
                     address,
-                    trades: stats.buys,
-                    wins: Math.min(stats.sells, stats.buys), // rough: sells ≈ winning exits
+                    trades: stats.buys + stats.sells,
+                    // Completed round trips (buy+sell) indicate profitable behavior
+                    wins: Math.min(stats.sells, stats.buys),
                     totalPnlUsd: 0, // Can't determine from this data alone
                     avgHoldMinutes: 0,
                     lastSeen: stats.lastSeen,
@@ -215,7 +278,8 @@ export class WalletDiscovery {
             }
 
             return candidates;
-        } catch {
+        } catch (err) {
+            console.warn(`[WalletDiscovery] Error for ${tokenMint.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
             return [];
         }
     }

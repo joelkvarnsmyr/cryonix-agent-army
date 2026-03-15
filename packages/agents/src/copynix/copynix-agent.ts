@@ -11,6 +11,99 @@ import { PolymarketIntelligence } from '../shared/polymarket-intelligence';
 import { WalletDiscovery } from './wallet-discovery';
 import type { CopyPosition, CopySignal, WalletTrade } from './types';
 
+// ── Telegram Alert Helper ─────────────────────────────────────────────
+async function sendTelegramAlert(message: string): Promise<void> {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.TELEGRAM_CHAT_ID;
+    if (!token || !chatId) return;
+    try {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' }),
+            signal: AbortSignal.timeout(5_000),
+        });
+    } catch { /* non-critical */ }
+}
+
+// ── Trade Logger — persist paper trades to Postgres ───────────────────
+class CopynixTradeLogger {
+    private pg: any = null;
+
+    async connect(): Promise<void> {
+        const url = process.env.POSTGRES_URL;
+        if (!url) return;
+        try {
+            const { Client } = await import('pg');
+            this.pg = new Client({ connectionString: url });
+            await this.pg.connect();
+
+            // Ensure table exists
+            await this.pg.query(`
+                CREATE TABLE IF NOT EXISTS copynix_trades (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    token_mint TEXT NOT NULL,
+                    token_symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    qty DOUBLE PRECISION,
+                    entry_price DOUBLE PRECISION,
+                    exit_price DOUBLE PRECISION,
+                    dollar_amount DOUBLE PRECISION,
+                    realized_pnl DOUBLE PRECISION,
+                    consensus_level TEXT,
+                    wallet_count INTEGER,
+                    confidence DOUBLE PRECISION,
+                    exit_reason TEXT,
+                    metadata JSONB
+                )
+            `);
+        } catch (err: any) {
+            console.warn('[CopynixTradeLogger] Postgres connect failed (non-fatal):', err.message);
+            this.pg = null;
+        }
+    }
+
+    async logTrade(params: {
+        tokenMint: string;
+        tokenSymbol: string;
+        side: 'BUY' | 'SELL';
+        qty?: number;
+        entryPrice?: number;
+        exitPrice?: number;
+        dollarAmount?: number;
+        realizedPnl?: number;
+        consensusLevel?: string;
+        walletCount?: number;
+        confidence?: number;
+        exitReason?: string;
+        metadata?: Record<string, any>;
+    }): Promise<void> {
+        if (!this.pg) return;
+        try {
+            await this.pg.query(
+                `INSERT INTO copynix_trades (token_mint, token_symbol, side, qty, entry_price, exit_price, dollar_amount, realized_pnl, consensus_level, wallet_count, confidence, exit_reason, metadata)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                [
+                    params.tokenMint, params.tokenSymbol, params.side,
+                    params.qty ?? null, params.entryPrice ?? null,
+                    params.exitPrice ?? null, params.dollarAmount ?? null,
+                    params.realizedPnl ?? null, params.consensusLevel ?? null,
+                    params.walletCount ?? null, params.confidence ?? null,
+                    params.exitReason ?? null,
+                    params.metadata ? JSON.stringify(params.metadata) : null,
+                ],
+            );
+        } catch (err: any) {
+            console.warn('[CopynixTradeLogger] Insert failed (non-fatal):', err.message);
+        }
+    }
+
+    async close(): Promise<void> {
+        try { await this.pg?.end(); } catch { }
+    }
+}
+
 export class CopynixAgent extends BaseAgent {
     private isRunning = false;
 
@@ -21,6 +114,7 @@ export class CopynixAgent extends BaseAgent {
     private statePublisher: StatePublisher | null = null;
     private riskManager = new RiskManager();
     private polymarket = new PolymarketIntelligence(300_000);
+    private tradeLogger = new CopynixTradeLogger();
 
     private walletDiscovery: WalletDiscovery | null = null;
     private lastDiscoveryTime = 0;
@@ -93,6 +187,9 @@ export class CopynixAgent extends BaseAgent {
             this.log('info', 'Wallet discovery enabled');
         }
 
+        // Connect trade logger to Postgres
+        await this.tradeLogger.connect();
+
         this.log('info', `Tracked wallets: ${this.walletMonitor.walletCount}`);
         this.log('info', `Single-whale mode: ${Object.keys(config.wallets.scores).length} scored wallets`);
         this.log('info', `Paper trading: $${acct.usdcBalance} USDC`);
@@ -107,6 +204,8 @@ export class CopynixAgent extends BaseAgent {
 
     async stop(): Promise<void> {
         this.isRunning = false;
+        await this.tradeLogger.close();
+        await this.statePublisher?.disconnect();
         this.log('info', 'Copynix agent stopped.');
     }
 
@@ -148,7 +247,8 @@ export class CopynixAgent extends BaseAgent {
                 if (now - this.lastHeartbeat >= 300_000) {
                     const acct = this.executor!.getAccountState();
                     const pending = this.consensusEngine!.getPending().size;
-                    this.log('info', `[HEARTBEAT] poll #${this.pollCount} | ${acct.totalPositions} pos | $${acct.portfolioValue.toFixed(0)} value | ${pending} pending consensus | ${this.tradesToday} trades today`);
+                    const stats = this.walletMonitor!.getStats();
+                    this.log('info', `[HEARTBEAT] poll #${this.pollCount} | ${acct.totalPositions} pos | $${acct.portfolioValue.toFixed(0)} value | ${pending} pending consensus | ${this.tradesToday} trades today | API: ${stats.calls} calls, ${stats.errors} errs, ${stats.swapsFound} swaps`);
                     this.lastHeartbeat = now;
                 }
 
@@ -260,6 +360,29 @@ export class CopynixAgent extends BaseAgent {
         if (result.success) {
             this.tradesToday++;
             this.log('info', `[BUY] ${result.message}`);
+
+            // Log to Postgres
+            await this.tradeLogger.logTrade({
+                tokenMint: signal.tokenMint,
+                tokenSymbol: signal.tokenSymbol,
+                side: 'BUY',
+                qty: signal.avgPriceUsd > 0 ? (this.tomlConfig.capital.max_position_size_usd / signal.avgPriceUsd) : 0,
+                entryPrice: signal.avgPriceUsd,
+                dollarAmount: signal.totalVolumeUsd,
+                consensusLevel: signal.consensusLevel,
+                walletCount: signal.walletCount,
+                confidence: adjustedConfidence,
+                metadata: { wallets: signal.wallets.map(w => w.slice(0, 8)), reasoning: signal.reasoning },
+            });
+
+            // Telegram alert
+            await sendTelegramAlert(
+                `🟢 <b>COPYNIX BUY</b>\n` +
+                `Token: <b>${signal.tokenSymbol}</b>\n` +
+                `Consensus: ${signal.consensusLevel} (${signal.walletCount} wallets)\n` +
+                `Confidence: ${adjustedConfidence}%\n` +
+                `Price: $${signal.avgPriceUsd.toFixed(6)}`,
+            );
         } else {
             this.log('info', `[SKIP] ${result.message}`);
         }
@@ -282,6 +405,7 @@ export class CopynixAgent extends BaseAgent {
         const result = this.executor!.executeSell(trade.tokenMint, pos.currentPrice, 'leader exit');
         if (result.success) {
             this.log('info', `[SELL] ${result.message}`);
+            await this.logSell(pos, pos.currentPrice, 'leader_exit', result.pnl);
         }
     }
 
@@ -296,14 +420,20 @@ export class CopynixAgent extends BaseAgent {
             // Take profit
             if (pnlPct >= config.take_profit_pct) {
                 const result = this.executor!.executeSell(pos.tokenMint, pos.currentPrice, `TP hit (${pnlPct.toFixed(1)}%)`);
-                if (result.success) this.log('info', `[TP] ${result.message}`);
+                if (result.success) {
+                    this.log('info', `[TP] ${result.message}`);
+                    await this.logSell(pos, pos.currentPrice, 'take_profit', result.pnl);
+                }
                 continue;
             }
 
             // Stop loss
             if (pnlPct <= -config.stop_loss_pct) {
                 const result = this.executor!.executeSell(pos.tokenMint, pos.currentPrice, `SL hit (${pnlPct.toFixed(1)}%)`);
-                if (result.success) this.log('info', `[SL] ${result.message}`);
+                if (result.success) {
+                    this.log('info', `[SL] ${result.message}`);
+                    await this.logSell(pos, pos.currentPrice, 'stop_loss', result.pnl);
+                }
                 continue;
             }
 
@@ -315,7 +445,10 @@ export class CopynixAgent extends BaseAgent {
                 const drawdownFromHwm = ((pos.highWatermark - pos.currentPrice) / pos.highWatermark) * 100;
                 if (drawdownFromHwm >= config.trailing_stop_pct) {
                     const result = this.executor!.executeSell(pos.tokenMint, pos.currentPrice, `trailing stop (${drawdownFromHwm.toFixed(1)}% from HWM)`);
-                    if (result.success) this.log('info', `[TRAIL] ${result.message}`);
+                    if (result.success) {
+                        this.log('info', `[TRAIL] ${result.message}`);
+                        await this.logSell(pos, pos.currentPrice, 'trailing_stop', result.pnl);
+                    }
                     continue;
                 }
             }
@@ -323,10 +456,42 @@ export class CopynixAgent extends BaseAgent {
             // Stagnation
             if (holdHours >= config.stagnation_timeout_hours && Math.abs(pnlPct) < config.stagnation_min_pnl_pct) {
                 const result = this.executor!.executeSell(pos.tokenMint, pos.currentPrice, `stagnation (${holdHours.toFixed(0)}h, ${pnlPct.toFixed(1)}%)`);
-                if (result.success) this.log('info', `[STAG] ${result.message}`);
+                if (result.success) {
+                    this.log('info', `[STAG] ${result.message}`);
+                    await this.logSell(pos, pos.currentPrice, 'stagnation', result.pnl);
+                }
                 continue;
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Sell Logging (Postgres + Telegram)
+    // -------------------------------------------------------------------------
+
+    private async logSell(pos: CopyPosition, exitPrice: number, reason: string, pnl: number): Promise<void> {
+        const pnlPct = pos.avgEntryPrice > 0 ? ((exitPrice - pos.avgEntryPrice) / pos.avgEntryPrice) * 100 : 0;
+
+        await this.tradeLogger.logTrade({
+            tokenMint: pos.tokenMint,
+            tokenSymbol: pos.tokenSymbol,
+            side: 'SELL',
+            qty: pos.qty,
+            entryPrice: pos.avgEntryPrice,
+            exitPrice,
+            dollarAmount: pos.qty * exitPrice,
+            realizedPnl: pnl,
+            consensusLevel: pos.consensusLevel,
+            exitReason: reason,
+        });
+
+        const emoji = pnl >= 0 ? '🟢' : '🔴';
+        await sendTelegramAlert(
+            `${emoji} <b>COPYNIX SELL</b>\n` +
+            `Token: <b>${pos.tokenSymbol}</b>\n` +
+            `Reason: ${reason}\n` +
+            `P/L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`,
+        );
     }
 
     // -------------------------------------------------------------------------

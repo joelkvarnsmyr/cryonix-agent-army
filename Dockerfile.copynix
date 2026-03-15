@@ -8,6 +8,7 @@ RUN npm install --no-save \
     @iarna/toml@2 \
     dotenv@16 \
     ioredis@5 \
+    pg@8 \
     zod@3 \
     tsx@4 \
     typescript@5
