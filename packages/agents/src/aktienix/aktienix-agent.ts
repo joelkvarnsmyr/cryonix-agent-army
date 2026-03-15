@@ -14,6 +14,57 @@ import { ExitMonitor } from './exit-monitor';
 import { RiskManager } from './risk-manager';
 import { StatePublisher } from './state-publisher';
 import { WatchlistCurator } from './watchlist-curator';
+import { Client as PgClient } from 'pg';
+
+// ── Trade Logger — persist all trades to Postgres ─────────────────────────
+class TradeLogger {
+    private pg: PgClient | null = null;
+
+    async connect(): Promise<void> {
+        const url = process.env.POSTGRES_URL;
+        if (!url) return;
+        try {
+            this.pg = new PgClient({ connectionString: url });
+            await this.pg.connect();
+        } catch (err: any) {
+            console.warn('[TradeLogger] Postgres connect failed (non-fatal):', err.message);
+            this.pg = null;
+        }
+    }
+
+    async logTrade(params: {
+        symbol: string;
+        side: 'BUY' | 'SELL';
+        qty: number;
+        fillPrice: number;
+        dollarAmount: number;
+        realizedPnl?: number;
+        confidence?: number;
+        reasoning?: string;
+        exitReason?: string;
+        orderId?: string;
+    }): Promise<void> {
+        if (!this.pg) return;
+        try {
+            await this.pg.query(
+                `INSERT INTO aktienix_trades (timestamp, symbol, side, qty, fill_price, dollar_amount, realized_pnl, confidence, reasoning, exit_reason, broker, paper_trading, is_day_trade, order_id)
+                 VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8, $9, 'alpaca', true, false, $10)`,
+                [
+                    params.symbol, params.side, params.qty, params.fillPrice,
+                    params.dollarAmount, params.realizedPnl ?? null,
+                    params.confidence ?? null, params.reasoning ?? null,
+                    params.exitReason ?? null, params.orderId ?? null,
+                ],
+            );
+        } catch (err: any) {
+            console.warn('[TradeLogger] Insert failed (non-fatal):', err.message);
+        }
+    }
+
+    async close(): Promise<void> {
+        try { await this.pg?.end(); } catch { }
+    }
+}
 
 export interface AktienixAgentConfig extends AgentConfig {
     tradingConfig: AktienixConfig;
@@ -39,6 +90,7 @@ export class AktienixAgent extends BaseAgent {
     private exitMonitor = new ExitMonitor();
     private riskManager = new RiskManager();
     private statePublisher: StatePublisher | null = null;
+    private tradeLogger = new TradeLogger();
 
     private tomlConfig = loadAktienixConfig();
 
@@ -124,6 +176,9 @@ export class AktienixAgent extends BaseAgent {
         } else {
             this.log('warn', 'KV_URL not set \u2014 state will not be published to Redis.');
         }
+
+        // Connect trade logger to Postgres
+        await this.tradeLogger.connect();
 
         this.setStatus('idle');
         this.log('info', 'Aktienix initialization complete.');
@@ -227,6 +282,17 @@ export class AktienixAgent extends BaseAgent {
                         this.log('info', `Exit order submitted: ${result.orderId} \u2014 ${result.status}`);
                         this.riskManager.recordExit(pos.unrealizedPl);
                         this.exitMonitor.clearPosition(decision.symbol);
+                        // Log SELL to Postgres
+                        await this.tradeLogger.logTrade({
+                            symbol: decision.symbol,
+                            side: 'SELL',
+                            qty: pos.qty,
+                            fillPrice: pos.currentPrice,
+                            dollarAmount: pos.qty * pos.currentPrice,
+                            realizedPnl: pos.unrealizedPl,
+                            exitReason: decision.reason,
+                            orderId: result.orderId,
+                        });
                     } else {
                         this.log('error', `Exit order failed for ${decision.symbol}: ${result.message}`);
                     }
@@ -246,6 +312,16 @@ export class AktienixAgent extends BaseAgent {
                             this.log('info', `[EOD CLOSE] ${pos.symbol} sold: ${result.orderId}`);
                             this.riskManager.recordExit(pos.unrealizedPl);
                             this.exitMonitor.clearPosition(pos.symbol);
+                            await this.tradeLogger.logTrade({
+                                symbol: pos.symbol,
+                                side: 'SELL',
+                                qty: pos.qty,
+                                fillPrice: pos.currentPrice,
+                                dollarAmount: pos.qty * pos.currentPrice,
+                                realizedPnl: pos.unrealizedPl,
+                                exitReason: 'eod_close',
+                                orderId: result.orderId,
+                            });
                         } else {
                             this.log('error', `[EOD CLOSE] Failed to close ${pos.symbol}: ${result.message}`);
                         }
@@ -361,6 +437,7 @@ export class AktienixAgent extends BaseAgent {
         }
         await this.statePublisher?.publishStatus('stopped');
         await this.statePublisher?.disconnect();
+        await this.tradeLogger.close();
         this.setStatus('paused');
     }
 
@@ -512,6 +589,18 @@ export class AktienixAgent extends BaseAgent {
                 confidence,
                 reasoning: reasoning ?? '',
                 timestamp: Date.now(),
+            });
+            // Log BUY to Postgres
+            const dollarEstimate = qty * (currentPrice ?? 0);
+            await this.tradeLogger.logTrade({
+                symbol,
+                side: 'BUY',
+                qty,
+                fillPrice: currentPrice ?? 0,
+                dollarAmount: dollarEstimate,
+                confidence,
+                reasoning: reasoning ?? undefined,
+                orderId: result.orderId,
             });
         } else {
             this.log('error', `Order failed: ${result.message}`);

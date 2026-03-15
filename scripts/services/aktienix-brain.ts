@@ -430,8 +430,7 @@ async function runBrain(triggerReason: string) {
         claudeOutput = execSync(
             `cat "${promptPath}" | claude -p ` +
             `--model ${CLAUDE_MODEL} ` +
-            `--allowedTools 'Edit,Read,Glob,Grep,Bash' ` +
-            `--max-budget-usd 3`,
+            `--allowedTools 'Edit,Read,Glob,Grep,Bash'`,
             { timeout: 300_000, cwd: PROJECT_ROOT, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
         );
         console.log('[aktienix-brain] Claude finished.');
