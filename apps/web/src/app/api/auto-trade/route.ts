@@ -1199,15 +1199,25 @@ async function monitorPositions(): Promise<MonitorResult[]> {
           }
 
           // ── Tiered stagnation: use per-type timeout ──
+          // HWM-aware: if position reached meaningful profit (>1% above entry),
+          // skip stagnation and let trailing stop handle exit instead (Triple Barrier Method)
           if (!shouldSell && pos.openedAt) {
             const ageMs = Date.now() - new Date(pos.openedAt).getTime();
             const ageHours = ageMs / (1000 * 60 * 60);
             const timeout = ep.stagnationHours;
             const minPnl = TOML?.exits?.stagnation_min_pnl_pct ?? 1.0;
+            const hwmProfitPct = ((pos.highWaterMark - pos.entryPrice) / pos.entryPrice) * 100;
+            const hwmThreshold = TOML?.exits?.stagnation_hwm_threshold_pct ?? 1.0;
 
             if (ageHours >= timeout && Math.abs(pnlPct) < minPnl) {
-              shouldSell = true;
-              exitReason = `Tiered stagnation exit: ${ageHours.toFixed(1)}h old (limit ${timeout}h, type=${ep.tradeType}), movement ${pnlPct.toFixed(2)}%`;
+              // If HWM exceeded threshold, position had momentum — let trailing stop handle it
+              if (hwmProfitPct >= hwmThreshold && pos.trailingStop > pos.entryPrice) {
+                // Position reached profit but gave back — trailing stop is active, skip stagnation
+                console.log(`[EXIT] ${pos.symbol}: Skipping stagnation (HWM +${hwmProfitPct.toFixed(2)}% > ${hwmThreshold}% threshold, trailing active at $${pos.trailingStop.toFixed(4)})`);
+              } else {
+                shouldSell = true;
+                exitReason = `Tiered stagnation exit: ${ageHours.toFixed(1)}h old (limit ${timeout}h, type=${ep.tradeType}), movement ${pnlPct.toFixed(2)}%`;
+              }
             }
 
             // Stagnation warning — 2h before auto-exit
@@ -1235,6 +1245,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
       if (!tieredEnabled || !pos.exitPlan) {
         if (!shouldSell) {
           // Stagnation exit (REFACTORED)
+          // HWM-aware: skip stagnation if position reached meaningful profit and trailing is active
           if (pos.openedAt) {
             const stagnation = TimingService.isStagnant(pos.openedAt, pnlPct, {
               isScalp: pos.isScalpPosition,
@@ -1245,8 +1256,15 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             });
 
             if (stagnation.stagnant) {
-              shouldSell = true;
-              exitReason = `Stagnation exit: ${stagnation.ageHours.toFixed(1)}h old (limit ${stagnation.timeout}h), movement ${pnlPct.toFixed(2)}%`;
+              const hwmProfitPct = ((pos.highWaterMark - pos.entryPrice) / pos.entryPrice) * 100;
+              const hwmThreshold = TOML?.exits?.stagnation_hwm_threshold_pct ?? 1.0;
+              if (hwmProfitPct >= hwmThreshold && pos.trailingStop > pos.entryPrice) {
+                // Position had momentum — trailing stop is active, skip stagnation
+                console.log(`[EXIT] ${pos.symbol}: Skipping legacy stagnation (HWM +${hwmProfitPct.toFixed(2)}% > ${hwmThreshold}% threshold, trailing at $${pos.trailingStop.toFixed(4)})`);
+              } else {
+                shouldSell = true;
+                exitReason = `Stagnation exit: ${stagnation.ageHours.toFixed(1)}h old (limit ${stagnation.timeout}h), movement ${pnlPct.toFixed(2)}%`;
+              }
             }
 
             // Stagnation warning — 2h before auto-exit

@@ -41,6 +41,7 @@ export interface CryonixConfig {
     native_sl_limit_offset: number;
     stagnation_timeout_hours: number;
     stagnation_min_pnl_pct: number;
+    stagnation_hwm_threshold_pct?: number;
     // Tiered exit engine (Phase 3)
     tiered_exits_enabled?: boolean;
     min_split_value?: number;
