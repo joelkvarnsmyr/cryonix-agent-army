@@ -1,24 +1,28 @@
+# Dockerfile.polynix — Polynix Polymarket binary options agent
 FROM node:20-alpine
 
-RUN apk add --no-cache git python3 make g++
+RUN apk add --no-cache git
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
-COPY packages/agents/package.json packages/agents/
-COPY packages/types/package.json packages/types/
+# Install runtime dependencies (same approach as Dockerfile.aktienix)
+RUN npm install --no-save \
+    @iarna/toml@2 \
+    dotenv@16 \
+    ioredis@5
 
-# Install dependencies
-RUN npm i -g pnpm && pnpm install --frozen-lockfile
+# Stub for @cryonix/types — all imports are `import type` (erased by tsx at runtime)
+RUN mkdir -p node_modules/@cryonix/types && \
+    echo '{"name":"@cryonix/types","version":"1.0.0","main":"index.js"}' > node_modules/@cryonix/types/package.json && \
+    echo 'module.exports = {};' > node_modules/@cryonix/types/index.js
 
-# Copy source
-COPY packages/agents/ packages/agents/
-COPY packages/types/ packages/types/
+# Copy agent source
+COPY packages/agents/src/ ./packages/agents/src/
+
+# Copy runner script
 COPY scripts/services/polynix-runner.ts scripts/services/
-COPY polynix.toml ./
 
-# Install tsx for TypeScript execution
-RUN pnpm add -w tsx
+# Copy config
+COPY polynix.toml ./
 
 CMD ["npx", "tsx", "scripts/services/polynix-runner.ts"]
