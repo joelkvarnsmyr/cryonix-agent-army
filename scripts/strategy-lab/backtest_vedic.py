@@ -46,16 +46,17 @@ from src.vedic.dasha import compute_dasha_for_symbol
 
 # ── Configuration (mirrors vedic-trader.py) ──────────────────────────
 
-BUY_SCORE_THRESHOLD = 20
-SELL_SCORE_THRESHOLD = -15
-STOP_LOSS_PCT = 0.05
-TAKE_PROFIT_PCT = 0.08
+BUY_SCORE_THRESHOLD = 10
+SELL_SCORE_THRESHOLD = -20
+STOP_LOSS_PCT = 0.04
+TAKE_PROFIT_PCT = 0.10
 TRAILING_ACTIVATION_PCT = 0.03
-TRAILING_STOP_PCT = 0.02
+TRAILING_STOP_PCT = 0.015
 POSITION_SIZE_PCT = 0.10
 MIN_TRANSIT_SCORE = -20
 MIN_DASHA_BIAS = -0.3
 ALLOWED_NAKSHATRA_BIAS = {"bullish", "neutral"}
+REQUIRE_SHUKLA_PAKSHA = True
 MIN_MUHURTA = "neutral"
 MUHURTA_LEVELS = {
     "very_inauspicious": -2, "inauspicious": -1, "neutral": 0,
@@ -233,6 +234,15 @@ def run_backtest(
             if buy and dasha is not None and dasha.combined_bias < MIN_DASHA_BIAS:
                 buy = False
 
+            # ── Research-based lunar gates (Yuan et al) ──
+            is_full_moon = vedic_score.tithi_number == 15
+
+            if buy and is_full_moon:
+                buy = False  # Purnima: strongest bearish day
+
+            if buy and REQUIRE_SHUKLA_PAKSHA and vedic_score.lunar_paksha != "Shukla":
+                buy = False  # Only buy during waxing moon
+
             if buy:
                 size_usd = balance * POSITION_SIZE_PCT
                 if size_usd >= 5:
@@ -301,6 +311,18 @@ def run_backtest(
             if not sell and vedic_score.overall_score < SELL_SCORE_THRESHOLD:
                 sell = True
                 reason = f"Vedic bearish ({vedic_score.overall_score})"
+
+            # ── Research-based lunar exits (Yuan et al) ──
+            is_full_moon_sell = vedic_score.tithi_number == 15
+            is_krishna = vedic_score.lunar_paksha == "Krishna"
+
+            if not sell and is_full_moon_sell and pnl_pct > 0:
+                sell = True
+                reason = f"FULL MOON EXIT (Purnima, +{pnl_pct*100:.1f}%)"
+
+            if not sell and is_krishna and pnl_pct > 0.02:
+                sell = True
+                reason = f"KRISHNA PAKSHA EXIT (waning moon, +{pnl_pct*100:.1f}%)"
 
             if not sell and vedic_score.is_mercury_retrograde and pnl_pct > 0:
                 sell = True

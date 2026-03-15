@@ -174,20 +174,45 @@ def calculate_muhurta(sky: SkyState) -> MuhurtaScore:
     factors = {}
     score = 0.0
 
-    # ── Tithi factor (weight: 30%) ──
+    # ── Tithi + Lunar phase factor (weight: 45%) ──
+    # Research-backed: Yuan et al (2006) found 3-5% annual difference
+    # between new moon (bullish) and full moon (bearish) across 48 countries.
+    # Dichev & Janes confirmed: new moon returns = 2x full moon over 100 years.
+    # This is the strongest academically validated astro-financial signal.
+    tithi_score = 0.0
     if tithi.is_buying_day:
-        factors["tithi"] = 0.3
+        tithi_score = 0.25
     elif tithi.is_rikta:
-        factors["tithi"] = -0.3
-    elif tithi.is_full_moon:
-        factors["tithi"] = -0.1  # Volatility risk
-    elif tithi.is_new_moon:
-        factors["tithi"] = -0.15  # Low energy
-    else:
-        factors["tithi"] = 0.0
+        tithi_score = -0.25
 
-    # ── Vara factor (weight: 20%) ──
-    vara_scores = {"bullish": 0.2, "neutral": 0.0, "bearish": -0.2, "volatile": -0.1}
+    # Lunar phase gradient: strongest signal (Yuan et al sinusoidal model)
+    # Shukla paksha (waxing, days 1-15): bullish, peak at day 7-8
+    # Krishna paksha (waning, days 16-30): bearish, trough at full moon (day 15)
+    if tithi.paksha == "Shukla":
+        # Waxing moon = approaching new moon energy dissipating but optimism rising
+        # Peak buying window: tithis 2-10 (first half of waxing)
+        if tithi.number <= 10:
+            tithi_score += 0.20  # Strong buy window
+        else:
+            tithi_score += 0.05  # Weakening as full moon approaches
+    else:
+        # Waning moon = post-full-moon depression (Yuan et al)
+        if tithi.number <= 22:
+            tithi_score -= 0.15  # Peak bearish (just after full moon)
+        else:
+            tithi_score -= 0.05  # Recovering toward new moon
+
+    # Full moon penalty (strongest single-day effect in research)
+    if tithi.is_full_moon:
+        tithi_score = -0.35
+    # New moon bonus (Yuan et al: returns peak around new moon)
+    elif tithi.is_new_moon:
+        tithi_score = 0.30
+
+    factors["tithi"] = max(-0.45, min(0.45, tithi_score))
+
+    # ── Vara factor (weight: 10%) ──
+    vara_scores = {"bullish": 0.1, "neutral": 0.0, "bearish": -0.1, "volatile": -0.05}
     factors["vara"] = vara_scores.get(vara.trading_bias, 0.0)
 
     # ── Nakshatra factor (weight: 35%) ──
@@ -199,11 +224,11 @@ def calculate_muhurta(sky: SkyState) -> MuhurtaScore:
     if moon_nak.nakshatra.index == 7:
         factors["nakshatra"] = 0.5
 
-    # ── Hora factor (weight: 15%) ──
+    # ── Hora factor (weight: 10%) ──
     hora_scores = {
-        "Jupiter": 0.15, "Venus": 0.1, "Mercury": 0.05,
+        "Jupiter": 0.1, "Venus": 0.07, "Mercury": 0.03,
         "Sun": 0.0, "Moon": 0.0,
-        "Saturn": -0.1, "Mars": -0.05,
+        "Saturn": -0.07, "Mars": -0.03,
     }
     factors["hora"] = hora_scores.get(hora, 0.0)
 

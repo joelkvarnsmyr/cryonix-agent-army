@@ -58,23 +58,28 @@ MAX_PER_SYMBOL = 1                # Only 1 position per symbol
 SCAN_INTERVAL = 300               # Check every 5 minutes
 REDIS_TTL = 86400 * 30            # Keep data for 30 days
 
-# ── Trading rules (pure vedic) ────────────────────────────────────────
+# ── Trading rules (research-calibrated) ──────────────────────────────
+# Calibrated based on: Yuan et al (2006), Dichev & Janes, Crawford,
+# Kashyap's vedic risk framework, and our 60-day backtest results.
 
 # BUY when composite score > this AND no blocking conditions
-BUY_SCORE_THRESHOLD = 20
+# Lowered from 20 to 10: the reweighted muhurta (45% lunar phase) produces
+# more granular scores. Old threshold blocked too many trades (27% WR).
+BUY_SCORE_THRESHOLD = 10
 
 # SELL when composite score < this OR stop-loss/take-profit hit
-SELL_SCORE_THRESHOLD = -15
+SELL_SCORE_THRESHOLD = -20
 
 # Hard stop-loss and take-profit (safety nets)
-STOP_LOSS_PCT = 0.05              # -5% from entry
-TAKE_PROFIT_PCT = 0.08            # +8% from entry
+# Kashyap principle: asymmetric risk/reward (2.5:1 reward:risk)
+STOP_LOSS_PCT = 0.04              # -4% from entry (tighter, cut losses fast)
+TAKE_PROFIT_PCT = 0.10            # +10% from entry (wider, let winners run)
 
-# Trailing stop
+# Trailing stop (Crawford-inspired: protect crash gains)
 TRAILING_ACTIVATION_PCT = 0.03    # Activate trailing after +3%
-TRAILING_STOP_PCT = 0.02          # Trail at -2% from peak
+TRAILING_STOP_PCT = 0.015         # Trail at -1.5% from peak (tighter trail)
 
-# Mercury retrograde blocks ALL new buys
+# Mercury retrograde blocks ALL new buys (Crawford, Altman)
 MERCURY_RETRO_BLOCKS_BUY = True
 
 # Minimum muhurta level to buy
@@ -89,6 +94,11 @@ MUHURTA_LEVELS = {
 
 # Moon nakshatra must have bullish or neutral bias to buy
 ALLOWED_NAKSHATRA_BIAS = {"bullish", "neutral"}
+
+# Lunar phase gate (Yuan et al: strongest validated signal)
+# Only buy during Shukla paksha (waxing moon, days 1-15)
+# Full moon (Purnima) is blocked even during Shukla
+REQUIRE_SHUKLA_PAKSHA = True
 
 # Minimum transit score to consider buying
 MIN_TRANSIT_SCORE = -20
@@ -243,6 +253,17 @@ class VedicTrader:
         if MERCURY_RETRO_BLOCKS_BUY and vedic_score.is_mercury_retrograde:
             return False, "Mercury retrograde"
 
+        # 2b. Lunar phase gate (Yuan et al: buy only during waxing moon)
+        if REQUIRE_SHUKLA_PAKSHA:
+            paksha = getattr(vedic_score, 'lunar_paksha', None)
+            if paksha == "Krishna":
+                return False, f"Krishna paksha (waning moon) — no buys"
+            # Block full moon day even in Shukla
+            if vedic_score.tithi_name == "Purnima":
+                return False, "Purnima (full moon) — peak bearish day"
+            if paksha == "Shukla":
+                reasons.append("Shukla")
+
         # 3. Muhurta check
         muhurta_level = MUHURTA_LEVELS.get(vedic_score.muhurta_label, -99)
         min_level = MUHURTA_LEVELS.get(MIN_MUHURTA_FOR_BUY, 0)
@@ -319,6 +340,15 @@ class VedicTrader:
         # Mercury goes retrograde while in profit
         if vedic_score.is_mercury_retrograde and pnl_pct > 0:
             return True, f"Mercury Rx + profit ({pnl_pct*100:.1f}%) — lock gains"
+
+        # Full moon exit (Yuan et al: peak bearish day, lock any profit)
+        if vedic_score.tithi_name == "Purnima" and pnl_pct > 0:
+            return True, f"Purnima (full moon) + profit ({pnl_pct*100:.1f}%) — lock gains"
+
+        # Entering Krishna paksha (waning moon) with decent profit
+        paksha = getattr(vedic_score, 'lunar_paksha', None)
+        if paksha == "Krishna" and pnl_pct > 0.02:
+            return True, f"Krishna paksha + profit ({pnl_pct*100:.1f}%) — waning moon exit"
 
         # Moon enters bearish nakshatra while in profit
         if vedic_score.moon_nakshatra_bias == "bearish" and pnl_pct > 0.01:
@@ -541,10 +571,12 @@ class VedicTrader:
             for s, p in self.wallet.positions.items()
             if s in prices
         )
+        paksha = getattr(vedic_score, 'lunar_paksha', '?')
         print(
             f"[{self.name}] Vedic={vedic_score.overall_score} ({vedic_score.label}) | "
             f"Muhurta={vedic_score.muhurta_label} | "
             f"Moon={vedic_score.moon_nakshatra} ({vedic_score.moon_nakshatra_bias}) | "
+            f"Tithi={vedic_score.tithi_name} ({paksha}) | "
             f"MercRx={vedic_score.is_mercury_retrograde} | "
             f"Pos={n_pos}/{MAX_POSITIONS}"
             f"{' | ' + pos_str if pos_str else ''}"

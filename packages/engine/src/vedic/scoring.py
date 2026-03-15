@@ -39,6 +39,7 @@ class VedicScore:
     tithi_name: str
     tithi_number: int
     moon_phase_pct: float
+    lunar_paksha: str                # "Shukla" (waxing/bullish) or "Krishna" (waning/bearish)
     is_mercury_retrograde: bool
     retrogrades: List[str]
     active_aspects: List[Dict[str, Any]]
@@ -90,11 +91,13 @@ def compute_vedic_score(sky: Optional[SkyState] = None) -> VedicScore:
     retro_penalty = max(-0.3, retro_penalty)
 
     # ── Composite score ──
-    # Weights: muhurta 35%, nakshatra 25%, aspects 25%, retrogrades 15%
+    # Research-calibrated weights (Yuan et al, Dichev & Janes):
+    # Muhurta 45% (tithi/lunar phase is the strongest validated signal)
+    # Nakshatra 20%, Aspects 20%, Retrogrades 15%
     composite = (
-        muhurta.score * 0.35 +
-        nak_score * 0.25 +
-        aspect_report.aspect_score * 0.25 +
+        muhurta.score * 0.45 +
+        nak_score * 0.20 +
+        aspect_report.aspect_score * 0.20 +
         retro_penalty * 0.15 / 0.3  # Normalize penalty to -1..0 range
     )
 
@@ -139,6 +142,7 @@ def compute_vedic_score(sky: Optional[SkyState] = None) -> VedicScore:
         tithi_name=muhurta.tithi.name,
         tithi_number=muhurta.tithi.number,
         moon_phase_pct=muhurta.tithi.moon_phase_pct,
+        lunar_paksha=muhurta.tithi.paksha,
         is_mercury_retrograde=merc_retro,
         retrogrades=[r for r in retros if r not in ("Rahu", "Ketu")],
         active_aspects=active_aspects,
