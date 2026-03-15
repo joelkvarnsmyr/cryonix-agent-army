@@ -15,9 +15,9 @@ RUN pip install --no-cache-dir \
     ccxt>=4.2 \
     httpx>=0.26
 
-# Copy vedic module from engine
+# Copy vedic module from engine (+ create src package)
 COPY packages/engine/src/vedic ./packages/engine/src/vedic
-COPY packages/engine/src/__init__.py ./packages/engine/src/__init__.py
+RUN touch ./packages/engine/src/__init__.py
 
 # Copy the trader script
 COPY scripts/services/vedic-trader.py ./scripts/services/vedic-trader.py
