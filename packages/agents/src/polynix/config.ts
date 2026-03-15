@@ -12,7 +12,7 @@ export const POLYNIX_DEFAULTS: PolynixConfig = {
     capital: {
         starting_balance_usd: 500,
         max_bet_size_usd: 10,
-        max_concurrent_positions: 5,
+        max_concurrent_positions: 20,
         max_exposure_pct: 50,
     },
     strategy: {
