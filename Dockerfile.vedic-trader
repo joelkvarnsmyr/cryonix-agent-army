@@ -25,5 +25,6 @@ COPY scripts/services/vedic-trader.py ./scripts/services/vedic-trader.py
 
 # Set Python path so imports work
 ENV PYTHONPATH=/app/packages/engine
+ENV PYTHONUNBUFFERED=1
 
 CMD ["python", "scripts/services/vedic-trader.py"]
