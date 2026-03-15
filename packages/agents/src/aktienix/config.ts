@@ -26,6 +26,7 @@ export interface AktienixTomlConfig {
         max_position_size_usd: number;
         max_capital_per_trade_pct: number;
         min_order_value: number;
+        max_single_position_pct: number;
     };
     limits: {
         max_open_positions: number;
@@ -66,6 +67,7 @@ export interface AktienixTomlConfig {
         trailing_activation_pct: number;
         stagnation_timeout_days: number;
         stagnation_min_pnl_pct: number;
+        min_holding_minutes: number;
     };
     timing: {
         poll_interval_ms: number;
@@ -93,7 +95,7 @@ const DEFAULTS: AktienixTomlConfig = {
     broker: { provider: 'mock', paper_trading: true, account_type: 'cash' },
     market_hours: { regular_hours_only: true, skip_first_minutes: 15, close_before_eod: false, no_new_orders_before_close_min: 30 },
     watchlist: { symbols: ['AAPL', 'MSFT', 'GOOGL', 'SPY', 'QQQ'], timeframe: '1Day', bars_count: 220 },
-    capital: { max_position_size_usd: 5000, max_capital_per_trade_pct: 0.95, min_order_value: 5.0 },
+    capital: { max_position_size_usd: 5000, max_capital_per_trade_pct: 0.95, min_order_value: 5.0, max_single_position_pct: 0.10 },
     limits: { max_open_positions: 5, max_trades_per_day: 5, max_day_trades_per_5d: 2 },
     signals: {
         min_signal_score: 0.35, weight_rsi: 0.25, weight_macd: 0.25, weight_bollinger: 0.20,
@@ -103,7 +105,7 @@ const DEFAULTS: AktienixTomlConfig = {
         macd_fast: 12, macd_slow: 26, macd_signal_period: 9, counter_trend_penalty: 0.50,
     },
     risk: { min_confidence: 0.60, min_settled_cash: 1.0, max_daily_loss_pct: 0.02, max_weekly_loss_pct: 0.05, max_consecutive_losses: 3 },
-    exits: { take_profit_pct: 5.0, stop_loss_pct: 3.0, trailing_stop_pct: 4.0, trailing_activation_pct: 2.0, stagnation_timeout_days: 10, stagnation_min_pnl_pct: 0.5 },
+    exits: { take_profit_pct: 5.0, stop_loss_pct: 3.0, trailing_stop_pct: 4.0, trailing_activation_pct: 2.0, stagnation_timeout_days: 10, stagnation_min_pnl_pct: 0.5, min_holding_minutes: 390 },
     timing: { poll_interval_ms: 60_000, signal_scan_interval_ms: 900_000 },
     intelligence: { enabled: true, news_scan_interval_ms: 900_000, macro_confidence_boost: 0.15, macro_bearish_block: true },
     polymarket: { crypto_correlated_tickers: ['MSTR', 'COIN', 'RIOT', 'MARA', 'SQ', 'PYPL'], crypto_boost: 0.08, crypto_penalty: 0.08, delta_threshold: 20 },

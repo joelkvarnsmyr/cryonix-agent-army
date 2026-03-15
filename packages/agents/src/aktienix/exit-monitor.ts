@@ -64,18 +64,26 @@ export class ExitMonitor {
         const pnlPct = (pos.unrealizedPl / positionCost) * 100;
         const currentPrice = pos.currentPrice ?? (pos.marketValue / pos.qty);
 
+        // Stop Loss — always honored, even during min holding period
+        if (pnlPct <= -config.stop_loss_pct) {
+            return { symbol: pos.symbol, reason: 'stop_loss', pnlPct };
+        }
+
+        // Min holding period: skip non-SL exits if held less than min_holding_minutes.
+        // Prevents daily-bar entries from churning on 60-second exit checks.
+        const ps = this.state.get(pos.symbol);
+        const minHoldMs = (config.min_holding_minutes ?? 0) * 60_000;
+        if (ps && minHoldMs > 0) {
+            const heldMs = Date.now() - ps.entryDate.getTime();
+            if (heldMs < minHoldMs) return null;
+        }
+
         // Take Profit
         if (pnlPct >= config.take_profit_pct) {
             return { symbol: pos.symbol, reason: 'take_profit', pnlPct };
         }
 
-        // Stop Loss
-        if (pnlPct <= -config.stop_loss_pct) {
-            return { symbol: pos.symbol, reason: 'stop_loss', pnlPct };
-        }
-
         // Trailing Stop + Stagnation (require persisted state)
-        const ps = this.state.get(pos.symbol);
         if (ps) {
             if (currentPrice > ps.highWaterMark) {
                 ps.highWaterMark = currentPrice;
@@ -87,18 +95,18 @@ export class ExitMonitor {
             }
 
             if (ps.trailingActive) {
-                // Trailing stop fires when price pulls back enough from the peak.
-                // Standard "N% from peak" formula: drop measured as % of high water
-                // mark (not entry price). The || pnlPct < 0 clause is a safety net —
-                // always exit a once-profitable position that has reverted below entry.
+                // Trailing stop fires when price pulls back N% from the high water mark.
+                // The fixed stop_loss handles negative PnL — no need to duplicate here.
                 const pullbackFromHighPct = ((ps.highWaterMark - currentPrice) / ps.highWaterMark) * 100;
-                if (pullbackFromHighPct >= config.trailing_stop_pct || pnlPct < 0) {
+                if (pullbackFromHighPct >= config.trailing_stop_pct) {
                     return { symbol: pos.symbol, reason: 'trailing_stop', pnlPct };
                 }
             }
 
-            const daysHeld = (Date.now() - ps.entryDate.getTime()) / (24 * 3_600_000);
-            if (daysHeld >= config.stagnation_timeout_days && Math.abs(pnlPct) < config.stagnation_min_pnl_pct) {
+            // Stagnation: approximate trading days (weekdays only)
+            const calendarDays = (Date.now() - ps.entryDate.getTime()) / (24 * 3_600_000);
+            const tradingDays = calendarDays * (5 / 7);
+            if (tradingDays >= config.stagnation_timeout_days && Math.abs(pnlPct) < config.stagnation_min_pnl_pct) {
                 return { symbol: pos.symbol, reason: 'stagnation', pnlPct };
             }
         }

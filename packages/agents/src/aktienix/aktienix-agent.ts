@@ -403,6 +403,9 @@ export class AktienixAgent extends BaseAgent {
                     this.lastSignalScanTime = nowTs;
                     const signals = await this.signalGenerator.scan();
                     for (const signal of signals) {
+                        // TA scanner generates SELL signals but Aktienix is BUY-only
+                        // (exits are handled by ExitMonitor). Skip to avoid bypass.
+                        if (signal.action === 'SELL') continue;
                         await this.evaluateSignal({
                             symbol: signal.symbol,
                             action: signal.action,
@@ -484,6 +487,16 @@ export class AktienixAgent extends BaseAgent {
         if (action === 'BUY' && this.positions.length >= config.limits.max_open_positions) {
             this.log('info', `Max open positions reached (${this.positions.length}/${config.limits.max_open_positions}). Skipping ${symbol}.`);
             return;
+        }
+
+        // Block accumulation: don't add to an existing position
+        if (action === 'BUY') {
+            const existing = this.positions.find(p => p.symbol === symbol);
+            if (existing) {
+                const existingValue = existing.marketValue ?? (existing.qty * existing.avgEntryPrice);
+                this.log('info', `Already holding ${symbol} ($${existingValue.toFixed(0)}). Skipping duplicate BUY.`);
+                return;
+            }
         }
 
         // Apply Macro Intelligence overlays
@@ -609,6 +622,7 @@ export class AktienixAgent extends BaseAgent {
             currentPrice ?? 0,
             this.accountState.settledCash,
             config.capital,
+            this.accountState.portfolioValue,
         );
 
         if (qty <= 0) {

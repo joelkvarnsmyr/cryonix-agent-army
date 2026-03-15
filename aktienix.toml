@@ -135,6 +135,10 @@ max_capital_per_trade_pct = 0.95
 # $5 is a safer floor to avoid micro-dust positions.
 min_order_value = 5.00
 
+# Maximum single position as % of portfolio value. Prevents concentration.
+# 0.10 = 10%. On $100k, no single position exceeds $10k.
+max_single_position_pct = 0.10
+
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  POSITION LIMITS & T+1 SETTLEMENT                                     ║
@@ -149,13 +153,13 @@ min_order_value = 5.00
 # Increase only as account grows above $25k (margin available).
 max_open_positions = 8
 
-# Maximum trades per day. Paper account has no T+1 settlement constraints,
-# so we allow more trades to gather performance data faster.
-max_trades_per_day = 20
+# Maximum trades per day. 8 per day prevents overtrading while still
+# allowing a full watchlist rotation on strong signal days.
+max_trades_per_day = 8
 
 # Maximum day-trades per rolling 5-day window. PDT rule: 3 or fewer.
-# Paper account with $100k is exempt from PDT (equity > $25k).
-max_day_trades_per_5d = 15
+# Paper account with $100k is exempt, but we cap at 5 to build swing habits.
+max_day_trades_per_5d = 5
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -227,9 +231,9 @@ counter_trend_penalty = 0.50
 
 [risk]
 
-# Minimum confidence to execute. Lowered for paper trading to generate
-# more data. Will tighten once we have 50+ trades for analysis.
-min_confidence = 0.38
+# Minimum confidence to execute. Raised from 0.38 to reduce noise —
+# 81 fills in 5 days was too aggressive. Only strong signals pass.
+min_confidence = 0.45
 
 # T+1 safety: never trade with less than $1 settled cash.
 # In a cash account, unsettled funds from yesterday's sale CANNOT
@@ -260,28 +264,33 @@ max_consecutive_losses = 5
 [exits]
 
 # Fixed take-profit percentage. Sell when unrealized P/L reaches this.
-# 5.0 = +5%. This is the swing trading target from the Aktienix docs.
-# Crypto uses 8-12% because of higher baseline moves.
-take_profit_pct = 5.0
+# 8.0 = +8%. Widened from 5% to let winners run (swing trading horizon).
+# R:R = 8.0 / 3.0 = 2.67 (up from 1.67).
+take_profit_pct = 8.0
 
 # Fixed stop-loss percentage. Cut losses at this level.
 # 3.0 = -3%. Risk:Reward = 5.0 / 3.0 = 1.67 R:R (healthy).
 stop_loss_pct = 3.0
 
 # Trailing stop: follows price this % below the high watermark.
-# 4.0 = 4%. Wider than crypto's 3% to allow for stock pullbacks.
-# Blue chips like AAPL can pull back 2-3% intraday during normal trading.
-trailing_stop_pct = 4.0
+# 2.0 = 2%. Tightened from 4% to lock in gains faster once trailing activates.
+trailing_stop_pct = 2.0
 
 # Activate trailing stop only after this % profit.
-# 2.0 = 2%. Until then, only the fixed stop-loss is active.
-trailing_activation_pct = 2.0
+# 3.0 = 3%. Raised from 2% so trailing only kicks in after meaningful gains.
+trailing_activation_pct = 3.0
 
 # Stagnation exit: sell if position barely moved after N trading days.
 # 10 trading days = 2 calendar weeks.
 # Capital tied up in a stagnant position can't be used elsewhere.
 stagnation_timeout_days = 10
 stagnation_min_pnl_pct = 0.5
+
+# Minimum holding period in minutes before non-SL exits are allowed.
+# 390 = one full trading day (6.5h). Prevents daily-bar entries from
+# being churned by the 60-second exit monitor on intraday noise.
+# Stop-loss is always honored regardless of holding period.
+min_holding_minutes = 390
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
