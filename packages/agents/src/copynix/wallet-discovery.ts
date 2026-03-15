@@ -1,14 +1,22 @@
 import type { TrackedWallet } from './types';
 import { WalletProfiler } from './wallet-profiler';
+import {
+    fetchTrendingGeckoTerminal,
+    fetchTrendingDexScreener,
+    fetchTopTradersDexCheck,
+    type TrendingToken,
+    type TopTrader,
+} from './sources';
 
 /**
  * WalletDiscovery — finds new profitable Solana wallets to copy.
  *
- * Pipeline:
- *   1. DexScreener trending tokens → find early buyers via Helius
- *   2. WalletProfiler: deep-verify candidate's ENTIRE swap history
- *      (win rate, PnL, trade frequency across ALL tokens — not just one)
- *   3. Only wallets with proven multi-token profitability are added
+ * Multi-source pipeline:
+ *   Source A: DexCheck top trader leaderboards (direct wallet + PnL data)
+ *   Source B: GeckoTerminal trending → Helius/RPC early buyers → WalletProfiler
+ *   Source C: DexScreener trending (fallback for Source B)
+ *
+ * All sources feed into the same qualification pipeline.
  */
 
 interface CandidateWallet {
@@ -16,8 +24,9 @@ interface CandidateWallet {
     trades: number;
     wins: number;
     totalPnlUsd: number;
-    avgHoldMinutes: number;
+    winRate: number;
     lastSeen: number;
+    source: string;
 }
 
 export class WalletDiscovery {
@@ -36,212 +45,268 @@ export class WalletDiscovery {
     }
 
     /**
-     * Discover new wallets by analyzing top traders on trending Solana tokens.
-     * Returns wallets that pass the quality filter, sorted by estimated score.
+     * Discover new wallets using multiple sources in parallel.
      */
     async discover(): Promise<TrackedWallet[]> {
-
         const slotsAvailable = this.maxTracked - this.existing.size;
         if (slotsAvailable <= 0) {
             console.log('[WalletDiscovery] Max tracked wallets reached');
             return [];
         }
 
-        // Step 1: Find trending tokens on DexScreener
-        const trendingMints = await this.getTrendingMints();
-        if (trendingMints.length === 0) {
-            console.log('[WalletDiscovery] No trending Solana tokens found on DexScreener');
-            return [];
-        }
+        console.log(`[WalletDiscovery] Starting multi-source discovery (${slotsAvailable} slots available)...`);
 
-        console.log(`[WalletDiscovery] Found ${trendingMints.length} trending tokens`);
+        // Run sources in parallel
+        const [dexCheckWallets, trendingWallets] = await Promise.all([
+            this.discoverViaDexCheck(),
+            this.discoverViaTrending(),
+        ]);
 
-        // Step 2: For each trending token, find wallets that bought early + profited
-        // Try Helius first; if rate limited, fall back to Solana RPC + heuristic scoring
-        const candidates = new Map<string, CandidateWallet>();
-        let tokensAnalyzed = 0;
-        let totalCandidates = 0;
-        let heliusAvailable = !!this.heliusKey;
+        // Merge candidates, dedup by address
+        const merged = new Map<string, CandidateWallet>();
 
-        for (const mint of trendingMints.slice(0, 5)) {
-            try {
-                let earlyBuyers: CandidateWallet[] = [];
-
-                if (heliusAvailable) {
-                    earlyBuyers = await this.findEarlyBuyers(mint);
-                    // Detect rate limiting — switch to RPC fallback
-                    if (earlyBuyers.length === 0 && tokensAnalyzed === 0) {
-                        console.log('[WalletDiscovery] Helius unavailable — switching to RPC discovery');
-                        heliusAvailable = false;
-                    }
-                }
-
-                // Fallback: Solana RPC + DexScreener for wallet discovery
-                if (!heliusAvailable) {
-                    earlyBuyers = await this.findTradersViaRpc(mint);
-                }
-
-                tokensAnalyzed++;
-                totalCandidates += earlyBuyers.length;
-
-                for (const buyer of earlyBuyers) {
-                    if (this.existing.has(buyer.address)) continue;
-
-                    const existing = candidates.get(buyer.address);
-                    if (existing) {
-                        existing.trades += buyer.trades;
-                        existing.wins += buyer.wins;
-                        existing.totalPnlUsd += buyer.totalPnlUsd;
-                        existing.lastSeen = Math.max(existing.lastSeen, buyer.lastSeen);
-                    } else {
-                        candidates.set(buyer.address, { ...buyer });
-                    }
-                }
-
-                // Rate limit between tokens
-                await new Promise(r => setTimeout(r, heliusAvailable ? 2000 : 1000));
-            } catch (err) {
-                console.warn(`[WalletDiscovery] Error analyzing mint ${mint.slice(0, 8)}:`, err);
+        for (const w of [...dexCheckWallets, ...trendingWallets]) {
+            if (this.existing.has(w.address)) continue;
+            // Prefer DexCheck data (has real PnL) over trending estimates
+            if (!merged.has(w.address) || w.source === 'dexcheck') {
+                merged.set(w.address, w);
             }
         }
 
-        console.log(`[WalletDiscovery] Analyzed ${tokensAnalyzed} tokens → ${totalCandidates} raw candidates → ${candidates.size} unique wallets`);
+        console.log(`[WalletDiscovery] ${merged.size} unique candidates (DexCheck: ${dexCheckWallets.length}, Trending: ${trendingWallets.length})`);
 
-        // Step 3: Pre-filter by basic metrics (min 2 trades on trending tokens)
-        const preFiltered = Array.from(candidates.values())
-            .filter(c => c.trades >= 2)
-            .sort((a, b) => b.trades - a.trades)
-            .slice(0, 10); // Top 10 candidates for deep profiling
-
-        if (preFiltered.length === 0) {
-            console.log(`[WalletDiscovery] No candidates with ≥2 trades on trending tokens`);
+        if (merged.size === 0) {
+            console.log('[WalletDiscovery] No candidates found from any source');
             return [];
         }
 
-        console.log(`[WalletDiscovery] ${preFiltered.length} candidates for deep profiling...`);
+        // Score and rank
+        const ranked = Array.from(merged.values())
+            .sort((a, b) => {
+                // DexCheck wallets get priority (verified PnL)
+                const bonusA = a.source === 'dexcheck' ? 2.0 : 1.0;
+                const bonusB = b.source === 'dexcheck' ? 2.0 : 1.0;
+                const scoreA = (a.winRate / 100) * Math.sqrt(a.trades) * Math.log10(Math.max(1, a.totalPnlUsd + 1)) * bonusA;
+                const scoreB = (b.winRate / 100) * Math.sqrt(b.trades) * Math.log10(Math.max(1, b.totalPnlUsd + 1)) * bonusB;
+                return scoreB - scoreA;
+            })
+            .slice(0, slotsAvailable);
 
-        // Step 4: Deep profile each candidate's ENTIRE swap history
-        // Skip profiling if Helius is rate limited — use basic scoring instead
-        if (!heliusAvailable) {
-            console.log(`[WalletDiscovery] Helius unavailable — using basic scoring (no deep profile)`);
-            const basicQualified = preFiltered.slice(0, slotsAvailable);
-            const now = Date.now();
-            return basicQualified.map(c => ({
-                address: c.address,
-                label: `rpc-${c.address.slice(0, 6)}`,
-                score: Math.min(75, Math.round(50 + c.trades * 3)), // Cap at 75 (below whale threshold)
-                winRate: c.trades > 0 ? (c.wins / c.trades) * 100 : 50,
-                tradeCount30d: c.trades,
-                roi30d: 0,
-                lastActive: c.lastSeen,
-                addedAt: now,
-                source: 'discovery' as const,
-            }));
-        }
-
-        const profiler = new WalletProfiler(this.heliusKey!);
-        const qualified: Array<{ candidate: CandidateWallet; winRate: number; pnl: number; totalTrades: number; uniqueTokens: number }> = [];
-
-        for (const candidate of preFiltered) {
-            try {
-                const profile = await profiler.profile(candidate.address);
-
-                if (profile.isQualified) {
-                    qualified.push({
-                        candidate,
-                        winRate: profile.winRate,
-                        pnl: profile.estimatedPnlUsd,
-                        totalTrades: profile.totalTrades,
-                        uniqueTokens: profile.uniqueTokens,
-                    });
-                }
-
-                // Rate limit between profiles (2s per Helius call)
-                await new Promise(r => setTimeout(r, 2000));
-            } catch (err) {
-                console.warn(`[WalletDiscovery] Profile error ${candidate.address.slice(0, 8)}:`, err);
-            }
-
-            if (qualified.length >= slotsAvailable) break;
-        }
-
-        if (qualified.length === 0) {
-            console.log(`[WalletDiscovery] No wallets passed deep profiling (need ≥3 trades, ≥50% WR, positive PnL)`);
-            return [];
-        }
-
-        // Step 5: Sort by composite score and convert to TrackedWallet
-        qualified.sort((a, b) => {
-            const scoreA = (a.winRate / 100) * Math.sqrt(a.totalTrades) * Math.log10(Math.max(1, a.pnl));
-            const scoreB = (b.winRate / 100) * Math.sqrt(b.totalTrades) * Math.log10(Math.max(1, b.pnl));
-            return scoreB - scoreA;
-        });
-
-        console.log(`[WalletDiscovery] ${qualified.length} wallet(s) VERIFIED:`);
-        for (const q of qualified) {
-            console.log(`  ${q.candidate.address.slice(0, 8)}... WR=${q.winRate.toFixed(0)}% PnL=$${q.pnl.toFixed(0)} trades=${q.totalTrades} tokens=${q.uniqueTokens}`);
+        console.log(`[WalletDiscovery] ${ranked.length} wallet(s) selected:`);
+        for (const w of ranked) {
+            console.log(`  ${w.address.slice(0, 8)}... WR=${w.winRate.toFixed(0)}% PnL=$${w.totalPnlUsd.toFixed(0)} trades=${w.trades} [${w.source}]`);
         }
 
         const now = Date.now();
-        return qualified.slice(0, slotsAvailable).map(q => ({
-            address: q.candidate.address,
-            label: `discovered-${q.candidate.address.slice(0, 6)}`,
-            score: Math.min(100, Math.round(q.winRate * 0.6 + Math.min(40, q.totalTrades * 2))),
-            winRate: q.winRate,
-            tradeCount30d: q.totalTrades,
+        return ranked.map(w => ({
+            address: w.address,
+            label: `${w.source}-${w.address.slice(0, 6)}`,
+            // DexCheck wallets with verified PnL can get higher scores
+            score: Math.min(
+                w.source === 'dexcheck' ? 90 : 75,
+                Math.round(w.winRate * 0.6 + Math.min(40, w.trades * 2)),
+            ),
+            winRate: w.winRate,
+            tradeCount30d: w.trades,
             roi30d: 0,
-            lastActive: q.candidate.lastSeen,
+            lastActive: w.lastSeen,
             addedAt: now,
             source: 'discovery' as const,
         }));
     }
 
-    /**
-     * Get trending Solana token mints from DexScreener.
-     */
-    private async getTrendingMints(): Promise<string[]> {
+    // ── Source A: DexCheck Top Trader Leaderboards ───────────────────
+
+    private async discoverViaDexCheck(): Promise<CandidateWallet[]> {
         try {
-            // DexScreener token boosted endpoint — shows tokens with most engagement
-            const url = 'https://api.dexscreener.com/token-boosts/top/v1';
-            const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-            if (!res.ok) {
-                console.warn(`[WalletDiscovery] DexScreener trending HTTP ${res.status}`);
-                return [];
-            }
-
-            const data = await res.json() as Array<{
-                tokenAddress: string;
-                chainId: string;
-                amount: number;
-            }>;
-
-            if (!Array.isArray(data)) return [];
-
-            const mints = data
-                .filter(t => t.chainId === 'solana')
-                .slice(0, 10)
-                .map(t => t.tokenAddress);
-
-            return mints;
+            const traders = await fetchTopTradersDexCheck('7d');
+            return traders.map(t => ({
+                address: t.walletAddress,
+                trades: t.tradeCount,
+                wins: Math.round(t.tradeCount * (t.winRate / 100)),
+                totalPnlUsd: t.totalPnlUsd,
+                winRate: t.winRate,
+                lastSeen: Date.now(),
+                source: 'dexcheck',
+            }));
         } catch (err) {
-            console.warn(`[WalletDiscovery] DexScreener error: ${err instanceof Error ? err.message : String(err)}`);
+            console.warn(`[WalletDiscovery] DexCheck error: ${err instanceof Error ? err.message : String(err)}`);
             return [];
         }
     }
 
-    /**
-     * Fallback: Find active wallets via Solana public RPC.
-     * Uses getSignaturesForAddress on the token mint to find recent interactors,
-     * then getTransaction to parse swap details. No API key needed.
-     *
-     * Slower and less detailed than Helius, but always available.
-     */
+    // ── Source B: Trending tokens → early buyer analysis ─────────────
+
+    private async discoverViaTrending(): Promise<CandidateWallet[]> {
+        // Try GeckoTerminal first, fallback to DexScreener
+        let trending = await fetchTrendingGeckoTerminal();
+        if (trending.length === 0) {
+            console.log('[WalletDiscovery] GeckoTerminal empty — trying DexScreener fallback');
+            trending = await fetchTrendingDexScreener();
+        }
+
+        if (trending.length === 0) {
+            console.log('[WalletDiscovery] No trending tokens from any source');
+            return [];
+        }
+
+        // For each trending token, find active wallets
+        const candidates = new Map<string, CandidateWallet>();
+        let heliusAvailable = !!this.heliusKey;
+
+        for (const token of trending.slice(0, 5)) {
+            try {
+                let buyers: CandidateWallet[] = [];
+
+                if (heliusAvailable) {
+                    buyers = await this.findEarlyBuyersHelius(token.mint);
+                    if (buyers.length === 0 && candidates.size === 0) {
+                        console.log('[WalletDiscovery] Helius unavailable — switching to RPC');
+                        heliusAvailable = false;
+                    }
+                }
+
+                if (!heliusAvailable) {
+                    buyers = await this.findTradersViaRpc(token.mint);
+                }
+
+                for (const b of buyers) {
+                    if (this.existing.has(b.address)) continue;
+                    const existing = candidates.get(b.address);
+                    if (existing) {
+                        existing.trades += b.trades;
+                        existing.wins += b.wins;
+                        existing.lastSeen = Math.max(existing.lastSeen, b.lastSeen);
+                    } else {
+                        candidates.set(b.address, b);
+                    }
+                }
+
+                await new Promise(r => setTimeout(r, heliusAvailable ? 2000 : 1000));
+            } catch (err) {
+                console.warn(`[WalletDiscovery] Trending error ${token.mint.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+
+        // Pre-filter
+        const preFiltered = Array.from(candidates.values())
+            .filter(c => c.trades >= 2)
+            .sort((a, b) => b.trades - a.trades)
+            .slice(0, 5);
+
+        // Deep profile if Helius available
+        if (heliusAvailable && this.heliusKey && preFiltered.length > 0) {
+            console.log(`[WalletDiscovery] Deep profiling ${preFiltered.length} candidates...`);
+            const profiler = new WalletProfiler(this.heliusKey);
+            const verified: CandidateWallet[] = [];
+
+            for (const c of preFiltered) {
+                try {
+                    const profile = await profiler.profile(c.address);
+                    if (profile.isQualified) {
+                        verified.push({
+                            ...c,
+                            winRate: profile.winRate,
+                            totalPnlUsd: profile.estimatedPnlUsd,
+                            trades: profile.totalTrades,
+                            source: 'helius-verified',
+                        });
+                    }
+                    await new Promise(r => setTimeout(r, 2000));
+                } catch { /* skip */ }
+            }
+            return verified;
+        }
+
+        return preFiltered;
+    }
+
+    // ── Helius early buyer analysis ────────────────────────────────
+
+    private async findEarlyBuyersHelius(tokenMint: string): Promise<CandidateWallet[]> {
+        if (!this.heliusKey) return [];
+
+        try {
+            const url = `https://api.helius.xyz/v0/addresses/${tokenMint}/transactions?api-key=${this.heliusKey}&limit=50`;
+            const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+            if (!res.ok) {
+                if (res.status === 429) return []; // Rate limited
+                console.warn(`[WalletDiscovery] Helius HTTP ${res.status} for ${tokenMint.slice(0, 8)}`);
+                return [];
+            }
+
+            const txns = await res.json() as Array<{
+                signature: string; timestamp: number; type: string; feePayer: string;
+                events?: { swap?: { tokenInputs?: Array<{ mint: string; tokenAmount?: number }>; tokenOutputs?: Array<{ mint: string; tokenAmount?: number }> } };
+                tokenTransfers?: Array<{ mint: string; fromUserAccount?: string; toUserAccount?: string; tokenAmount?: number }>;
+            }>;
+
+            if (!Array.isArray(txns)) return [];
+
+            const stablecoins = new Set([
+                'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+                'So11111111111111111111111111111111111111112',
+                'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+            ]);
+
+            const walletStats = new Map<string, { buys: number; sells: number; lastSeen: number }>();
+
+            for (const tx of txns) {
+                let isBuy = false, isSell = false;
+                const wallet = tx.feePayer;
+
+                if (tx.events?.swap) {
+                    const inp = tx.events.swap.tokenInputs?.[0];
+                    const out = tx.events.swap.tokenOutputs?.[0];
+                    if (inp && out) {
+                        isBuy = stablecoins.has(inp.mint) && out.mint === tokenMint;
+                        isSell = inp.mint === tokenMint && stablecoins.has(out.mint);
+                    }
+                }
+
+                if (!isBuy && !isSell && tx.tokenTransfers && tx.tokenTransfers.length >= 2) {
+                    for (const t of tx.tokenTransfers) {
+                        if (t.toUserAccount === wallet && t.mint === tokenMint) isBuy = true;
+                        if (t.fromUserAccount === wallet && t.mint === tokenMint) isSell = true;
+                    }
+                    if (isBuy && isSell) { isBuy = false; isSell = false; }
+                }
+
+                if (!isBuy && !isSell) continue;
+
+                const stats = walletStats.get(wallet) ?? { buys: 0, sells: 0, lastSeen: 0 };
+                if (isBuy) stats.buys++;
+                if (isSell) stats.sells++;
+                stats.lastSeen = Math.max(stats.lastSeen, tx.timestamp * 1000);
+                walletStats.set(wallet, stats);
+            }
+
+            const candidates: CandidateWallet[] = [];
+            for (const [address, stats] of walletStats) {
+                if (stats.buys === 0) continue;
+                candidates.push({
+                    address,
+                    trades: stats.buys + stats.sells,
+                    wins: Math.min(stats.sells, stats.buys),
+                    totalPnlUsd: 0,
+                    winRate: stats.buys > 0 ? (Math.min(stats.sells, stats.buys) / stats.buys) * 100 : 0,
+                    lastSeen: stats.lastSeen,
+                    source: 'helius',
+                });
+            }
+            return candidates;
+        } catch {
+            return [];
+        }
+    }
+
+    // ── Solana RPC fallback ────────────────────────────────────────
+
     private async findTradersViaRpc(tokenMint: string): Promise<CandidateWallet[]> {
         const rpcUrl = 'https://api.mainnet-beta.solana.com';
         const label = tokenMint.slice(0, 8);
 
         try {
-            // Get recent signatures for this token's account
             const sigRes = await fetch(rpcUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -253,19 +318,13 @@ export class WalletDiscovery {
                 signal: AbortSignal.timeout(10_000),
             });
 
-            if (!sigRes.ok) {
-                console.warn(`[WalletDiscovery] RPC getSignatures HTTP ${sigRes.status} for ${label}`);
-                return [];
-            }
+            if (!sigRes.ok) return [];
 
             const sigData = await sigRes.json() as { result?: Array<{ signature: string; blockTime?: number; err: unknown }> };
             const sigs = sigData.result?.filter(s => !s.err) ?? [];
-
             if (sigs.length === 0) return [];
 
-            // For each signature, get the transaction to find the fee payer (wallet)
             const walletActivity = new Map<string, { count: number; lastSeen: number }>();
-            let fetched = 0;
 
             for (const sig of sigs.slice(0, 15)) {
                 try {
@@ -285,157 +344,36 @@ export class WalletDiscovery {
                     const tx = txData.result;
                     if (!tx) continue;
 
-                    // Extract fee payer (the wallet that initiated the swap)
                     const feePayer = tx.transaction?.message?.accountKeys?.[0]?.pubkey;
-                    if (!feePayer) continue;
-
-                    // Skip program addresses and known infrastructure
-                    if (feePayer.length < 32) continue;
+                    if (!feePayer || feePayer.length < 32) continue;
 
                     const existing = walletActivity.get(feePayer) ?? { count: 0, lastSeen: 0 };
                     existing.count++;
                     existing.lastSeen = Math.max(existing.lastSeen, (sig.blockTime ?? 0) * 1000);
                     walletActivity.set(feePayer, existing);
 
-                    fetched++;
-                    // RPC rate limit: ~10 req/s for public endpoint
                     await new Promise(r => setTimeout(r, 150));
                 } catch { continue; }
             }
 
-            console.log(`[WalletDiscovery] RPC: ${label} → ${fetched} txns parsed, ${walletActivity.size} unique wallets`);
+            console.log(`[WalletDiscovery] RPC: ${label} → ${walletActivity.size} unique wallets`);
 
-            // Convert to candidates — wallets with multiple interactions suggest active traders
             const candidates: CandidateWallet[] = [];
             for (const [address, activity] of walletActivity) {
-                if (activity.count < 2) continue; // At least 2 interactions with this token
-
+                if (activity.count < 2) continue;
                 candidates.push({
                     address,
                     trades: activity.count,
-                    wins: Math.floor(activity.count / 2), // Rough estimate: half are profitable
+                    wins: Math.floor(activity.count / 2),
                     totalPnlUsd: 0,
-                    avgHoldMinutes: 0,
+                    winRate: 50,
                     lastSeen: activity.lastSeen,
+                    source: 'rpc',
                 });
             }
-
             return candidates;
         } catch (err) {
-            console.warn(`[WalletDiscovery] RPC error for ${label}: ${err instanceof Error ? err.message : String(err)}`);
-            return [];
-        }
-    }
-
-    /**
-     * Find wallets that bought a token early using Helius enhanced transactions.
-     * Looks for wallets that swapped into the token and estimates profit.
-     *
-     * NOTE: Fetches ALL transaction types (not just SWAP) to capture Jupiter
-     * aggregator routes that Helius may classify differently.
-     */
-    private async findEarlyBuyers(tokenMint: string): Promise<CandidateWallet[]> {
-        if (!this.heliusKey) return [];
-
-        try {
-            // Fetch all types — Jupiter V6 swaps may not be classified as SWAP
-            const url = `https://api.helius.xyz/v0/addresses/${tokenMint}/transactions?api-key=${this.heliusKey}&limit=50`;
-            const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-            if (!res.ok) {
-                console.warn(`[WalletDiscovery] Helius early buyers HTTP ${res.status} for ${tokenMint.slice(0, 8)}`);
-                return [];
-            }
-
-            const txns = await res.json() as Array<{
-                signature: string;
-                timestamp: number;
-                type: string;
-                feePayer: string;
-                events?: {
-                    swap?: {
-                        tokenInputs?: Array<{ mint: string; tokenAmount?: number }>;
-                        tokenOutputs?: Array<{ mint: string; tokenAmount?: number }>;
-                    };
-                };
-                tokenTransfers?: Array<{
-                    mint: string;
-                    fromUserAccount?: string;
-                    toUserAccount?: string;
-                    tokenAmount?: number;
-                }>;
-            }>;
-
-            if (!Array.isArray(txns)) return [];
-
-            const stablecoins = new Set([
-                'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-                'So11111111111111111111111111111111111111112',    // SOL
-                'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
-            ]);
-
-            const walletStats = new Map<string, { buys: number; sells: number; lastSeen: number }>();
-
-            for (const tx of txns) {
-                let isBuy = false;
-                let isSell = false;
-                let wallet = tx.feePayer;
-
-                // Method 1: events.swap
-                if (tx.events?.swap) {
-                    const swap = tx.events.swap;
-                    const tokenIn = swap.tokenInputs?.[0];
-                    const tokenOut = swap.tokenOutputs?.[0];
-                    if (tokenIn && tokenOut) {
-                        isBuy = stablecoins.has(tokenIn.mint) && tokenOut.mint === tokenMint;
-                        isSell = tokenIn.mint === tokenMint && stablecoins.has(tokenOut.mint);
-                    }
-                }
-
-                // Method 2: tokenTransfers fallback (Jupiter V6, Raydium, etc.)
-                if (!isBuy && !isSell && tx.tokenTransfers && tx.tokenTransfers.length >= 2) {
-                    for (const t of tx.tokenTransfers) {
-                        if (t.fromUserAccount === wallet && stablecoins.has(t.mint)) {
-                            // Wallet sent stablecoins — potential buy
-                        }
-                        if (t.toUserAccount === wallet && t.mint === tokenMint) {
-                            isBuy = true;
-                        }
-                        if (t.fromUserAccount === wallet && t.mint === tokenMint) {
-                            isSell = true;
-                        }
-                    }
-                    // If both buy and sell in same tx, skip (it's a swap route)
-                    if (isBuy && isSell) { isBuy = false; isSell = false; }
-                }
-
-                if (!isBuy && !isSell) continue;
-
-                const stats = walletStats.get(wallet) ?? { buys: 0, sells: 0, lastSeen: 0 };
-                if (isBuy) stats.buys++;
-                if (isSell) stats.sells++;
-                stats.lastSeen = Math.max(stats.lastSeen, tx.timestamp * 1000);
-                walletStats.set(wallet, stats);
-            }
-
-            // Convert to candidates — wallets with activity
-            const candidates: CandidateWallet[] = [];
-            for (const [address, stats] of walletStats) {
-                if (stats.buys === 0) continue;
-
-                candidates.push({
-                    address,
-                    trades: stats.buys + stats.sells,
-                    // Completed round trips (buy+sell) indicate profitable behavior
-                    wins: Math.min(stats.sells, stats.buys),
-                    totalPnlUsd: 0, // Can't determine from this data alone
-                    avgHoldMinutes: 0,
-                    lastSeen: stats.lastSeen,
-                });
-            }
-
-            return candidates;
-        } catch (err) {
-            console.warn(`[WalletDiscovery] Error for ${tokenMint.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
+            console.warn(`[WalletDiscovery] RPC error: ${err instanceof Error ? err.message : String(err)}`);
             return [];
         }
     }
