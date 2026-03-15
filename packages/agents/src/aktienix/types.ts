@@ -2,8 +2,11 @@ export interface StockPosition {
     symbol: string;
     qty: number;
     avgEntryPrice: number;
+    currentPrice: number;
     marketValue: number;
     unrealizedPl: number;
+    unrealizedPlPct: number;
+    openedAt?: string;
 }
 
 export interface AktienixConfig {
@@ -26,4 +29,7 @@ export interface AccountState {
     settledCash: number;  // Crucial for T+1 settlement logic
     portfolioValue: number;
     isPatternDayTrader: boolean;
+    dailyPnl: number;
+    dailyPnlPct: number;
+    updatedAt: number;  // epoch ms
 }

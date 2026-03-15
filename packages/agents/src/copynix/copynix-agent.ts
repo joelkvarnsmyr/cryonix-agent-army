@@ -95,8 +95,8 @@ export class CopynixAgent extends BaseAgent {
         this.log('info', 'Copynix agent stopped.');
     }
 
-    async handleMessage(_msg: AgentMessage): Promise<AgentMessage | null> {
-        return null;
+    async handleMessage(_msg: AgentMessage): Promise<void> {
+        // No-op — Copynix doesn't process external messages
     }
 
     // -------------------------------------------------------------------------
@@ -137,7 +137,12 @@ export class CopynixAgent extends BaseAgent {
                     this.lastHeartbeat = now;
                 }
 
-                // 2. Feed trades into consensus engine
+                // 2. Enrich trade prices via DexScreener (priceUsd is 0 from Helius)
+                if (newTrades.length > 0) {
+                    await this.enrichTradePrices(newTrades);
+                }
+
+                // 3. Feed trades into consensus engine
                 for (const trade of newTrades) {
                     await this.processTrade(trade);
                 }
@@ -297,6 +302,57 @@ export class CopynixAgent extends BaseAgent {
     }
 
     // -------------------------------------------------------------------------
+    // Price Enrichment (for new trades from Helius where priceUsd=0)
+    // -------------------------------------------------------------------------
+
+    private async enrichTradePrices(trades: WalletTrade[]): Promise<void> {
+        const mintsToEnrich = [...new Set(
+            trades.filter(t => t.priceUsd <= 0).map(t => t.tokenMint)
+        )];
+        if (mintsToEnrich.length === 0) return;
+
+        try {
+            const url = `https://api.dexscreener.com/tokens/v1/solana/${mintsToEnrich.join(',')}`;
+            const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+            if (!res.ok) return;
+
+            const pairs = (await res.json()) as Array<{
+                baseToken: { address: string };
+                priceUsd: string;
+                chainId: string;
+                liquidity?: { usd: number };
+            }>;
+            if (!Array.isArray(pairs)) return;
+
+            // Pick highest-liquidity pair per token
+            const priceMap = new Map<string, { price: number; liquidity: number }>();
+            for (const pair of pairs) {
+                if (pair.chainId !== 'solana') continue;
+                const addr = pair.baseToken.address.toLowerCase();
+                const price = parseFloat(pair.priceUsd);
+                if (!price || price <= 0) continue;
+                const liq = pair.liquidity?.usd ?? 0;
+
+                const existing = priceMap.get(addr);
+                if (!existing || liq > existing.liquidity) {
+                    priceMap.set(addr, { price, liquidity: liq });
+                }
+            }
+
+            for (const trade of trades) {
+                if (trade.priceUsd > 0) continue;
+                const data = priceMap.get(trade.tokenMint.toLowerCase());
+                if (data) {
+                    trade.priceUsd = data.price;
+                    this.log('info', `[ENRICH] ${trade.tokenSymbol} price: $${data.price.toFixed(6)}`);
+                }
+            }
+        } catch (err) {
+            this.log('error', `[ENRICH] DexScreener error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Price Updates
     // -------------------------------------------------------------------------
 
@@ -315,23 +371,24 @@ export class CopynixAgent extends BaseAgent {
             if (!Array.isArray(pairs)) return;
 
             // Group by token, pick highest liquidity
-            const priceMap = new Map<string, number>();
+            const priceMap = new Map<string, { price: number; liquidity: number }>();
             for (const pair of pairs) {
                 if (pair.chainId !== 'solana') continue;
                 const addr = pair.baseToken.address.toLowerCase();
                 const price = parseFloat(pair.priceUsd);
                 if (!price || price <= 0) continue;
+                const liq = pair.liquidity?.usd ?? 0;
 
                 const existing = priceMap.get(addr);
-                if (!existing || (pair.liquidity?.usd ?? 0) > 0) {
-                    priceMap.set(addr, price);
+                if (!existing || liq > existing.liquidity) {
+                    priceMap.set(addr, { price, liquidity: liq });
                 }
             }
 
             for (const pos of positions) {
-                const price = priceMap.get(pos.tokenMint.toLowerCase());
-                if (price) {
-                    this.executor!.updatePrice(pos.tokenMint, price);
+                const data = priceMap.get(pos.tokenMint.toLowerCase());
+                if (data) {
+                    this.executor!.updatePrice(pos.tokenMint, data.price);
                 }
             }
         } catch {
@@ -357,15 +414,24 @@ export class CopynixAgent extends BaseAgent {
                     qty: p.qty,
                     avgEntryPrice: p.avgEntryPrice,
                     currentPrice: p.currentPrice,
+                    marketValue: p.qty * p.currentPrice,
                     unrealizedPl: p.unrealizedPl,
-                    side: 'long' as const,
+                    unrealizedPlPct: p.avgEntryPrice > 0
+                        ? ((p.currentPrice - p.avgEntryPrice) / p.avgEntryPrice) * 100
+                        : 0,
                 })),
             );
+            const totalUnrealizedPl = positions.reduce((s, p) => s + p.unrealizedPl, 0);
             await this.statePublisher.publishAccount({
                 buyingPower: acct.usdcBalance,
                 settledCash: acct.usdcBalance,
                 portfolioValue: acct.portfolioValue,
                 isPatternDayTrader: false,
+                dailyPnl: totalUnrealizedPl,
+                dailyPnlPct: acct.portfolioValue > 0
+                    ? (totalUnrealizedPl / acct.portfolioValue) * 100
+                    : 0,
+                updatedAt: Date.now(),
             });
             await this.statePublisher.publishStatus('running');
         } catch {

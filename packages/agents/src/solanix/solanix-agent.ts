@@ -514,6 +514,9 @@ export class SolanaAgent extends BaseAgent {
                 settledCash: this.accountState.usdcBalance,
                 portfolioValue: this.accountState.portfolioValue,
                 isPatternDayTrader: false,
+                dailyPnl: 0,
+                dailyPnlPct: 0,
+                updatedAt: Date.now(),
             });
         }
         const riskState = this.riskManager.getState();

@@ -477,7 +477,7 @@ async function archivePartialExit(
   } catch { /* non-critical */ }
 
   // Track partial PnL in daily state
-  try { await addDailyPnl(pnl); } catch { }
+  try { await addDailyPnl(pnl); } catch (e) { console.warn('[DAILY_PNL] Failed to track PnL:', e); }
 }
 
 // ============================================================================
@@ -508,7 +508,7 @@ async function getCapitalBudget(): Promise<CapitalBudget> {
   try {
     const regimeRaw = await redis.get('market:regime');
     if (regimeRaw) regime = regimeRaw;
-  } catch { }
+  } catch (e) { console.warn('[CAPITAL] Failed to read market regime:', e); }
 
   // Base allocation
   let signalPct = CONFIG.SIGNAL_POOL_PCT;
@@ -592,7 +592,7 @@ async function getDailyState(): Promise<DailyState> {
       const state = JSON.parse(raw as string) as DailyState;
       if (state.date === today) return state;
     }
-  } catch { }
+  } catch (e) { console.warn('[DAILY_STATE] Failed to read daily state:', e); }
   // New day or no state — return fresh
   return { date: today, tradesExecuted: 0, dailyPnl: 0 };
 }
@@ -942,7 +942,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             }
 
             // Sync close to Postgres positions table
-            try { await closePositionBySymbol(pos.symbol, String(fillPrice), String(realizedPnl), String(pnlPct)); } catch { }
+            try { await closePositionBySymbol(pos.symbol, String(fillPrice), String(realizedPnl), String(pnlPct)); } catch (e) { console.warn(`[RECONCILE] closePositionBySymbol failed for ${pos.symbol}:`, e); }
 
             results.push({
               symbol: pos.symbol,
@@ -1493,7 +1493,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
           }
 
           // Sync close to Postgres positions table
-          try { await closePositionBySymbol(pos.symbol, String(closePrice), String(realizedPnl - fees), String(pnlPct)); } catch { }
+          try { await closePositionBySymbol(pos.symbol, String(closePrice), String(realizedPnl - fees), String(pnlPct)); } catch (e) { console.warn(`[MONITOR] closePositionBySymbol failed for ${pos.symbol}:`, e); }
 
           console.log(`[MONITOR] ${pos.symbol} ${exitType}: PnL $${(realizedPnl - fees).toFixed(4)} (${pnlPct.toFixed(2)}%)`);
 
@@ -1575,7 +1575,7 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             }
 
             // Sync close to Postgres positions table
-            try { await closePositionBySymbol(pos.symbol, String(currentPrice), String(pnl), String(pnlPct)); } catch { }
+            try { await closePositionBySymbol(pos.symbol, String(currentPrice), String(pnl), String(pnlPct)); } catch (e) { console.warn(`[MONITOR] closePositionBySymbol failed for ${pos.symbol} (dust):`, e); }
 
             results.push({
               symbol: pos.symbol,
@@ -1663,7 +1663,7 @@ async function getPatternCalibration(): Promise<Record<string, PatternStats>> {
       calibrationLastFetched = now;
       return calibrationCache;
     }
-  } catch { }
+  } catch (e) { console.warn('[CALIBRATION] Failed to read pattern calibration:', e); }
 
   // If no cache, return empty (calibration cron will populate it)
   return calibrationCache;
@@ -1805,7 +1805,7 @@ async function trySmartRotation(
       hunterBoost = 10;
       console.log(`[ROTATION] Hunter recommends exiting ${weakest.position.symbol} (+${hunterBoost} boost)`);
     }
-  } catch {}
+  } catch (e) { console.warn('[ROTATION] Hunter exit check failed:', e); }
 
   if (advantage + hunterBoost >= minAdvantage) {
     return {
@@ -2028,7 +2028,7 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
       }
       // info severity: pass — no impact
     }
-  } catch { }
+  } catch (e) { console.warn('[BUY-FILTER] X sentiment check failed:', e); }
 
   // ── CoinMarketCap macro filters ──────────────────────────────────────
   const cmcEnabled = TOML?.coinmarketcap?.enabled ?? false;
@@ -2951,6 +2951,10 @@ export async function POST() {
     for (const raw of rawList) {
       try {
         const signal = JSON.parse(raw);
+        // Normalize pattern names to uppercase (Python engine sends UPPERCASE, but TOML/test may use lowercase)
+        if (signal.patterns && Array.isArray(signal.patterns)) {
+          signal.patterns = signal.patterns.map((p: string) => p.toUpperCase());
+        }
         // Drop stale signals — market has moved since detection
         if (signal.timestamp) {
           const age = Date.now() - new Date(signal.timestamp).getTime();
@@ -3404,6 +3408,8 @@ export async function POST() {
             signal.confidence -= bearishPenalty;
             console.log(`[SENTIMENT] ${signal.symbol}: -${(bearishPenalty * 100).toFixed(0)}% penalty (X score ${xScore}, bearish)`);
           }
+          // Clamp confidence to valid range after all adjustments
+          signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
         } catch { /* sentiment unavailable — no adjustment */ }
       }
 

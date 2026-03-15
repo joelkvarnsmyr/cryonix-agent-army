@@ -62,7 +62,7 @@ export class ExitMonitor {
         if (positionCost <= 0) return null;
 
         const pnlPct = (pos.unrealizedPl / positionCost) * 100;
-        const currentPrice = pos.marketValue / pos.qty;
+        const currentPrice = pos.currentPrice ?? (pos.marketValue / pos.qty);
 
         // Take Profit
         if (pnlPct >= config.take_profit_pct) {

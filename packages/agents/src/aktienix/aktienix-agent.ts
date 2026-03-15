@@ -73,6 +73,16 @@ export class AktienixAgent extends BaseAgent {
             this.positions = await this.brokerClient.getPositions();
             this.log('info', `Alpaca Connected. Portfolio Value: ${this.accountState?.portfolioValue}`);
 
+            // Populate ExitMonitor state for existing positions (survives restarts)
+            for (const pos of this.positions) {
+                if (!this.exitMonitor) break;
+                this.exitMonitor.recordEntry(
+                    pos.symbol,
+                    pos.avgEntryPrice,
+                    pos.openedAt ? new Date(pos.openedAt) : new Date(),
+                );
+            }
+
             this.alpacaInstance = (this.brokerClient as AlpacaClient).getAlpacaInstance();
             this.signalGenerator = new StockSignalGenerator(
                 this.alpacaInstance,
@@ -92,11 +102,11 @@ export class AktienixAgent extends BaseAgent {
 
         } else if (this.tradingConfig.broker === 'mock') {
             this.log('info', 'Using MOCK broker for testing.');
-            this.accountState = { buyingPower: 500, settledCash: 500, portfolioValue: 500, isPatternDayTrader: false };
+            this.accountState = { buyingPower: 500, settledCash: 500, portfolioValue: 500, isPatternDayTrader: false, dailyPnl: 0, dailyPnlPct: 0, updatedAt: Date.now() };
 
         } else {
             this.log('warn', `Unknown broker "${this.tradingConfig.broker}". Using zeroed mock state.`);
-            this.accountState = { buyingPower: 0, settledCash: 0, portfolioValue: 0, isPatternDayTrader: false };
+            this.accountState = { buyingPower: 0, settledCash: 0, portfolioValue: 0, isPatternDayTrader: false, dailyPnl: 0, dailyPnlPct: 0, updatedAt: Date.now() };
         }
 
         if (this.tradingConfig.intelligence?.enabled) {
@@ -215,11 +225,30 @@ export class AktienixAgent extends BaseAgent {
 
                     if (result.success) {
                         this.log('info', `Exit order submitted: ${result.orderId} \u2014 ${result.status}`);
-                        const pnlDollar = (decision.pnlPct / 100) * pos.marketValue;
-                        this.riskManager.recordExit(pnlDollar);
+                        this.riskManager.recordExit(pos.unrealizedPl);
                         this.exitMonitor.clearPosition(decision.symbol);
                     } else {
                         this.log('error', `Exit order failed for ${decision.symbol}: ${result.message}`);
+                    }
+                }
+
+                // 6b. EOD close: close all positions before market close if configured
+                if (marketResult.shouldClosePositions && this.brokerClient) {
+                    for (const pos of this.positions) {
+                        this.log('info', `[EOD CLOSE] Closing ${pos.symbol} before market close`);
+                        const result = await this.brokerClient.submitOrder({
+                            symbol: pos.symbol,
+                            action: 'SELL',
+                            qty: pos.qty,
+                            orderType: 'MARKET',
+                        });
+                        if (result.success) {
+                            this.log('info', `[EOD CLOSE] ${pos.symbol} sold: ${result.orderId}`);
+                            this.riskManager.recordExit(pos.unrealizedPl);
+                            this.exitMonitor.clearPosition(pos.symbol);
+                        } else {
+                            this.log('error', `[EOD CLOSE] Failed to close ${pos.symbol}: ${result.message}`);
+                        }
                     }
                 }
 
@@ -352,6 +381,12 @@ export class AktienixAgent extends BaseAgent {
         const config = this.tomlConfig;
         let { symbol, action, confidence, reasoning, currentPrice } = payload;
         this.log('info', `Evaluating signal to ${action} ${symbol} (Base Confidence: ${confidence})`);
+
+        // Max open positions check
+        if (action === 'BUY' && this.positions.length >= config.limits.max_open_positions) {
+            this.log('info', `Max open positions reached (${this.positions.length}/${config.limits.max_open_positions}). Skipping ${symbol}.`);
+            return;
+        }
 
         // Apply Macro Intelligence overlays
         const intelConfig = this.tradingConfig.intelligence;

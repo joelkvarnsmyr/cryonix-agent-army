@@ -18,8 +18,10 @@ describe('ExitMonitor', () => {
         symbol,
         qty: 1,
         avgEntryPrice: avgEntry,
+        currentPrice: marketValue,
         marketValue,
         unrealizedPl,
+        unrealizedPlPct: avgEntry > 0 ? (unrealizedPl / avgEntry) * 100 : 0,
     });
 
     beforeEach(() => {

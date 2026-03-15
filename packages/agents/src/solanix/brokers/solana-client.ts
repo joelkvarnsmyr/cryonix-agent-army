@@ -74,6 +74,9 @@ export class SolanaClient implements BrokerClient {
             settledCash: this.usdcBalance,
             portfolioValue,
             isPatternDayTrader: false,
+            dailyPnl: 0,
+            dailyPnlPct: 0,
+            updatedAt: Date.now(),
         };
     }
 
@@ -82,8 +85,12 @@ export class SolanaClient implements BrokerClient {
             symbol: p.symbol,
             qty: p.tokenQty,
             avgEntryPrice: p.avgEntryPrice,
+            currentPrice: p.currentPrice,
             marketValue: p.tokenQty * p.currentPrice,
             unrealizedPl: p.tokenQty * (p.currentPrice - p.avgEntryPrice),
+            unrealizedPlPct: p.avgEntryPrice > 0
+                ? ((p.currentPrice - p.avgEntryPrice) / p.avgEntryPrice) * 100
+                : 0,
         }));
     }
 

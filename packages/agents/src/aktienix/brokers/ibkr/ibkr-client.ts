@@ -75,6 +75,9 @@ export class IbkrClient implements BrokerClient {
             buyingPower: getVal('buyingpower'),
             settledCash: getVal('settledcash') || getVal('cashbalance'),
             isPatternDayTrader: false, // In a cash account or ISK, PDT doesn't apply
+            dailyPnl: getVal('unrealizedpnl'),
+            dailyPnlPct: 0,
+            updatedAt: Date.now(),
         };
     }
 
@@ -91,8 +94,12 @@ export class IbkrClient implements BrokerClient {
             symbol: p.contractDesc, // Contains ticker
             qty: p.position,
             avgEntryPrice: p.avgCost,
+            currentPrice: p.mktValue / (p.position || 1),
             marketValue: p.mktValue,
             unrealizedPl: p.unrealizedPnl,
+            unrealizedPlPct: p.avgCost > 0
+                ? ((p.mktValue / (p.position * p.avgCost)) - 1) * 100
+                : 0,
         }));
     }
 

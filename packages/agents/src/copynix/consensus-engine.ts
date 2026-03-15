@@ -78,6 +78,13 @@ export class ConsensusEngine {
 
         if (!consensusLevel) return null;
 
+        // For medium consensus, keep the pending entry so a 3rd wallet can upgrade to strong
+        if (consensusLevel === 'medium') {
+            // Only fire medium signal once (check if we already fired for this entry)
+            if ((entry as any)._mediumFired) return null;
+            (entry as any)._mediumFired = true;
+        }
+
         // Consensus reached — fire signal
         const wallets = Array.from(uniqueWallets);
         const avgPrice = entry.trades.reduce((s, t) => s + t.priceUsd, 0) / entry.trades.length;
@@ -102,9 +109,12 @@ export class ConsensusEngine {
             timestamp: now,
         };
 
-        // Set cooldown and clean up
-        this.cooldowns.set(trade.tokenMint, now + this.cooldownMs);
-        this.pending.delete(trade.tokenMint);
+        // Strong: set cooldown + clean up. Medium: keep pending for possible upgrade to strong.
+        if (consensusLevel === 'strong') {
+            this.cooldowns.set(trade.tokenMint, now + this.cooldownMs);
+            this.pending.delete(trade.tokenMint);
+        }
+        // Medium does NOT set cooldown — allows 3rd wallet to upgrade to strong
 
         return signal;
     }

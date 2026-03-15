@@ -451,9 +451,14 @@ export class PolymarketIntelligence {
         const day = now.getUTCDate();
 
         // Try today and tomorrow (markets may be for next day)
+        const tomorrow = new Date(now);
+        tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+        const tomorrowMonth = months[tomorrow.getUTCMonth()];
+        const tomorrowDay = tomorrow.getUTCDate();
+
         const slugs = [
             `bitcoin-above-on-${month}-${day}`,
-            `bitcoin-above-on-${month}-${day + 1}`,
+            `bitcoin-above-on-${tomorrowMonth}-${tomorrowDay}`,
         ];
 
         for (const slug of slugs) {
@@ -520,7 +525,7 @@ export class PolymarketIntelligence {
             }
 
             // Tax/regulation bullish
-            if (q.includes('capital gains') || q.includes('tax') && q.includes('crypto')) {
+            if ((q.includes('capital gains') || q.includes('tax')) && q.includes('crypto')) {
                 if (prob > 0.3) {
                     score += 0.1 * prob;
                     sigs.push({ market: m.question, probability: prob, direction: 'bullish', weight: 0.1, detail: `Crypto-friendly policy ${(prob * 100).toFixed(0)}%` });

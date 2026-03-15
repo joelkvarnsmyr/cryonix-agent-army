@@ -124,7 +124,8 @@ export class WalletMonitor {
         if (!isBuy && !isSell) return null;
 
         const tokenMint = isBuy ? tokenOut.mint : tokenIn.mint;
-        const amountUsd = isBuy ? (tokenIn.rawTokenAmount?.decimals ? tokenIn.tokenAmount : 0) : (tokenOut.tokenAmount ?? 0);
+        // Use tokenAmount (parsed USD) when available, fall back to 0
+        const amountUsd = isBuy ? (tokenIn.tokenAmount ?? 0) : (tokenOut.tokenAmount ?? 0);
 
         return {
             walletAddress,
@@ -139,12 +140,49 @@ export class WalletMonitor {
     }
 
     /**
-     * Fallback: minimal RPC-based transaction fetch (no swap parsing).
-     * Only used when HELIUS_API_KEY is not set.
+     * Fallback: detect wallet activity via public Solana RPC.
+     * Cannot parse swap details without Helius — logs activity for monitoring.
      */
-    private async fetchViaRpc(_walletAddress: string): Promise<WalletTrade[]> {
-        // Phase 1 stub — returns empty, requires Helius for real parsing
-        return [];
+    private async fetchViaRpc(walletAddress: string): Promise<WalletTrade[]> {
+        try {
+            const rpcUrl = 'https://api.mainnet-beta.solana.com';
+            const sigRes = await fetch(rpcUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0', id: 1,
+                    method: 'getSignaturesForAddress',
+                    params: [walletAddress, { limit: 5 }],
+                }),
+                signal: AbortSignal.timeout(10_000),
+            });
+            if (!sigRes.ok) return [];
+
+            const sigData = (await sigRes.json()) as { result?: Array<{ signature: string; blockTime?: number; err: unknown }> };
+            const sigs = sigData.result?.filter(s => !s.err) ?? [];
+            if (sigs.length === 0) return [];
+
+            // Check for new transactions since last seen
+            const lastSeen = this.lastSeenTx.get(walletAddress);
+            let newCount = 0;
+            for (const sig of sigs) {
+                if (lastSeen && sig.signature === lastSeen) break;
+                newCount++;
+            }
+
+            // Update last seen for dedup
+            if (sigs.length > 0) {
+                this.lastSeenTx.set(walletAddress, sigs[0].signature);
+            }
+
+            if (newCount > 0) {
+                console.log(`[WalletMonitor] RPC fallback: ${walletAddress.slice(0, 8)}... has ${newCount} new tx(s) — set HELIUS_API_KEY for swap parsing`);
+            }
+
+            return [];
+        } catch {
+            return [];
+        }
     }
 }
 

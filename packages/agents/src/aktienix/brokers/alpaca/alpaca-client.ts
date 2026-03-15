@@ -52,11 +52,18 @@ export class AlpacaClient implements BrokerClient {
     async getAccountState(): Promise<AccountState> {
         try {
             const account = await this.alpaca.getAccount();
+            const equity = parseFloat(account.equity);
+            const lastEquity = parseFloat(account.last_equity);
+            const dailyPnl = equity - lastEquity;
+            const dailyPnlPct = lastEquity > 0 ? (dailyPnl / lastEquity) * 100 : 0;
             return {
                 buyingPower: parseFloat(account.buying_power),
-                settledCash: parseFloat(account.cash), // Alpaca defines 'cash' for settled vs 'portfolio_value'
+                settledCash: parseFloat(account.cash),
                 portfolioValue: parseFloat(account.portfolio_value),
                 isPatternDayTrader: account.pattern_day_trader,
+                dailyPnl,
+                dailyPnlPct,
+                updatedAt: Date.now(),
             };
         } catch (error: any) {
             this.logger.error(`Error fetching account state from Alpaca: ${error.message}`);
@@ -71,8 +78,10 @@ export class AlpacaClient implements BrokerClient {
                 symbol: pos.symbol,
                 qty: parseFloat(pos.qty),
                 avgEntryPrice: parseFloat(pos.avg_entry_price),
+                currentPrice: parseFloat(pos.current_price),
                 marketValue: parseFloat(pos.market_value),
                 unrealizedPl: parseFloat(pos.unrealized_pl),
+                unrealizedPlPct: parseFloat(pos.unrealized_plpc) * 100,
             }));
         } catch (error: any) {
             this.logger.error(`Error fetching positions from Alpaca: ${error.message}`);
