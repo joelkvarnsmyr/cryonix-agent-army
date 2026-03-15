@@ -40,10 +40,6 @@ export class WalletDiscovery {
      * Returns wallets that pass the quality filter, sorted by estimated score.
      */
     async discover(): Promise<TrackedWallet[]> {
-        if (!this.heliusKey) {
-            console.log('[WalletDiscovery] No HELIUS_API_KEY — skipping discovery');
-            return [];
-        }
 
         const slotsAvailable = this.maxTracked - this.existing.size;
         if (slotsAvailable <= 0) {
@@ -61,13 +57,30 @@ export class WalletDiscovery {
         console.log(`[WalletDiscovery] Found ${trendingMints.length} trending tokens`);
 
         // Step 2: For each trending token, find wallets that bought early + profited
+        // Try Helius first; if rate limited, fall back to Solana RPC + heuristic scoring
         const candidates = new Map<string, CandidateWallet>();
         let tokensAnalyzed = 0;
         let totalCandidates = 0;
+        let heliusAvailable = !!this.heliusKey;
 
         for (const mint of trendingMints.slice(0, 5)) {
             try {
-                const earlyBuyers = await this.findEarlyBuyers(mint);
+                let earlyBuyers: CandidateWallet[] = [];
+
+                if (heliusAvailable) {
+                    earlyBuyers = await this.findEarlyBuyers(mint);
+                    // Detect rate limiting — switch to RPC fallback
+                    if (earlyBuyers.length === 0 && tokensAnalyzed === 0) {
+                        console.log('[WalletDiscovery] Helius unavailable — switching to RPC discovery');
+                        heliusAvailable = false;
+                    }
+                }
+
+                // Fallback: Solana RPC + DexScreener for wallet discovery
+                if (!heliusAvailable) {
+                    earlyBuyers = await this.findTradersViaRpc(mint);
+                }
+
                 tokensAnalyzed++;
                 totalCandidates += earlyBuyers.length;
 
@@ -85,8 +98,8 @@ export class WalletDiscovery {
                     }
                 }
 
-                // Rate limit between tokens (2s to stay under Helius 10 RPS)
-                await new Promise(r => setTimeout(r, 2000));
+                // Rate limit between tokens
+                await new Promise(r => setTimeout(r, heliusAvailable ? 2000 : 1000));
             } catch (err) {
                 console.warn(`[WalletDiscovery] Error analyzing mint ${mint.slice(0, 8)}:`, err);
             }
@@ -108,6 +121,24 @@ export class WalletDiscovery {
         console.log(`[WalletDiscovery] ${preFiltered.length} candidates for deep profiling...`);
 
         // Step 4: Deep profile each candidate's ENTIRE swap history
+        // Skip profiling if Helius is rate limited — use basic scoring instead
+        if (!heliusAvailable) {
+            console.log(`[WalletDiscovery] Helius unavailable — using basic scoring (no deep profile)`);
+            const basicQualified = preFiltered.slice(0, slotsAvailable);
+            const now = Date.now();
+            return basicQualified.map(c => ({
+                address: c.address,
+                label: `rpc-${c.address.slice(0, 6)}`,
+                score: Math.min(75, Math.round(50 + c.trades * 3)), // Cap at 75 (below whale threshold)
+                winRate: c.trades > 0 ? (c.wins / c.trades) * 100 : 50,
+                tradeCount30d: c.trades,
+                roi30d: 0,
+                lastActive: c.lastSeen,
+                addedAt: now,
+                source: 'discovery' as const,
+            }));
+        }
+
         const profiler = new WalletProfiler(this.heliusKey!);
         const qualified: Array<{ candidate: CandidateWallet; winRate: number; pnl: number; totalTrades: number; uniqueTokens: number }> = [];
 
@@ -194,6 +225,104 @@ export class WalletDiscovery {
             return mints;
         } catch (err) {
             console.warn(`[WalletDiscovery] DexScreener error: ${err instanceof Error ? err.message : String(err)}`);
+            return [];
+        }
+    }
+
+    /**
+     * Fallback: Find active wallets via Solana public RPC.
+     * Uses getSignaturesForAddress on the token mint to find recent interactors,
+     * then getTransaction to parse swap details. No API key needed.
+     *
+     * Slower and less detailed than Helius, but always available.
+     */
+    private async findTradersViaRpc(tokenMint: string): Promise<CandidateWallet[]> {
+        const rpcUrl = 'https://api.mainnet-beta.solana.com';
+        const label = tokenMint.slice(0, 8);
+
+        try {
+            // Get recent signatures for this token's account
+            const sigRes = await fetch(rpcUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0', id: 1,
+                    method: 'getSignaturesForAddress',
+                    params: [tokenMint, { limit: 30 }],
+                }),
+                signal: AbortSignal.timeout(10_000),
+            });
+
+            if (!sigRes.ok) {
+                console.warn(`[WalletDiscovery] RPC getSignatures HTTP ${sigRes.status} for ${label}`);
+                return [];
+            }
+
+            const sigData = await sigRes.json() as { result?: Array<{ signature: string; blockTime?: number; err: unknown }> };
+            const sigs = sigData.result?.filter(s => !s.err) ?? [];
+
+            if (sigs.length === 0) return [];
+
+            // For each signature, get the transaction to find the fee payer (wallet)
+            const walletActivity = new Map<string, { count: number; lastSeen: number }>();
+            let fetched = 0;
+
+            for (const sig of sigs.slice(0, 15)) {
+                try {
+                    const txRes = await fetch(rpcUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jsonrpc: '2.0', id: 1,
+                            method: 'getTransaction',
+                            params: [sig.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
+                        }),
+                        signal: AbortSignal.timeout(10_000),
+                    });
+
+                    if (!txRes.ok) continue;
+                    const txData = await txRes.json() as any;
+                    const tx = txData.result;
+                    if (!tx) continue;
+
+                    // Extract fee payer (the wallet that initiated the swap)
+                    const feePayer = tx.transaction?.message?.accountKeys?.[0]?.pubkey;
+                    if (!feePayer) continue;
+
+                    // Skip program addresses and known infrastructure
+                    if (feePayer.length < 32) continue;
+
+                    const existing = walletActivity.get(feePayer) ?? { count: 0, lastSeen: 0 };
+                    existing.count++;
+                    existing.lastSeen = Math.max(existing.lastSeen, (sig.blockTime ?? 0) * 1000);
+                    walletActivity.set(feePayer, existing);
+
+                    fetched++;
+                    // RPC rate limit: ~10 req/s for public endpoint
+                    await new Promise(r => setTimeout(r, 150));
+                } catch { continue; }
+            }
+
+            console.log(`[WalletDiscovery] RPC: ${label} → ${fetched} txns parsed, ${walletActivity.size} unique wallets`);
+
+            // Convert to candidates — wallets with multiple interactions suggest active traders
+            const candidates: CandidateWallet[] = [];
+            for (const [address, activity] of walletActivity) {
+                if (activity.count < 2) continue; // At least 2 interactions with this token
+
+                candidates.push({
+                    address,
+                    trades: activity.count,
+                    wins: Math.floor(activity.count / 2), // Rough estimate: half are profitable
+                    totalPnlUsd: 0,
+                    avgHoldMinutes: 0,
+                    lastSeen: activity.lastSeen,
+                });
+            }
+
+            return candidates;
+        } catch (err) {
+            console.warn(`[WalletDiscovery] RPC error for ${label}: ${err instanceof Error ? err.message : String(err)}`);
             return [];
         }
     }
