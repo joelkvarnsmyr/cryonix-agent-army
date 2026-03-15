@@ -18,6 +18,25 @@ const KNOWN_MINTS: Record<string, string> = {
     USDC: USDC_MINT,
 };
 
+/** Token decimals — used to correctly interpret Jupiter outAmount. */
+const TOKEN_DECIMALS: Record<string, number> = {
+    SOL: 9,
+    JUP: 6,
+    BONK: 5,
+    WIF: 6,
+    PYTH: 6,
+    RNDR: 8,
+    USDC: 6,
+    RAY: 6,
+    ORCA: 6,
+    JTO: 9,
+    W: 6,
+    HNT: 8,
+    DRIFT: 6,
+    POPCAT: 9,
+    MEW: 5,
+};
+
 export interface SolanaClientConfig {
     rpcUrl: string;
     paperTrading: boolean;
@@ -146,8 +165,12 @@ export class SolanaClient implements BrokerClient {
     // Extended API (used by SolanaAgent)
     // -------------------------------------------------------------------------
 
-    addDynamicToken(symbol: string, mintAddress: string): void {
-        this.dynamicMints.set(symbol.toUpperCase(), mintAddress);
+    addDynamicToken(symbol: string, mintAddress: string, decimals?: number): void {
+        const upper = symbol.toUpperCase();
+        this.dynamicMints.set(upper, mintAddress);
+        if (decimals !== undefined) {
+            TOKEN_DECIMALS[upper] = decimals;
+        }
     }
 
     getMintAddress(symbol: string): string | undefined {
@@ -177,12 +200,26 @@ export class SolanaClient implements BrokerClient {
      * Fetch token price in USD.
      * Tries Jupiter first; falls back to DexScreener if Jupiter is unavailable.
      */
+    /** Resolve token decimals — checks TOKEN_DECIMALS by symbol, defaults to 6. */
+    private getTokenDecimals(mint: string): number {
+        // Reverse lookup: find symbol for this mint address
+        for (const [sym, addr] of Object.entries(KNOWN_MINTS)) {
+            if (addr === mint) return TOKEN_DECIMALS[sym] ?? 6;
+        }
+        for (const [sym, addr] of this.dynamicMints.entries()) {
+            if (addr === mint) return TOKEN_DECIMALS[sym] ?? 6;
+        }
+        return 6; // conservative default
+    }
+
     private async fetchJupiterPrice(
         mint: string,
         _side: 'BUY' | 'SELL',
         _usdcAmount: number,
     ): Promise<{ success: boolean; price?: number; message?: string }> {
-        // 1. Try Jupiter
+        const tokenDecimals = this.getTokenDecimals(mint);
+
+        // 1. Try Jupiter — quote 1 USDC worth of the output token
         try {
             const url =
                 `${JUPITER_QUOTE_URL}` +
@@ -194,7 +231,8 @@ export class SolanaClient implements BrokerClient {
             const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
             if (res.ok) {
                 const data = (await res.json()) as { outAmount: string };
-                const tokensPerUsdc = Number(data.outAmount) / 1_000_000;
+                // outAmount is in the token's native smallest unit — divide by 10^tokenDecimals
+                const tokensPerUsdc = Number(data.outAmount) / (10 ** tokenDecimals);
                 if (tokensPerUsdc > 0) {
                     return { success: true, price: 1 / tokensPerUsdc };
                 }

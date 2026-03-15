@@ -7,6 +7,8 @@ import { SolanaClient } from './brokers/solana-client';
 import { MINT_ADDRESS_MAP } from './signals/solana-signal-generator';
 import { DexScreenerSignalGenerator } from './signals/dexscreener-signal-generator';
 import { DexScreenerScanner } from './signals/dexscreener-scanner';
+import { StablecoinScanner, type StablecoinStatus } from './signals/stablecoin-scanner';
+import { TokenUnlockMonitor, type TokenUnlockEvent } from './signals/token-unlock-monitor';
 import { SolanaWatchlistCurator } from './watchlist-curator';
 import { SolanaExitMonitor } from './exit-monitor';
 import { MacroFilter } from './macro-filter';
@@ -26,7 +28,13 @@ export class SolanaAgent extends BaseAgent {
     private exitMonitor = new SolanaExitMonitor();
     private macroFilter: MacroFilter | null = null;
     private polymarket = new PolymarketIntelligence(300_000); // 5 min cache
+    private stablecoinScanner = new StablecoinScanner();
+    private unlockMonitor = new TokenUnlockMonitor();
     private riskManager = new RiskManager();
+
+    private lastStablecoinStatus: StablecoinStatus | null = null;
+    private lastUnlockCheckTime = 0;
+    private upcomingUnlocks: TokenUnlockEvent[] = [];
 
     private positions: SolanaPosition[] = [];
     private positionMeta: Map<string, { entryTime: number; highWatermark: number; trailingActive: boolean }> = new Map();
@@ -35,6 +43,8 @@ export class SolanaAgent extends BaseAgent {
     private lastDexScanTime = 0;
     private lastSignalScanTime = 0;
     private lastResetDay = new Date().getUTCDate();
+    private lastResetWeek = getISOWeek();
+    private signalsBoughtThisLoop = new Set<string>();
 
     private tomlConfig = loadSolanixConfig();
 
@@ -160,13 +170,23 @@ export class SolanaAgent extends BaseAgent {
     private async runLoop(): Promise<void> {
         const config = this.tomlConfig;
 
-        // 0. Daily reset — clear trade counters at midnight UTC
+        // 0. Daily + weekly reset
         const today = new Date().getUTCDate();
         if (today !== this.lastResetDay) {
             this.riskManager.resetDaily();
             this.lastResetDay = today;
             this.log('info', 'Daily risk counters reset (new UTC day)');
+
+            const currentWeek = getISOWeek();
+            if (currentWeek !== this.lastResetWeek) {
+                this.riskManager.resetWeekly();
+                this.lastResetWeek = currentWeek;
+                this.log('info', 'Weekly risk counters reset (new ISO week)');
+            }
         }
+
+        // Clear per-loop signal dedup set
+        this.signalsBoughtThisLoop.clear();
 
         // 1. Circuit breaker check via Redis (skip trading if tripped)
         const circuitOpen = await this.isCircuitBreakerOpen();
@@ -231,6 +251,41 @@ export class SolanaAgent extends BaseAgent {
             this.riskManager.updatePortfolioValue(this.accountState.portfolioValue);
         }
 
+        const nowTs = Date.now();
+
+        // 3b. Stablecoin depeg scan (every loop, cached 60s internally)
+        try {
+            this.lastStablecoinStatus = await this.stablecoinScanner.scan();
+            if (this.lastStablecoinStatus.depeg) {
+                this.log('warn', `Stablecoin depeg detected: spread=${(this.lastStablecoinStatus.spread * 100).toFixed(3)}% direction=${this.lastStablecoinStatus.direction}`);
+            }
+            // Publish to Redis for external consumers
+            if (this.statePublisher) {
+                await this.statePublisher.set(
+                    'solanix:stablecoin',
+                    JSON.stringify(this.lastStablecoinStatus),
+                );
+            }
+        } catch (err: any) {
+            this.log('warn', `Stablecoin scan error: ${err.message}`);
+        }
+
+        // 3c. Token unlock check (every 6 hours)
+        const UNLOCK_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+        if (nowTs - this.lastUnlockCheckTime >= UNLOCK_CHECK_INTERVAL_MS) {
+            this.lastUnlockCheckTime = nowTs;
+            try {
+                this.upcomingUnlocks = await this.unlockMonitor.getUpcoming(7);
+                if (this.upcomingUnlocks.length > 0) {
+                    for (const unlock of this.upcomingUnlocks) {
+                        this.log('info', `Token unlock: ${unlock.symbol} in ${unlock.daysUntil}d — $${(unlock.amountUsd / 1_000_000).toFixed(1)}M (${unlock.percentOfCirculating.toFixed(1)}% circ, severity=${unlock.severity})`);
+                    }
+                }
+            } catch (err: any) {
+                this.log('warn', `Token unlock check error: ${err.message}`);
+            }
+        }
+
         // 4. Risk gate
         const riskCheck = this.riskManager.canTrade(
             this.accountState?.portfolioValue ?? 0,
@@ -260,10 +315,14 @@ export class SolanaAgent extends BaseAgent {
             const exits = this.exitMonitor.check(this.positions, exitConfig);
             for (const exit of exits) {
                 try {
+                    const pos = this.positions.find(p => p.symbol === exit.symbol);
                     await this.brokerClient.closePosition(exit.symbol);
                     this.positionMeta.delete(exit.symbol);
-                    this.riskManager.recordTrade(exit.pnlPct >= 0);
-                    this.log('info', `EXIT ${exit.symbol}: ${exit.reason} (P&L: ${exit.pnlPct >= 0 ? '+' : ''}${exit.pnlPct.toFixed(2)}%)`);
+                    // Track realized P&L in dollars for risk limits
+                    const pnlDollar = pos ? pos.unrealizedPl : 0;
+                    this.riskManager.recordExit(pnlDollar);
+                    this.riskManager.recordTrade(false);
+                    this.log('info', `EXIT ${exit.symbol}: ${exit.reason} (P&L: ${exit.pnlPct >= 0 ? '+' : ''}${exit.pnlPct.toFixed(2)}% / $${pnlDollar.toFixed(2)})`);
                 } catch (e: any) {
                     this.log('error', `Failed to close ${exit.symbol}: ${e.message}`);
                 }
@@ -271,8 +330,6 @@ export class SolanaAgent extends BaseAgent {
         }
 
         if (!riskCheck.canTrade) return;
-
-        const nowTs = Date.now();
 
         // 5. Daily watchlist refresh
         if (this.watchlistCurator?.needsRefresh() && this.signalGenerator) {
@@ -405,9 +462,30 @@ export class SolanaAgent extends BaseAgent {
             // Non-critical, continue without Polymarket data
         }
 
-        // Confidence threshold (after macro + polymarket adjustment)
+        // Stablecoin depeg penalty — market stress indicator
+        if (this.lastStablecoinStatus?.depeg) {
+            adjustedConfidence = Math.max(0, adjustedConfidence - 0.10);
+            this.log('info', `Stablecoin depeg penalty for ${symbol}: -10% (spread=${(this.lastStablecoinStatus.spread * 100).toFixed(3)}%)`);
+        }
+
+        // Token unlock penalty — large upcoming unlocks create sell pressure
+        const unlockEvent = this.upcomingUnlocks.find(
+            u => u.symbol === symbol && u.daysUntil <= 3 && u.severity === 'high',
+        );
+        if (unlockEvent) {
+            adjustedConfidence = Math.max(0, adjustedConfidence - 0.15);
+            this.log('info', `Token unlock penalty for ${symbol}: -15% ($${(unlockEvent.amountUsd / 1_000_000).toFixed(1)}M unlock in ${unlockEvent.daysUntil}d)`);
+        }
+
+        // Confidence threshold (after macro + polymarket + stablecoin + unlock adjustment)
         if (adjustedConfidence < config.risk.min_confidence) {
             this.log('info', `Signal confidence ${adjustedConfidence.toFixed(2)} below threshold (${config.risk.min_confidence}). Skipping ${symbol}.`);
+            return;
+        }
+
+        // Dedup: skip if we already bought this symbol in the current loop iteration
+        if (this.signalsBoughtThisLoop.has(symbol)) {
+            this.log('info', `Already bought ${symbol} this loop — dedup skip.`);
             return;
         }
 
@@ -438,8 +516,10 @@ export class SolanaAgent extends BaseAgent {
                 const victimPnlPct = rotation.victim.avgEntryPrice > 0
                     ? ((rotation.victim.currentPrice - rotation.victim.avgEntryPrice) / rotation.victim.avgEntryPrice) * 100
                     : 0;
-                this.riskManager.recordTrade(victimPnlPct >= 0);
-                this.log('info', `Closed ${rotation.victim.symbol} for rotation (P&L: ${victimPnlPct >= 0 ? '+' : ''}${victimPnlPct.toFixed(2)}%)`);
+                const victimPnlDollar = rotation.victim.unrealizedPl ?? 0;
+                this.riskManager.recordExit(victimPnlDollar);
+                this.riskManager.recordTrade(false);
+                this.log('info', `Closed ${rotation.victim.symbol} for rotation (P&L: ${victimPnlPct >= 0 ? '+' : ''}${victimPnlPct.toFixed(2)}% / $${victimPnlDollar.toFixed(2)})`);
                 // Refresh positions after close
                 const rawPositions = await this.brokerClient.getPositions();
                 this.positions = rawPositions.map((p) => {
@@ -488,6 +568,7 @@ export class SolanaAgent extends BaseAgent {
 
         if (result.success) {
             this.log('info', `Order filled: ${result.orderId} — ${result.status}`);
+            this.signalsBoughtThisLoop.add(symbol);
             this.riskManager.recordTrade(false);
             await this.statePublisher?.addSignal({
                 symbol,
@@ -541,4 +622,13 @@ export class SolanaAgent extends BaseAgent {
         const value = await this.statePublisher.get('solanix:circuit_breaker');
         return value === '1' || value === 'true';
     }
+}
+
+/** ISO week number (1-53) for weekly risk reset. */
+function getISOWeek(): number {
+    const d = new Date();
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 }

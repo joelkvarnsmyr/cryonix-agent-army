@@ -111,6 +111,19 @@ export class StatePublisher {
     }
 
     /**
+     * Write an arbitrary key/value to Redis with the standard TTL.
+     * Errors are swallowed so callers degrade gracefully.
+     */
+    async set(key: string, value: string): Promise<void> {
+        try {
+            await this.ensureConnected();
+            await this.client.send('SET', key, value, 'EX', TTL);
+        } catch (err) {
+            console.error('[StatePublisher] set error:', err);
+        }
+    }
+
+    /**
      * Read an arbitrary key from Redis.
      * Returns null if the key does not exist or if Redis is unavailable.
      */
