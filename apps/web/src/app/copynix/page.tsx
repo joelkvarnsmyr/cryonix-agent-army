@@ -119,8 +119,8 @@ export default function CopynixPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-3">
-                    {w.winRate !== null && (
-                      <span className={`text-xs font-mono ${(w.winRate ?? 0) >= 60 ? 'text-emerald-400' : 'text-muted-foreground/60'}`}>
+                    {w.winRate != null && (
+                      <span className={`text-xs font-mono ${w.winRate >= 60 ? 'text-emerald-400' : 'text-muted-foreground/60'}`}>
                         {w.winRate.toFixed(1)}% WR
                       </span>
                     )}

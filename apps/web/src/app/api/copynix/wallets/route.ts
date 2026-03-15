@@ -80,10 +80,15 @@ export async function GET() {
     console.error('[copynix/wallets] Redis error:', error);
   }
 
-  const enriched = wallets.map(w => ({
-    ...w,
-    stats: walletStats[w.address] ?? null,
-  }));
+  const enriched = wallets.map(w => {
+    const stats = walletStats[w.address] ?? null;
+    return {
+      ...w,
+      winRate: stats?.winRate ?? null,
+      pnl: stats?.pnl ?? null,
+      lastActive: stats?.lastActive ?? null,
+    };
+  });
 
   return NextResponse.json({
     wallets: enriched,
