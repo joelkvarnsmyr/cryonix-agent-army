@@ -19,22 +19,27 @@ export interface PolynixTrade {
 }
 
 export async function GET() {
-  // Trades are stored in the account state as settled history
-  // For now, read from polynix:trades Redis key (set by agent)
   let trades: PolynixTrade[] = [];
-  let lastSignal: any = null;
 
   try {
-    const [tradesRaw, signalRaw] = await Promise.all([
-      redis.get('polynix:trades'),
-      redis.get('polynix:last_signal'),
-    ]);
-
-    if (tradesRaw) {
-      trades = JSON.parse(tradesRaw as string);
-    }
-    if (signalRaw) {
-      try { lastSignal = JSON.parse(signalRaw as string); } catch { /* ignore */ }
+    const raw = await redis.get('polynix:trades');
+    if (raw) {
+      const parsed = JSON.parse(raw as string);
+      // Map agent PolynixPosition[] (settled) to PolynixTrade[]
+      trades = (Array.isArray(parsed) ? parsed : []).map((t: any) => ({
+        id: t.id ?? '',
+        type: t.type ?? 'directional',
+        side: t.side ?? 'YES',
+        marketTitle: t.market?.title ?? t.marketTitle ?? '',
+        asset: t.market?.asset ?? t.asset ?? '',
+        entryPrice: t.entryPrice ?? 0,
+        size: t.size ?? 0,
+        costBasis: t.costBasis ?? 0,
+        pnl: t.pnl ?? 0,
+        status: t.status ?? 'settled',
+        enteredAt: t.enteredAt ?? 0,
+        settledAt: t.expiresAt ?? t.settledAt ?? Date.now(),
+      }));
     }
   } catch (error) {
     console.error('[polynix/trades] Redis error:', error);
@@ -53,6 +58,5 @@ export async function GET() {
       winRate: trades.length > 0 ? wins / trades.length : 0,
       totalPnl,
     },
-    lastSignal,
   });
 }

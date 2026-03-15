@@ -1,34 +1,46 @@
 'use client';
 
+import { useState } from 'react';
 import {
   usePolynixStatus,
-  usePolynixPortfolio,
   usePolynixPositions,
   usePolynixTrades,
 } from '@/hooks/usePolynix';
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout';
 
+// -- Helpers ------------------------------------------------------------------
+
 function timeAgo(ts: number) {
   const diff = Date.now() - ts;
+  if (diff < 0) return 'just now';
   const secs = Math.floor(diff / 1000);
   if (secs < 60) return `${secs}s ago`;
   const mins = Math.floor(secs / 60);
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
-  return `${hrs}h ago`;
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function expiryCountdown(expiresAt: number) {
-  const remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+function expiryLabel(expiresAt: number) {
+  const remaining = Math.max(0, expiresAt - Date.now());
   if (remaining <= 0) return 'EXPIRED';
-  const mins = Math.floor(remaining / 60);
-  const secs = remaining % 60;
-  return `${mins}:${String(secs).padStart(2, '0')}`;
+  const secs = Math.floor(remaining / 1000);
+  if (secs < 3600) return `${Math.floor(secs / 60)}m`;
+  const hrs = Math.floor(secs / 3600);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d`;
+  return `${Math.floor(days / 30)}mo`;
 }
 
-const TYPE_BADGE: Record<string, { label: string; color: string }> = {
-  arb: { label: 'ARB', color: 'text-emerald-400 border-emerald-400/30 bg-emerald-400/5' },
-  directional: { label: 'DIR', color: 'text-blue-400 border-blue-400/30 bg-blue-400/5' },
+function formatDate(ts: number) {
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+const TYPE_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+  arb: { label: 'ARB', color: 'text-emerald-400', bg: 'text-emerald-400 border-emerald-400/30 bg-emerald-400/5' },
+  directional: { label: 'DIR', color: 'text-blue-400', bg: 'text-blue-400 border-blue-400/30 bg-blue-400/5' },
 };
 
 const SIDE_COLOR: Record<string, string> = {
@@ -37,22 +49,30 @@ const SIDE_COLOR: Record<string, string> = {
   BOTH: 'text-amber-400',
 };
 
+// -- Page ---------------------------------------------------------------------
+
 export default function PolynixPage() {
-  const { data: status } = usePolynixStatus(15_000);
-  const { data: portfolio } = usePolynixPortfolio(10_000);
+  const { data: status } = usePolynixStatus(10_000);
   const { positions } = usePolynixPositions(10_000);
-  const { trades, summary, lastSignal } = usePolynixTrades(15_000);
+  const { trades, summary } = usePolynixTrades(15_000);
+
+  const [expandedBet, setExpandedBet] = useState<string | null>(null);
+  const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
 
   const agentRunning = status?.agent?.running ?? false;
   const paperTrading = status?.agent?.paperTrading ?? true;
-  const balance = portfolio?.balance ?? 0;
-  const totalPnl = portfolio?.totalPnl ?? 0;
-  const winRate = portfolio?.winRate ?? 0;
-  const tradesTotal = portfolio?.tradesTotal ?? 0;
-  const wins = portfolio?.wins ?? 0;
-  const losses = portfolio?.losses ?? 0;
+  const account = status?.account;
   const risk = status?.risk;
-  const config = status?.config;
+  const lastSignal = status?.lastSignal;
+
+  const balance = account?.balance ?? 0;
+  const totalPnl = account?.totalPnl ?? 0;
+  const tradesTotal = account?.tradesTotal ?? 0;
+  const wins = account?.wins ?? 0;
+  const losses = account?.losses ?? 0;
+  const winRate = account?.winRate ?? 0;
+  const startingBalance = 500;
+  const deployed = startingBalance - balance + totalPnl;
 
   return (
     <DashboardLayout>
@@ -61,7 +81,7 @@ export default function PolynixPage() {
         {/* Status bar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <span className="text-xs font-mono font-semibold text-orange-400">POLYMARKET</span>
+            <span className="text-xs font-mono font-semibold text-orange-400">POLYNIX</span>
             {paperTrading && (
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/5 text-amber-400">
                 PAPER
@@ -87,26 +107,35 @@ export default function PolynixPage() {
           <div className="text-3xl font-bold tracking-tight text-orange-400">
             ${balance.toFixed(2)}
           </div>
-          <div className="mt-1 flex items-center justify-center gap-3 text-sm">
+          <div className="mt-1 flex items-center justify-center gap-4 text-sm">
             <span className={totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-              {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} total P&L
+              {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} realized
+            </span>
+            <span className="text-muted-foreground/60">
+              ${deployed.toFixed(2)} deployed
             </span>
           </div>
-          <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-muted-foreground">
+          <div className="mt-3 grid grid-cols-5 gap-2 text-xs text-muted-foreground">
             <div className="rounded-lg bg-white/[0.03] p-2">
-              <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">TRADES</div>
+              <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">OPEN</div>
+              <div className="font-mono text-foreground">{positions.length}</div>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] p-2">
+              <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">SETTLED</div>
               <div className="font-mono text-foreground">{tradesTotal}</div>
             </div>
             <div className="rounded-lg bg-white/[0.03] p-2">
               <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">WIN RATE</div>
-              <div className={`font-mono ${winRate >= 50 ? 'text-emerald-400' : 'text-amber-400'}`}>{winRate.toFixed(0)}%</div>
+              <div className={`font-mono ${winRate >= 50 ? 'text-emerald-400' : winRate > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>
+                {tradesTotal > 0 ? `${winRate.toFixed(0)}%` : '-'}
+              </div>
             </div>
             <div className="rounded-lg bg-white/[0.03] p-2">
               <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">W / L</div>
               <div className="font-mono text-foreground">{wins}/{losses}</div>
             </div>
             <div className="rounded-lg bg-white/[0.03] p-2">
-              <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">DAILY P&L</div>
+              <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">DAILY</div>
               <div className={`font-mono ${(risk?.dailyPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {(risk?.dailyPnl ?? 0) >= 0 ? '+' : ''}${(risk?.dailyPnl ?? 0).toFixed(2)}
               </div>
@@ -114,18 +143,32 @@ export default function PolynixPage() {
           </div>
         </div>
 
-        {/* Config summary */}
-        {config && (
-          <div className="flex items-center justify-center gap-5 text-[10px] font-mono text-muted-foreground/40">
-            <span>Arb &lt; {config.arbThreshold}</span>
-            <span>Edge &gt; {config.minEdgePct}%</span>
-            <span>Fee {(config.feeRate * 100).toFixed(2)}%</span>
-            <span>Max ${config.maxBetSize}</span>
-            <span>Slots {config.maxPositions}</span>
+        {/* Last signal */}
+        {lastSignal && (
+          <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-3">
+            <div className="flex items-center justify-between text-xs font-mono">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground/50">LAST</span>
+                <span className={`px-1 rounded border text-[10px] ${TYPE_BADGE[lastSignal.type]?.bg ?? ''}`}>
+                  {lastSignal.type?.toUpperCase()}
+                </span>
+                <span className={SIDE_COLOR[lastSignal.direction] ?? 'text-foreground'}>
+                  {lastSignal.direction}
+                </span>
+                <span className="text-muted-foreground/50">edge {lastSignal.edge}%</span>
+              </div>
+              <div className="flex items-center gap-2 text-muted-foreground/50">
+                <span className={lastSignal.executed ? 'text-emerald-400' : 'text-muted-foreground/40'}>
+                  {lastSignal.executed ? 'filled' : 'skipped'}
+                </span>
+                <span>{lastSignal.timestamp ? timeAgo(lastSignal.timestamp) : ''}</span>
+              </div>
+            </div>
+            <div className="text-[10px] text-muted-foreground/40 mt-0.5 truncate">{lastSignal.market}</div>
           </div>
         )}
 
-        {/* Open positions */}
+        {/* Open bets */}
         <div>
           <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest mb-2">
             OPEN BETS {positions.length > 0 && `(${positions.length})`}
@@ -135,39 +178,96 @@ export default function PolynixPage() {
               <div className="text-sm text-muted-foreground/40">No open bets</div>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {positions.map(pos => {
                 const badge = TYPE_BADGE[pos.type] ?? TYPE_BADGE.directional;
                 const sideColor = SIDE_COLOR[pos.side] ?? 'text-foreground';
+                const isExpanded = expandedBet === pos.id;
+
                 return (
-                  <div key={pos.id} className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
-                    <div className="flex items-start justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${badge.color}`}>
+                  <div
+                    key={pos.id}
+                    className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm cursor-pointer transition-colors hover:border-white/[0.12]"
+                    onClick={() => setExpandedBet(isExpanded ? null : pos.id)}
+                  >
+                    {/* Compact row */}
+                    <div className="flex items-center justify-between px-4 py-2.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border shrink-0 ${badge.bg}`}>
                           {badge.label}
                         </span>
-                        <span className={`font-mono text-sm font-semibold ${sideColor}`}>
+                        <span className={`font-mono text-sm font-semibold shrink-0 ${sideColor}`}>
                           {pos.side}
                         </span>
-                        <span className="text-xs text-muted-foreground/60 font-mono">
-                          {pos.market?.asset}
+                        <span className="text-xs text-muted-foreground/50 truncate">
+                          {pos.market?.title}
                         </span>
                       </div>
-                      <div className="text-right">
-                        <div className="font-mono text-sm font-bold text-amber-400">
-                          {expiryCountdown(pos.expiresAt)}
-                        </div>
+                      <div className="flex items-center gap-3 shrink-0 ml-2">
+                        <span className="font-mono text-xs text-muted-foreground">
+                          ${pos.costBasis.toFixed(2)}
+                        </span>
+                        <span className="font-mono text-xs text-amber-400 w-10 text-right">
+                          {expiryLabel(pos.expiresAt)}
+                        </span>
                       </div>
                     </div>
-                    <div className="text-xs text-muted-foreground/60 mb-1.5 truncate">{pos.market?.title}</div>
-                    <div className="flex items-center justify-between text-xs font-mono text-muted-foreground">
-                      <span>
-                        Entry ${pos.entryPrice.toFixed(4)} · {pos.size.toFixed(1)} contracts
-                      </span>
-                      <span className="text-muted-foreground/50">
-                        Cost ${pos.costBasis.toFixed(2)}
-                      </span>
-                    </div>
+
+                    {/* Expanded detail */}
+                    {isExpanded && (
+                      <div className="border-t border-white/[0.04] px-4 py-3 space-y-2">
+                        <div className="text-xs text-muted-foreground/70 break-words">{pos.market?.title}</div>
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs font-mono">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Type</span>
+                            <span className={badge.color}>{pos.type}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Side</span>
+                            <span className={sideColor}>{pos.side}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Asset</span>
+                            <span className="text-foreground">{pos.market?.asset ?? '-'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Entry price</span>
+                            <span className="text-foreground">${pos.entryPrice.toFixed(4)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Contracts</span>
+                            <span className="text-foreground">{pos.size.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Cost basis</span>
+                            <span className="text-foreground">${pos.costBasis.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Max payout</span>
+                            <span className="text-emerald-400">${(pos.type === 'arb' ? pos.size : pos.size).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Max profit</span>
+                            <span className="text-emerald-400">
+                              +${(pos.type === 'arb' ? pos.size - pos.costBasis : pos.size - pos.costBasis).toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Entered</span>
+                            <span className="text-foreground">{formatDate(pos.enteredAt)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Expires</span>
+                            <span className="text-amber-400">{formatDate(pos.expiresAt)}</span>
+                          </div>
+                        </div>
+                        {pos.type === 'arb' && (
+                          <div className="text-[10px] text-emerald-400/60 pt-1">
+                            Arb: guaranteed payout regardless of outcome (YES+NO both purchased)
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -175,7 +275,7 @@ export default function PolynixPage() {
           )}
         </div>
 
-        {/* Recent trades */}
+        {/* Settled bets */}
         <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
           <div className="flex items-center justify-between mb-2.5">
             <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest">SETTLED BETS</div>
@@ -195,29 +295,74 @@ export default function PolynixPage() {
           {trades.length === 0 ? (
             <div className="text-sm text-muted-foreground/40">No settled bets yet</div>
           ) : (
-            <div className="space-y-1.5">
-              {trades.slice(0, 10).map((t) => {
+            <div className="space-y-1">
+              {trades.slice(0, 15).map((t) => {
                 const badge = TYPE_BADGE[t.type] ?? TYPE_BADGE.directional;
                 const won = t.pnl >= 0;
+                const isExpanded = expandedTrade === t.id;
+
                 return (
-                  <div key={t.id} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[10px] font-mono px-1 rounded border ${badge.color}`}>
-                        {badge.label}
-                      </span>
-                      <span className={`font-mono text-xs ${SIDE_COLOR[t.side] ?? 'text-foreground'}`}>
-                        {t.side}
-                      </span>
-                      <span className="font-mono text-xs text-foreground/60">{t.asset}</span>
+                  <div key={t.id}>
+                    <div
+                      className="flex items-center justify-between py-1 cursor-pointer hover:bg-white/[0.02] rounded px-1 -mx-1"
+                      onClick={() => setExpandedTrade(isExpanded ? null : t.id)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-mono px-1 rounded border ${badge.bg}`}>
+                          {badge.label}
+                        </span>
+                        <span className={`font-mono text-xs ${SIDE_COLOR[t.side] ?? 'text-foreground'}`}>
+                          {t.side}
+                        </span>
+                        <span className="font-mono text-xs text-foreground/50 truncate max-w-[180px]">
+                          {t.asset || t.marketTitle?.slice(0, 25)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`text-xs font-mono font-semibold ${won ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {won ? '+' : ''}${t.pnl.toFixed(2)}
+                        </span>
+                        <span className="text-[10px] font-mono text-muted-foreground/40 w-12 text-right">
+                          {timeAgo(t.settledAt)}
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className={`text-xs font-mono font-semibold ${won ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {won ? '+' : ''}${t.pnl.toFixed(2)}
-                      </span>
-                      <span className="text-[10px] font-mono text-muted-foreground/40 w-12 text-right">
-                        {timeAgo(t.settledAt)}
-                      </span>
-                    </div>
+
+                    {isExpanded && (
+                      <div className="bg-white/[0.02] rounded-lg px-3 py-2 mb-1 text-xs font-mono">
+                        <div className="text-muted-foreground/60 mb-1.5 break-words">{t.marketTitle}</div>
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Entry</span>
+                            <span>${t.entryPrice.toFixed(4)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Cost</span>
+                            <span>${t.costBasis.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Size</span>
+                            <span>{t.size.toFixed(2)} contracts</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Result</span>
+                            <span className={won ? 'text-emerald-400' : 'text-red-400'}>
+                              {t.status.toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">P&L</span>
+                            <span className={won ? 'text-emerald-400' : 'text-red-400'}>
+                              {won ? '+' : ''}${t.pnl.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground/50">Settled</span>
+                            <span>{formatDate(t.settledAt)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -225,34 +370,11 @@ export default function PolynixPage() {
           )}
         </div>
 
-        {/* Last signal */}
-        {lastSignal && (
-          <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-3">
-            <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest mb-1">LAST SIGNAL</div>
-            <div className="flex items-center justify-between text-xs font-mono">
-              <div className="flex items-center gap-2">
-                <span className={`px-1 rounded border ${TYPE_BADGE[lastSignal.type]?.color ?? 'text-foreground'}`}>
-                  {lastSignal.type?.toUpperCase()}
-                </span>
-                <span className={SIDE_COLOR[lastSignal.direction] ?? 'text-foreground'}>
-                  {lastSignal.direction}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-muted-foreground/60">
-                <span>edge {lastSignal.edge}%</span>
-                <span>{lastSignal.executed ? 'executed' : 'skipped'}</span>
-                <span>{lastSignal.timestamp ? timeAgo(lastSignal.timestamp) : ''}</span>
-              </div>
-            </div>
-            <div className="text-[10px] text-muted-foreground/40 mt-0.5 truncate">{lastSignal.market}</div>
-          </div>
-        )}
-
-        {/* Risk state footer */}
+        {/* Risk footer */}
         {risk && (
           <div className="flex items-center justify-center gap-5 py-1 text-[10px] font-mono text-muted-foreground/40">
-            <span>Losses streak: {risk.consecutiveLosses}</span>
-            <span>Daily: {risk.dailyPnl >= 0 ? '+' : ''}${risk.dailyPnl.toFixed(2)}</span>
+            <span>Loss streak: {risk.consecutiveLosses}</span>
+            <span>Daily P&L: {risk.dailyPnl >= 0 ? '+' : ''}${risk.dailyPnl.toFixed(2)}</span>
             <span>Reset: {risk.lastResetDate}</span>
           </div>
         )}

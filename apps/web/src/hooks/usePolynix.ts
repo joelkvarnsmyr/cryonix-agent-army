@@ -7,20 +7,6 @@ import type { PolynixTrade } from '@/app/api/polynix/trades/route';
 
 // -- Status -------------------------------------------------------------------
 
-interface PolynixAgentStatus {
-  running: boolean;
-  paperTrading: boolean;
-  lastPoll: string | null;
-}
-
-interface PolynixConfigInfo {
-  arbThreshold: number;
-  minEdgePct: number;
-  feeRate: number;
-  maxBetSize: number;
-  maxPositions: number;
-}
-
 interface PolynixRisk {
   dailyPnl: number;
   consecutiveLosses: number;
@@ -30,46 +16,20 @@ interface PolynixRisk {
 
 interface PolynixStatus {
   status: string | null;
-  agent: PolynixAgentStatus;
-  config: PolynixConfigInfo;
+  agent: { running: boolean; paperTrading: boolean };
   account: PolynixAccount | null;
   risk: PolynixRisk | null;
+  lastSignal: any;
   timestamp: string;
 }
 
-export function usePolynixStatus(refreshInterval = 15_000) {
+export function usePolynixStatus(refreshInterval = 10_000) {
   const [data, setData] = useState<PolynixStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetch_ = useCallback(async () => {
     try {
       const res = await fetch('/api/polynix/status');
-      if (!res.ok) { setError(`HTTP ${res.status}`); return; }
-      setData(await res.json());
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    fetch_();
-    const id = setInterval(fetch_, refreshInterval);
-    return () => clearInterval(id);
-  }, [fetch_, refreshInterval]);
-
-  return { data, error };
-}
-
-// -- Portfolio ----------------------------------------------------------------
-
-export function usePolynixPortfolio(refreshInterval = 10_000) {
-  const [data, setData] = useState<PolynixAccount | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetch_ = useCallback(async () => {
-    try {
-      const res = await fetch('/api/polynix/portfolio');
       if (!res.ok) { setError(`HTTP ${res.status}`); return; }
       setData(await res.json());
       setError(null);
@@ -127,7 +87,6 @@ interface TradesSummary {
 export function usePolynixTrades(refreshInterval = 15_000) {
   const [trades, setTrades] = useState<PolynixTrade[]>([]);
   const [summary, setSummary] = useState<TradesSummary>({ total: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 });
-  const [lastSignal, setLastSignal] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetch_ = useCallback(async () => {
@@ -137,7 +96,6 @@ export function usePolynixTrades(refreshInterval = 15_000) {
       const json = await res.json();
       setTrades(json.trades ?? []);
       setSummary(json.summary ?? { total: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 });
-      setLastSignal(json.lastSignal ?? null);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -150,5 +108,5 @@ export function usePolynixTrades(refreshInterval = 15_000) {
     return () => clearInterval(id);
   }, [fetch_, refreshInterval]);
 
-  return { trades, summary, lastSignal, error };
+  return { trades, summary, error };
 }
