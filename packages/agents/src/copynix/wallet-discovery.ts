@@ -4,6 +4,7 @@ import {
     fetchTrendingGeckoTerminal,
     fetchTrendingDexScreener,
     fetchTopTradersDexCheck,
+    fetchTopWalletsDune,
     type TrendingToken,
     type TopTrader,
 } from './sources';
@@ -56,16 +57,17 @@ export class WalletDiscovery {
 
         console.log(`[WalletDiscovery] Starting multi-source discovery (${slotsAvailable} slots available)...`);
 
-        // Run sources in parallel
-        const [dexCheckWallets, trendingWallets] = await Promise.all([
+        // Run all sources in parallel
+        const [dexCheckWallets, duneWallets, trendingWallets] = await Promise.all([
             this.discoverViaDexCheck(),
+            this.discoverViaDune(),
             this.discoverViaTrending(),
         ]);
 
         // Merge candidates, dedup by address
         const merged = new Map<string, CandidateWallet>();
 
-        for (const w of [...dexCheckWallets, ...trendingWallets]) {
+        for (const w of [...dexCheckWallets, ...duneWallets, ...trendingWallets]) {
             if (this.existing.has(w.address)) continue;
             // Prefer DexCheck data (has real PnL) over trending estimates
             if (!merged.has(w.address) || w.source === 'dexcheck') {
@@ -73,7 +75,7 @@ export class WalletDiscovery {
             }
         }
 
-        console.log(`[WalletDiscovery] ${merged.size} unique candidates (DexCheck: ${dexCheckWallets.length}, Trending: ${trendingWallets.length})`);
+        console.log(`[WalletDiscovery] ${merged.size} unique candidates (DexCheck: ${dexCheckWallets.length}, Dune: ${duneWallets.length}, Trending: ${trendingWallets.length})`);
 
         if (merged.size === 0) {
             console.log('[WalletDiscovery] No candidates found from any source');
@@ -135,7 +137,27 @@ export class WalletDiscovery {
         }
     }
 
-    // ── Source B: Trending tokens → early buyer analysis ─────────────
+    // ── Source B: Dune Analytics public dashboards ────────────────────
+
+    private async discoverViaDune(): Promise<CandidateWallet[]> {
+        try {
+            const wallets = await fetchTopWalletsDune();
+            return wallets.map(w => ({
+                address: w.walletAddress,
+                trades: w.tradeCount,
+                wins: Math.round(w.tradeCount * (w.winRate / 100)),
+                totalPnlUsd: w.totalPnlUsd,
+                winRate: w.winRate,
+                lastSeen: Date.now(),
+                source: 'dune',
+            }));
+        } catch (err) {
+            console.warn(`[WalletDiscovery] Dune error: ${err instanceof Error ? err.message : String(err)}`);
+            return [];
+        }
+    }
+
+    // ── Source C: Trending tokens → early buyer analysis ─────────────
 
     private async discoverViaTrending(): Promise<CandidateWallet[]> {
         // Try GeckoTerminal first, fallback to DexScreener

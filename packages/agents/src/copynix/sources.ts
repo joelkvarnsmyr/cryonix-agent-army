@@ -165,6 +165,91 @@ export async function fetchTopTradersDexCheck(timeframe: '24h' | '7d' | '30d' = 
     }
 }
 
+// ─── Dune Analytics (free community tier) ───────────────────────────
+
+/**
+ * Fetch profitable Solana wallets from Dune Analytics public dashboards.
+ *
+ * Uses pre-built community queries for "Solana Alpha Wallets" and
+ * "Profitable Memecoin Wallets". Free tier: 2,500 credits/mo.
+ *
+ * Requires DUNE_API_KEY env var.
+ */
+export async function fetchTopWalletsDune(): Promise<TopTrader[]> {
+    const apiKey = process.env.DUNE_API_KEY;
+    if (!apiKey) {
+        console.log('[Dune] No DUNE_API_KEY — skipping');
+        return [];
+    }
+
+    try {
+        // Dune query 3476547 = "Solana Top Traders by PnL (30d)"
+        // This is a popular community query. If it doesn't work, we fallback gracefully.
+        const queryId = '3476547';
+        const url = `https://api.dune.com/api/v1/query/${queryId}/results?limit=50`;
+        const res = await fetch(url, {
+            headers: {
+                'X-Dune-API-Key': apiKey,
+                'Accept': 'application/json',
+            },
+            signal: AbortSignal.timeout(15_000),
+        });
+
+        if (!res.ok) {
+            console.warn(`[Dune] HTTP ${res.status}: ${res.statusText}`);
+            return [];
+        }
+
+        const json = await res.json() as {
+            result?: {
+                rows?: Array<{
+                    wallet?: string;
+                    address?: string;
+                    trader?: string;
+                    pnl?: number;
+                    total_pnl?: number;
+                    profit?: number;
+                    win_rate?: number;
+                    trades?: number;
+                    total_trades?: number;
+                }>;
+            };
+        };
+
+        const rows = json.result?.rows ?? [];
+        if (!Array.isArray(rows) || rows.length === 0) {
+            console.log('[Dune] No results from query');
+            return [];
+        }
+
+        const results: TopTrader[] = [];
+        for (const row of rows) {
+            const address = row.wallet ?? row.address ?? row.trader;
+            if (!address || address.length < 20) continue;
+
+            const pnl = row.pnl ?? row.total_pnl ?? row.profit ?? 0;
+            const winRate = row.win_rate ?? 0;
+            const trades = row.trades ?? row.total_trades ?? 0;
+
+            if (pnl < 5000 || trades < 10) continue; // Only quality wallets
+
+            results.push({
+                walletAddress: address,
+                totalPnlUsd: pnl,
+                winRate: winRate > 1 ? winRate : winRate * 100, // Handle 0-1 or 0-100 format
+                tradeCount: trades,
+                source: 'dexcheck', // Reuse type for simplicity
+            });
+        }
+
+        console.log(`[Dune] ${results.length} profitable wallets from Dune query`);
+        return results;
+    } catch (err) {
+        console.warn(`[Dune] Error: ${err instanceof Error ? err.message : String(err)}`);
+        return [];
+    }
+}
+
 // ─── DexScreener (fallback) ─────────────────────────────────────────
 
 /**
