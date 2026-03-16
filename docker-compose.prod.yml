@@ -239,6 +239,7 @@ services:
     environment:
       - NODE_ENV=production
       - KV_URL=redis://redis:6379
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
       - ALPACA_PAPER_API_KEY=${ALPACA_PAPER_API_KEY}
       - ALPACA_PAPER_API_SECRET=${ALPACA_PAPER_API_SECRET}
       - ALPACA_API_KEY=${ALPACA_API_KEY:-}
@@ -248,6 +249,8 @@ services:
       - cryonix-net
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       web:
         condition: service_healthy
