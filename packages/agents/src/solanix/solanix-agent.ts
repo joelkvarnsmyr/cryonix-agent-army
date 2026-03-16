@@ -329,6 +329,10 @@ export class SolanaAgent extends BaseAgent {
             }
         }
 
+        // Always publish state (even when risk gate blocks new trades)
+        // so the dashboard stays alive and Redis keys don't expire.
+        await this.publishState();
+
         if (!riskCheck.canTrade) return;
 
         // 5. Daily watchlist refresh
