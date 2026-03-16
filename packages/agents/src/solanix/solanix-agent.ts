@@ -16,6 +16,7 @@ import { trySmartRotation } from './smart-rotation';
 import { loadSolanixConfig } from './config';
 import { PolymarketIntelligence } from '../shared/polymarket-intelligence';
 import { SolanixPersistence } from './persistence';
+import { BayesianLearner } from './bayesian-learner';
 import type { SolanaPosition, SolanaAccountState } from './types';
 
 export class SolanaAgent extends BaseAgent {
@@ -33,6 +34,7 @@ export class SolanaAgent extends BaseAgent {
     private unlockMonitor = new TokenUnlockMonitor();
     private riskManager = new RiskManager();
     private persistence = new SolanixPersistence();
+    private bayesian = new BayesianLearner();
     /** Maps symbol -> DB position ID for open positions */
     private positionDbIds = new Map<string, number>();
 
@@ -134,6 +136,17 @@ export class SolanaAgent extends BaseAgent {
                     });
                 }
                 this.log('info', `Restored ${saved.length} position(s) from DB: ${saved.map(p => p.symbol).join(', ')}`);
+            }
+        }
+
+        // Bayesian self-learning (reads closed trades to adjust confidence)
+        const bayesOk = await this.bayesian.connect();
+        if (bayesOk) {
+            const summary = this.bayesian.getSummary();
+            if (summary.includes('n=0')) {
+                this.log('info', 'Bayesian learner initialized — no closed trades yet, using priors');
+            } else {
+                this.log('info', `Bayesian learner initialized:\n${summary}`);
             }
         }
 
@@ -471,7 +484,7 @@ export class SolanaAgent extends BaseAgent {
         }
 
         const config = this.tomlConfig;
-        const { symbol, action, confidence, reasoning, currentPrice } = payload;
+        const { symbol, action, confidence, reasoning, currentPrice, source } = payload;
 
         // BUY-only for now (spot long only)
         if (action !== 'BUY') {
@@ -519,7 +532,23 @@ export class SolanaAgent extends BaseAgent {
             this.log('info', `Token unlock penalty for ${symbol}: -15% ($${(unlockEvent.amountUsd / 1_000_000).toFixed(1)}M unlock in ${unlockEvent.daysUntil}d)`);
         }
 
-        // Confidence threshold (after macro + polymarket + stablecoin + unlock adjustment)
+        // Bayesian self-learning adjustment (based on historical trade outcomes)
+        await this.bayesian.maybeRefresh();
+        const bayesResult = this.bayesian.adjustConfidence(adjustedConfidence, {
+            symbol,
+            source: (source as any) ?? 'ta',
+            confidence: adjustedConfidence,
+            hourUtc: new Date().getUTCHours(),
+        });
+        if (bayesResult.factors.length > 0 && !bayesResult.factors[0].includes('insufficient')) {
+            const delta = bayesResult.adjusted - adjustedConfidence;
+            if (Math.abs(delta) > 0.01) {
+                this.log('info', `[bayes] ${symbol}: ${adjustedConfidence.toFixed(2)} → ${bayesResult.adjusted.toFixed(2)} (${bayesResult.factors.join(', ')})`);
+            }
+            adjustedConfidence = bayesResult.adjusted;
+        }
+
+        // Confidence threshold (after macro + polymarket + stablecoin + unlock + Bayesian adjustment)
         if (adjustedConfidence < config.risk.min_confidence) {
             this.log('info', `Signal confidence ${adjustedConfidence.toFixed(2)} below threshold (${config.risk.min_confidence}). Skipping ${symbol}.`);
             return;
@@ -604,7 +633,7 @@ export class SolanaAgent extends BaseAgent {
         const usdcToSpend = PositionSizer.calc(
             currentPrice ?? 0,
             this.accountState.usdcBalance,
-            config.capital,
+            { ...config.capital, max_single_position_pct: 1.0 },
         ) * (currentPrice ?? 0); // PositionSizer returns fractional qty; convert back to dollars
 
         if (usdcToSpend <= 0) {
@@ -689,7 +718,7 @@ export class SolanaAgent extends BaseAgent {
                 id: this.positionDbIds.get(p.symbol)!,
                 currentPrice: p.currentPrice,
                 highWatermark: p.highWatermark,
-                trailingStopActive: p.trailingStopActive,
+                trailingStopActive: p.trailingStopActive ?? false,
             }));
         if (priceUpdates.length > 0) {
             await this.persistence.syncPrices(priceUpdates);
