@@ -4,8 +4,10 @@ import {
   useCopynixStatus,
   useCopynixPositions,
   useCopynixWallets,
+  useCopynixTrades,
 } from '@/hooks/useCopynix';
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 function timeAgo(ts: string | number) {
   const diff = Date.now() - (typeof ts === 'string' ? new Date(ts).getTime() : ts);
@@ -35,6 +37,7 @@ export default function CopynixPage() {
   const { data: status }    = useCopynixStatus(10_000);
   const { positions }       = useCopynixPositions(10_000);
   const { wallets }         = useCopynixWallets(60_000);
+  const { trades, summary, equityCurve } = useCopynixTrades(50, 30_000);
 
   const isLoading      = status === null;
   const agentRunning   = status?.status === 'running';
@@ -207,10 +210,88 @@ export default function CopynixPage() {
           )}
         </div>
 
-        {/* Recent activity — placeholder using status data */}
+        {/* Equity curve */}
+        {equityCurve.length > 1 && (
+          <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
+            <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest mb-2.5">CUMULATIVE P&L</div>
+            <ResponsiveContainer width="100%" height={120}>
+              <AreaChart data={equityCurve}>
+                <defs>
+                  <linearGradient id="copynixPnlGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={equityCurve[equityCurve.length - 1]?.cumulativePnl >= 0 ? '#34d399' : '#f87171'} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={equityCurve[equityCurve.length - 1]?.cumulativePnl >= 0 ? '#34d399' : '#f87171'} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="timestamp" hide />
+                <YAxis hide domain={['auto', 'auto']} />
+                <Tooltip
+                  contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }}
+                  formatter={(v: number) => [`$${v.toFixed(2)}`, 'P&L']}
+                  labelFormatter={(l: string) => new Date(l).toLocaleDateString()}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="cumulativePnl"
+                  stroke={equityCurve[equityCurve.length - 1]?.cumulativePnl >= 0 ? '#34d399' : '#f87171'}
+                  fill="url(#copynixPnlGrad)"
+                  strokeWidth={1.5}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Recent trades */}
         <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
-          <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest mb-2.5">RECENT ACTIVITY</div>
-          <div className="text-sm text-muted-foreground/40">Trade log will populate once the agent executes trades</div>
+          <div className="flex items-center justify-between mb-2.5">
+            <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest">RECENT TRADES</div>
+            {summary.totalTrades > 0 && (
+              <div className="flex gap-3 text-xs text-muted-foreground">
+                <span>WR <span className={summary.winRate >= 0.5 ? 'text-emerald-400' : 'text-amber-400'}>
+                  {(summary.winRate * 100).toFixed(0)}%
+                </span></span>
+                <span className={summary.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                  {summary.totalPnl >= 0 ? '+' : ''}${summary.totalPnl.toFixed(2)}
+                </span>
+              </div>
+            )}
+          </div>
+          {trades.length === 0 ? (
+            <div className="text-sm text-muted-foreground/40">No trades yet — waiting for consensus signals</div>
+          ) : (
+            <div className="space-y-1.5">
+              {trades.slice(0, 10).map((t) => (
+                <div key={`${t.id}-${t.timestamp}`} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`font-mono text-xs w-8 ${t.side === 'BUY' ? 'text-emerald-400' : 'text-violet-400'}`}>
+                      {t.side}
+                    </span>
+                    <span className="font-mono text-xs text-foreground/80 w-16 truncate">{t.symbol}</span>
+                    {t.consensusLevel && (
+                      <span className={`text-[9px] font-mono px-1 py-0.5 rounded border ${CONSENSUS_COLOR[t.consensusLevel] ?? CONSENSUS_COLOR.single}`}>
+                        {t.consensusLevel.toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {t.side === 'SELL' && t.realizedPnl != null && (
+                      <span className={`text-xs font-mono ${t.realizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {t.realizedPnl >= 0 ? '+' : ''}${t.realizedPnl.toFixed(2)}
+                      </span>
+                    )}
+                    {t.side === 'BUY' && t.dollarAmount != null && (
+                      <span className="text-xs font-mono text-muted-foreground/50">
+                        ${t.dollarAmount.toFixed(0)}
+                      </span>
+                    )}
+                    <span className="text-[10px] font-mono text-muted-foreground/40 w-14 text-right">
+                      {timeAgo(t.timestamp)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
       </div>

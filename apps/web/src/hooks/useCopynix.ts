@@ -45,13 +45,33 @@ export interface CopynixWallet {
 }
 
 export interface CopynixTrade {
+  id: number;
   timestamp: string;
   symbol: string;
-  action: 'BUY' | 'SELL';
-  price: number;
-  qty: number;
-  pnl: number | null;
-  reason: string;
+  mint: string;
+  side: 'BUY' | 'SELL';
+  qty: number | null;
+  entryPrice: number | null;
+  exitPrice: number | null;
+  dollarAmount: number | null;
+  realizedPnl: number | null;
+  consensusLevel: string | null;
+  walletCount: number | null;
+  confidence: number | null;
+  exitReason: string | null;
+}
+
+export interface CopynixTradesSummary {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  totalPnl: number;
+}
+
+export interface CopynixEquityPoint {
+  timestamp: string;
+  cumulativePnl: number;
 }
 
 // ── Status ───────────────────────────────────────────────────────────────────
@@ -131,6 +151,37 @@ export function useCopynixPositions(refreshInterval = 10_000) {
   }, [fetch_, refreshInterval]);
 
   return { positions, error };
+}
+
+// ── Trades ───────────────────────────────────────────────────────────────────
+
+export function useCopynixTrades(limit = 50, refreshInterval = 30_000) {
+  const [trades, setTrades] = useState<CopynixTrade[]>([]);
+  const [summary, setSummary] = useState<CopynixTradesSummary>({ totalTrades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 });
+  const [equityCurve, setEquityCurve] = useState<CopynixEquityPoint[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetch_ = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/copynix/trades?limit=${limit}`);
+      if (!res.ok) { setError(`HTTP ${res.status}`); return; }
+      const json = await res.json();
+      setTrades(json.trades ?? []);
+      setSummary(json.summary ?? { totalTrades: 0, wins: 0, losses: 0, winRate: 0, totalPnl: 0 });
+      setEquityCurve(json.equityCurve ?? []);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [limit]);
+
+  useEffect(() => {
+    fetch_();
+    const id = setInterval(fetch_, refreshInterval);
+    return () => clearInterval(id);
+  }, [fetch_, refreshInterval]);
+
+  return { trades, summary, equityCurve, error };
 }
 
 // ── Wallets ──────────────────────────────────────────────────────────────────
