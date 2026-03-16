@@ -157,7 +157,7 @@ class VedicBTDTrader:
         }
         await self.redis.set("vedic_btd:stats", json.dumps(stats), ex=REDIS_TTL)
 
-    # ── Price Fetching ────────────────────────────────────────────
+    # ── Price Fetching + RSI ─────────────────────────────────────
     async def fetch_prices(self, symbols: List[str]) -> Dict[str, float]:
         try:
             import ccxt.async_support as ccxt_async
@@ -174,6 +174,40 @@ class VedicBTDTrader:
         except Exception as e:
             print(f"[{self.name}] Price fetch failed: {e}")
             return {}
+
+    async def fetch_rsi(self, symbol: str, period: int = 14) -> Optional[float]:
+        """Fetch RSI(14) for a symbol using daily closes.
+
+        Research: RSI<50 at BTD entry improves 60d return from +26.8% to +33.7%.
+        Filters out entries where price has already recovered too much.
+        """
+        try:
+            import ccxt.async_support as ccxt_async
+            exchange = ccxt_async.binance({"enableRateLimit": True})
+            pair = f"{symbol}/USDC"
+            candles = await exchange.fetch_ohlcv(pair, "1d", limit=period + 5)
+            await exchange.close()
+
+            if len(candles) < period + 1:
+                return None
+
+            closes = [c[4] for c in candles]
+            deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+
+            gains = [d if d > 0 else 0 for d in deltas[-period:]]
+            losses = [-d if d < 0 else 0 for d in deltas[-period:]]
+
+            avg_gain = sum(gains) / period
+            avg_loss = sum(losses) / period
+
+            if avg_loss == 0:
+                return 100.0
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+            return round(rsi, 1)
+        except Exception as e:
+            print(f"[{self.name}] RSI fetch failed for {symbol}: {e}")
+            return None
 
     # ── State Machine ─────────────────────────────────────────────
     def update_state_machine(self, venus_rx: bool, merc_rx: bool):
@@ -220,15 +254,25 @@ class VedicBTDTrader:
                 print(f"[{self.name}] Cooldown complete — back to WAITING")
 
     # ── Trading Logic ─────────────────────────────────────────────
-    def should_buy(self, symbol: str, vedic_score, merc_rx: bool) -> Tuple[bool, str]:
-        """BTD buy logic — only during ACTIVE phase."""
+    def should_buy(self, symbol: str, vedic_score, merc_rx: bool,
+                   rsi: Optional[float] = None) -> Tuple[bool, str]:
+        """BTD buy logic — ACTIVE phase + RSI<50 filter.
+
+        Research: RSI<50 filter improves 60d return from +26.8% to +33.7%.
+        Filters out entries where price has already recovered too much.
+        RSI 40-60 is the sweet spot — extreme oversold (<30) is actually worse.
+        """
         if self.state.phase != "ACTIVE":
             return False, f"Not in ACTIVE phase (current: {self.state.phase})"
 
         # KEY FILTER: Skip if Mercury is also retrograde
-        # Research: only losing BTD period was 2018-10 when both Venus+Mercury Rx
         if merc_rx:
             return False, "Mercury Rx — skip BTD (2018-10 lesson)"
+
+        # RSI FILTER: Only enter when RSI < 50 (moderately recovering)
+        # Research: RSI<50 = +33.7% avg 60d, RSI>50 = already rallied too much
+        if rsi is not None and rsi >= 50:
+            return False, f"RSI={rsi:.0f} >= 50 — price already recovered, wait"
 
         day = self.state.days_since_direct
         reasons = [
@@ -236,6 +280,8 @@ class VedicBTDTrader:
             f"cycle={self.state.cycle_id}",
             f"v3={vedic_score.overall_score}",
         ]
+        if rsi is not None:
+            reasons.append(f"RSI={rsi:.0f}")
         return True, " | ".join(reasons)
 
     def should_sell(self, symbol: str, price: float, position: dict) -> Tuple[bool, str]:
@@ -438,10 +484,15 @@ class VedicBTDTrader:
                     if not price:
                         continue
 
-                    should, reason = self.should_buy(sym, vedic_score, merc_rx)
+                    # Fetch RSI for entry filter (research: RSI<50 = +33.7% vs +26.8%)
+                    rsi = await self.fetch_rsi(sym)
+
+                    should, reason = self.should_buy(sym, vedic_score, merc_rx, rsi)
                     if should:
                         await self.execute_buy(sym, price, reason)
                         open_slots -= 1
+                    elif rsi is not None and rsi >= 50:
+                        print(f"[{self.name}] {sym} RSI={rsi:.0f} — waiting for pullback")
 
         await self.update_stats()
 
