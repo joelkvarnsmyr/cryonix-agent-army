@@ -413,10 +413,13 @@ services:
       - SOLANA_RPC_URL=${SOLANA_RPC_URL:-}
       - SOLANA_PRIVATE_KEY=${SOLANA_PRIVATE_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
     networks:
       - cryonix-net
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   # Caddy Reverse Proxy (Handles HTTPS and routing)

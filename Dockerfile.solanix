@@ -9,6 +9,7 @@ RUN npm install --no-save \
     openai@4 \
     dotenv@16 \
     ioredis@5 \
+    pg@8 \
     zod@3 \
     tsx@4 \
     typescript@5

@@ -165,6 +165,17 @@ export class SolanaClient implements BrokerClient {
     // Extended API (used by SolanaAgent)
     // -------------------------------------------------------------------------
 
+    /** Restore a paper position from DB on restart */
+    restorePaperPosition(symbol: string, mintAddress: string, qty: number, avgEntryPrice: number, currentPrice: number): void {
+        this.paperPositions.set(symbol, { symbol, mintAddress, tokenQty: qty, avgEntryPrice, currentPrice });
+        // Deduct from USDC balance (position cost was already spent)
+        this.usdcBalance -= qty * avgEntryPrice;
+        // Ensure mint is known
+        if (!KNOWN_MINTS[symbol.toUpperCase()]) {
+            this.dynamicMints.set(symbol.toUpperCase(), mintAddress);
+        }
+    }
+
     addDynamicToken(symbol: string, mintAddress: string, decimals?: number): void {
         const upper = symbol.toUpperCase();
         this.dynamicMints.set(upper, mintAddress);

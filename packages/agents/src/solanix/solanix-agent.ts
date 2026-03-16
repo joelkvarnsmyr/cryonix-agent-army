@@ -15,6 +15,7 @@ import { MacroFilter } from './macro-filter';
 import { trySmartRotation } from './smart-rotation';
 import { loadSolanixConfig } from './config';
 import { PolymarketIntelligence } from '../shared/polymarket-intelligence';
+import { SolanixPersistence } from './persistence';
 import type { SolanaPosition, SolanaAccountState } from './types';
 
 export class SolanaAgent extends BaseAgent {
@@ -31,6 +32,9 @@ export class SolanaAgent extends BaseAgent {
     private stablecoinScanner = new StablecoinScanner();
     private unlockMonitor = new TokenUnlockMonitor();
     private riskManager = new RiskManager();
+    private persistence = new SolanixPersistence();
+    /** Maps symbol -> DB position ID for open positions */
+    private positionDbIds = new Map<string, number>();
 
     private lastStablecoinStatus: StablecoinStatus | null = null;
     private lastUnlockCheckTime = 0;
@@ -112,6 +116,25 @@ export class SolanaAgent extends BaseAgent {
             this.log('info', 'StatePublisher + MacroFilter initialized.');
         } else {
             this.log('warn', 'KV_URL not set — state will not be published to Redis.');
+        }
+
+        // Persistence (optional — requires POSTGRES_URL)
+        const dbConnected = await this.persistence.connect();
+        if (dbConnected) {
+            const saved = await this.persistence.loadOpenPositions();
+            if (saved.length > 0) {
+                for (const p of saved) {
+                    // Restore position in broker client
+                    this.brokerClient.restorePaperPosition(p.symbol, p.mintAddress, p.qty, p.avgEntryPrice, p.currentPrice);
+                    this.positionDbIds.set(p.symbol, p.id);
+                    this.positionMeta.set(p.symbol, {
+                        entryTime: p.openedAt,
+                        highWatermark: p.highWatermark,
+                        trailingActive: p.trailingStopActive,
+                    });
+                }
+                this.log('info', `Restored ${saved.length} position(s) from DB: ${saved.map(p => p.symbol).join(', ')}`);
+            }
         }
 
         this.setStatus('idle');
@@ -322,6 +345,19 @@ export class SolanaAgent extends BaseAgent {
                     const pnlDollar = pos ? pos.unrealizedPl : 0;
                     this.riskManager.recordExit(pnlDollar);
                     this.riskManager.recordTrade(false);
+                    // Persist exit to DB
+                    const dbId = this.positionDbIds.get(exit.symbol);
+                    if (dbId) {
+                        await this.persistence.closePosition(dbId, exit.reason, pnlDollar, exit.pnlPct, pos?.currentPrice ?? 0);
+                        await this.persistence.logTrade({
+                            symbol: exit.symbol, mintAddress: pos?.mintAddress ?? '', side: 'SELL',
+                            qty: pos?.qty ?? 0, fillPrice: pos?.currentPrice ?? 0,
+                            dollarAmount: (pos?.qty ?? 0) * (pos?.currentPrice ?? 0),
+                            realizedPnl: pnlDollar, exitReason: exit.reason,
+                            paperTrading: this.tomlConfig.broker.paper_trading,
+                        });
+                        this.positionDbIds.delete(exit.symbol);
+                    }
                     this.log('info', `EXIT ${exit.symbol}: ${exit.reason} (P&L: ${exit.pnlPct >= 0 ? '+' : ''}${exit.pnlPct.toFixed(2)}% / $${pnlDollar.toFixed(2)})`);
                 } catch (e: any) {
                     this.log('error', `Failed to close ${exit.symbol}: ${e.message}`);
@@ -525,6 +561,19 @@ export class SolanaAgent extends BaseAgent {
                 const victimPnlDollar = rotation.victim.unrealizedPl ?? 0;
                 this.riskManager.recordExit(victimPnlDollar);
                 this.riskManager.recordTrade(false);
+                // Persist rotation close to DB
+                const victimDbId = this.positionDbIds.get(rotation.victim.symbol);
+                if (victimDbId) {
+                    await this.persistence.closePosition(victimDbId, 'rotation', victimPnlDollar, victimPnlPct, rotation.victim.currentPrice);
+                    await this.persistence.logTrade({
+                        symbol: rotation.victim.symbol, mintAddress: rotation.victim.mintAddress, side: 'SELL',
+                        qty: rotation.victim.qty, fillPrice: rotation.victim.currentPrice,
+                        dollarAmount: rotation.victim.qty * rotation.victim.currentPrice,
+                        realizedPnl: victimPnlDollar, exitReason: 'rotation',
+                        paperTrading: this.tomlConfig.broker.paper_trading,
+                    });
+                    this.positionDbIds.delete(rotation.victim.symbol);
+                }
                 this.log('info', `Closed ${rotation.victim.symbol} for rotation (P&L: ${victimPnlPct >= 0 ? '+' : ''}${victimPnlPct.toFixed(2)}% / $${victimPnlDollar.toFixed(2)})`);
                 // Refresh positions after close
                 const rawPositions = await this.brokerClient.getPositions();
@@ -576,6 +625,22 @@ export class SolanaAgent extends BaseAgent {
             this.log('info', `Order filled: ${result.orderId} — ${result.status}`);
             this.signalsBoughtThisLoop.add(symbol);
             this.riskManager.recordTrade(false);
+
+            // Persist to DB
+            const mint = this.brokerClient.getMintAddress(symbol) ?? '';
+            const posId = await this.persistence.openPosition(
+                symbol, mint, result.filledQty ?? 0, result.filledAvgPrice ?? 0,
+                confidence, reasoning ?? undefined,
+            );
+            if (posId) this.positionDbIds.set(symbol, posId);
+            await this.persistence.logTrade({
+                symbol, mintAddress: mint, side: 'BUY',
+                qty: result.filledQty ?? 0, fillPrice: result.filledAvgPrice ?? 0,
+                dollarAmount: usdcToSpend, confidence, reasoning: reasoning ?? undefined,
+                orderId: result.orderId, positionId: posId ?? undefined,
+                paperTrading: this.tomlConfig.broker.paper_trading,
+            });
+
             await this.statePublisher?.addSignal({
                 symbol,
                 action: 'BUY',
@@ -616,6 +681,19 @@ export class SolanaAgent extends BaseAgent {
             dayTradesThisWeek: riskState.dayTradesThisWeek,
         });
         await this.statePublisher?.publishStatus('running');
+
+        // Sync position prices to DB (every publishState call)
+        const priceUpdates = this.positions
+            .filter(p => this.positionDbIds.has(p.symbol))
+            .map(p => ({
+                id: this.positionDbIds.get(p.symbol)!,
+                currentPrice: p.currentPrice,
+                highWatermark: p.highWatermark,
+                trailingStopActive: p.trailingStopActive,
+            }));
+        if (priceUpdates.length > 0) {
+            await this.persistence.syncPrices(priceUpdates);
+        }
     }
 
     /**

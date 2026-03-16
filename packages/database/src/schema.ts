@@ -555,3 +555,64 @@ export const watchlistChanges = pgTable('watchlist_changes', {
 
 export type WatchlistChange = typeof watchlistChanges.$inferSelect;
 export type NewWatchlistChange = typeof watchlistChanges.$inferInsert;
+
+// ============================================================================
+// SOLANIX POSITIONS TABLE
+// ============================================================================
+
+export const solanixPositions = pgTable('solanix_positions', {
+  id: serial('id').primaryKey(),
+  symbol: varchar('symbol', { length: 20 }).notNull(),
+  mintAddress: varchar('mint_address', { length: 64 }).notNull(),
+  qty: decimal('qty', { precision: 20, scale: 8 }).notNull(),
+  avgEntryPrice: decimal('avg_entry_price', { precision: 20, scale: 10 }).notNull(),
+  currentPrice: decimal('current_price', { precision: 20, scale: 10 }),
+  unrealizedPl: decimal('unrealized_pl', { precision: 20, scale: 8 }),
+  highWatermark: decimal('high_watermark', { precision: 20, scale: 10 }),
+  trailingStopActive: boolean('trailing_stop_active').default(false),
+  openedAt: timestamp('opened_at').defaultNow().notNull(),
+  closedAt: timestamp('closed_at'),
+  closeReason: varchar('close_reason', { length: 30 }),
+  status: varchar('status', { length: 10 }).default('OPEN').notNull(),
+  paperTrading: boolean('paper_trading').default(true).notNull(),
+  confidence: decimal('confidence', { precision: 5, scale: 4 }),
+  reasoning: text('reasoning'),
+  pnl: decimal('pnl', { precision: 20, scale: 8 }),
+  pnlPercent: decimal('pnl_percent', { precision: 10, scale: 4 }),
+  metadata: jsonb('metadata'),
+}, (table) => [
+  index('solanix_positions_status_idx').on(table.status),
+  index('solanix_positions_symbol_idx').on(table.symbol),
+  index('solanix_positions_opened_at_idx').on(table.openedAt),
+]);
+
+// ============================================================================
+// SOLANIX TRADES TABLE
+// ============================================================================
+
+export const solanixTrades = pgTable('solanix_trades', {
+  id: serial('id').primaryKey(),
+  timestamp: timestamp('timestamp').defaultNow().notNull(),
+  symbol: varchar('symbol', { length: 20 }).notNull(),
+  mintAddress: varchar('mint_address', { length: 64 }),
+  side: varchar('side', { length: 4 }).notNull(),
+  qty: decimal('qty', { precision: 20, scale: 8 }).notNull(),
+  fillPrice: decimal('fill_price', { precision: 20, scale: 10 }),
+  dollarAmount: decimal('dollar_amount', { precision: 20, scale: 2 }),
+  realizedPnl: decimal('realized_pnl', { precision: 20, scale: 8 }),
+  confidence: decimal('confidence', { precision: 5, scale: 4 }),
+  reasoning: text('reasoning'),
+  exitReason: varchar('exit_reason', { length: 30 }),
+  paperTrading: boolean('paper_trading').default(true).notNull(),
+  orderId: varchar('order_id', { length: 64 }),
+  positionId: integer('position_id').references(() => solanixPositions.id),
+  metadata: jsonb('metadata'),
+}, (table) => [
+  index('solanix_trades_timestamp_idx').on(table.timestamp),
+  index('solanix_trades_symbol_idx').on(table.symbol),
+]);
+
+export type SolanixPosition = typeof solanixPositions.$inferSelect;
+export type NewSolanixPosition = typeof solanixPositions.$inferInsert;
+export type SolanixTrade = typeof solanixTrades.$inferSelect;
+export type NewSolanixTrade = typeof solanixTrades.$inferInsert;
