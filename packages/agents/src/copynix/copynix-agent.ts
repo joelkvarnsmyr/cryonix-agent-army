@@ -536,9 +536,14 @@ export class CopynixAgent extends BaseAgent {
                     this.log('info', `[BAYESIAN] PROMOTED ${addr.slice(0, 8)}... to single-whale (score ${belief.score.toFixed(0)}, ${belief.wins}W/${belief.losses}L)`);
                 }
             }
-            if (this.bayesian.shouldDemote(addr)) {
-                this.log('warn', `[BAYESIAN] DEMOTED ${addr.slice(0, 8)}... — score ${belief.score.toFixed(0)} after ${belief.totalTrades} trades`);
-                this.walletMonitor?.removeWallet(addr);
+            if (this.bayesian.shouldDowngrade(addr)) {
+                // Downgrade = lose single-whale privileges, NOT removal.
+                // Wallet stays tracked but needs consensus to trigger trades.
+                const oldScore = this.tomlConfig.wallets.scores[addr] ?? 0;
+                if (oldScore >= 80) {
+                    this.tomlConfig.wallets.scores[addr] = 60; // Below whale threshold
+                    this.log('warn', `[BAYESIAN] DOWNGRADED ${addr.slice(0, 8)}... from single-whale to consensus-only (score ${belief.score.toFixed(0)} after ${belief.totalTrades} trades)`);
+                }
             }
         }
 

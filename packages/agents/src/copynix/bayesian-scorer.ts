@@ -23,8 +23,8 @@
 
 export interface WalletBelief {
     address: string;
-    alpha: number;          // wins + prior_alpha
-    beta: number;           // losses + prior_beta
+    alpha: number;          // wins + prior_alpha (PnL-weighted)
+    beta: number;           // losses + prior_beta (PnL-weighted)
     score: number;          // E[Beta] × 100
     confidence: number;     // 0-1, how certain we are (based on sample size)
     totalTrades: number;
@@ -32,7 +32,6 @@ export interface WalletBelief {
     losses: number;
     totalPnlUsd: number;
     avgPnlPerTrade: number;
-    bestHourUtc: number | null;   // hour with highest WR
     lastUpdated: number;
 }
 
@@ -59,9 +58,13 @@ const PRIOR_ALPHA = 2;
 const PRIOR_BETA = 2;
 
 // Thresholds
-const DEMOTION_SCORE = 35;    // Below this → remove from tracking
+const DEMOTION_SCORE = 35;    // Below this → lose single-whale, flagged for review
 const PROMOTION_SCORE = 75;   // Above this → single-whale privileges
-const MIN_TRADES_FOR_ACTION = 5; // Need at least 5 trades before promote/demote
+const MIN_TRADES_PROMOTE = 8; // Need 8+ trades to promote (avoid lucky streaks)
+const MIN_TRADES_DEMOTE = 20; // Need 20+ trades to demote (avoid unlucky streaks)
+
+// PnL-weighted update: trades with large PnL move beliefs more
+const PNL_WEIGHT_THRESHOLD = 10; // $10 — trades above this get extra weight
 
 export interface RedisAdapter {
     get(key: string): Promise<string | null>;
@@ -75,7 +78,6 @@ export class BayesianScorer {
         medium: { wins: 0, losses: 0, totalPnl: 0 },
         single: { wins: 0, losses: 0, totalPnl: 0 },
     };
-    private hourlyStats = new Map<string, Map<number, { wins: number; losses: number }>>();
     private redis: RedisAdapter | null = null;
 
     /**
@@ -91,18 +93,29 @@ export class BayesianScorer {
      * Updates wallet beliefs using Bayesian posterior update.
      */
     recordOutcome(outcome: TradeOutcome): void {
+        // PnL-weighted update: a $50 win should move beliefs more than a $0.50 win.
+        // Weight = 1 + log2(|pnl| / threshold), clamped to [1, 3].
+        // This means: $10 = weight 1, $20 = 2, $80 = 4 → clamped to 3.
+        const absPnl = Math.abs(outcome.pnlUsd);
+        const pnlWeight = Math.min(3, Math.max(1,
+            absPnl > PNL_WEIGHT_THRESHOLD
+                ? 1 + Math.log2(absPnl / PNL_WEIGHT_THRESHOLD)
+                : 1,
+        ));
+
         for (const addr of outcome.walletAddresses) {
             let belief = this.beliefs.get(addr);
             if (!belief) {
                 belief = this.newBelief(addr);
             }
 
-            // Bayesian update: Beta(α, β) → Beta(α + win, β + loss)
+            // Bayesian update: Beta(α, β) → Beta(α + w, β + w)
+            // where w is PnL-weighted (bigger trades = stronger evidence)
             if (outcome.isWin) {
-                belief.alpha += 1;
+                belief.alpha += pnlWeight;
                 belief.wins += 1;
             } else {
-                belief.beta += 1;
+                belief.beta += pnlWeight;
                 belief.losses += 1;
             }
 
@@ -113,16 +126,11 @@ export class BayesianScorer {
             // Posterior expectation: E[Beta(α, β)] = α / (α + β)
             belief.score = (belief.alpha / (belief.alpha + belief.beta)) * 100;
 
-            // Confidence: based on effective sample size
-            // More trades → higher confidence (asymptotes to 1)
-            belief.confidence = 1 - (1 / (1 + belief.totalTrades * 0.2));
+            // Confidence: based on effective sample size (asymptotes to 1)
+            belief.confidence = 1 - (1 / (1 + belief.totalTrades * 0.15));
 
             belief.lastUpdated = Date.now();
             this.beliefs.set(addr, belief);
-
-            // Track hourly performance
-            this.updateHourlyStats(addr, outcome.hourUtc, outcome.isWin);
-            belief.bestHourUtc = this.getBestHour(addr);
         }
 
         // Update consensus level stats
@@ -166,24 +174,26 @@ export class BayesianScorer {
     shouldPromote(address: string): boolean {
         const belief = this.beliefs.get(address);
         if (!belief) return false;
-        return belief.totalTrades >= MIN_TRADES_FOR_ACTION && belief.score >= PROMOTION_SCORE;
+        return belief.totalTrades >= MIN_TRADES_PROMOTE && belief.score >= PROMOTION_SCORE;
     }
 
     /**
-     * Check if a wallet should be demoted (removed from tracking).
+     * Check if a wallet should lose single-whale privileges.
+     * Does NOT mean removal — just downgrade to consensus-only.
+     * Requires 20+ trades to avoid punishing on bad luck streaks.
      */
-    shouldDemote(address: string): boolean {
+    shouldDowngrade(address: string): boolean {
         const belief = this.beliefs.get(address);
         if (!belief) return false;
-        return belief.totalTrades >= MIN_TRADES_FOR_ACTION && belief.score < DEMOTION_SCORE;
+        return belief.totalTrades >= MIN_TRADES_DEMOTE && belief.score < DEMOTION_SCORE;
     }
 
     /**
-     * Get wallets that should be removed (score too low after enough trades).
+     * Get wallets that should lose single-whale status (but stay tracked).
      */
-    getWalletsToRemove(): string[] {
+    getWalletsToDowngrade(): string[] {
         return Array.from(this.beliefs.entries())
-            .filter(([_, b]) => b.totalTrades >= MIN_TRADES_FOR_ACTION && b.score < DEMOTION_SCORE)
+            .filter(([_, b]) => b.totalTrades >= MIN_TRADES_DEMOTE && b.score < DEMOTION_SCORE)
             .map(([addr]) => addr);
     }
 
@@ -192,7 +202,7 @@ export class BayesianScorer {
      */
     getWalletsToPromote(): string[] {
         return Array.from(this.beliefs.entries())
-            .filter(([_, b]) => b.totalTrades >= MIN_TRADES_FOR_ACTION && b.score >= PROMOTION_SCORE)
+            .filter(([_, b]) => b.totalTrades >= MIN_TRADES_PROMOTE && b.score >= PROMOTION_SCORE)
             .map(([addr]) => addr);
     }
 
@@ -232,13 +242,15 @@ export class BayesianScorer {
 
         const belief = this.newBelief(address);
 
-        // If we have external data (e.g., from Dune PnL), adjust the prior
+        // If we have external data (e.g., from Dune PnL or manual curation),
+        // encode it as a stronger prior. strength=8 means "trust this like 8 trades
+        // of evidence" — enough to start above 50% but not enough to resist
+        // 10+ actual trades that contradict it.
         if (priorScore !== undefined && priorScore > 50) {
-            // Convert external score to alpha/beta that reflects the prior belief
-            // Higher prior score → more alpha relative to beta
-            const strength = 3; // How much to trust the external data (equivalent to 3 trades)
-            belief.alpha = PRIOR_ALPHA + strength * (priorScore / 100);
-            belief.beta = PRIOR_BETA + strength * (1 - priorScore / 100);
+            const strength = 8;
+            const winPct = priorScore / 100;
+            belief.alpha = PRIOR_ALPHA + strength * winPct;
+            belief.beta = PRIOR_BETA + strength * (1 - winPct);
             belief.score = (belief.alpha / (belief.alpha + belief.beta)) * 100;
         }
 
@@ -259,41 +271,8 @@ export class BayesianScorer {
             losses: 0,
             totalPnlUsd: 0,
             avgPnlPerTrade: 0,
-            bestHourUtc: null,
             lastUpdated: Date.now(),
         };
-    }
-
-    private updateHourlyStats(address: string, hour: number, isWin: boolean): void {
-        let hourMap = this.hourlyStats.get(address);
-        if (!hourMap) {
-            hourMap = new Map();
-            this.hourlyStats.set(address, hourMap);
-        }
-        const stats = hourMap.get(hour) ?? { wins: 0, losses: 0 };
-        if (isWin) stats.wins++;
-        else stats.losses++;
-        hourMap.set(hour, stats);
-    }
-
-    private getBestHour(address: string): number | null {
-        const hourMap = this.hourlyStats.get(address);
-        if (!hourMap) return null;
-
-        let bestHour = -1;
-        let bestWR = -1;
-
-        for (const [hour, stats] of hourMap) {
-            const total = stats.wins + stats.losses;
-            if (total < 3) continue; // Need minimum sample
-            const wr = stats.wins / total;
-            if (wr > bestWR) {
-                bestWR = wr;
-                bestHour = hour;
-            }
-        }
-
-        return bestHour >= 0 ? bestHour : null;
     }
 
     // ── Persistence ───────────────────────────────────────────────
@@ -304,9 +283,6 @@ export class BayesianScorer {
             const state = {
                 beliefs: Array.from(this.beliefs.entries()),
                 consensusStats: this.consensusStats,
-                hourlyStats: Array.from(this.hourlyStats.entries()).map(
-                    ([addr, hm]) => [addr, Array.from(hm.entries())]
-                ),
                 savedAt: Date.now(),
             };
             await this.redis.set(REDIS_KEY, JSON.stringify(state));
@@ -328,13 +304,6 @@ export class BayesianScorer {
             }
             if (state.consensusStats) {
                 this.consensusStats = state.consensusStats;
-            }
-            if (state.hourlyStats) {
-                this.hourlyStats = new Map(
-                    state.hourlyStats.map(([addr, entries]: [string, [number, any][]]) =>
-                        [addr, new Map(entries)]
-                    )
-                );
             }
 
             console.log(`[BayesianScorer] Loaded state: ${this.beliefs.size} wallets, ${this.getTotalTrades()} total trades`);
