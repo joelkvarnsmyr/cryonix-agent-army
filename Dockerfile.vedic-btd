@@ -1,0 +1,29 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install build tools for pyswisseph C extension
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    pyswisseph>=2.10 \
+    redis>=5.0 \
+    ccxt>=4.2 \
+    httpx>=0.26
+
+# Copy vedic module from engine
+COPY packages/engine/src/vedic ./packages/engine/src/vedic
+RUN touch ./packages/engine/src/__init__.py
+
+# Copy the BTD trader script
+COPY scripts/services/vedic-btd-trader.py ./scripts/services/vedic-btd-trader.py
+
+ENV PYTHONPATH=/app/packages/engine
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "scripts/services/vedic-btd-trader.py"]

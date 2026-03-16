@@ -324,6 +324,26 @@ services:
         condition: service_healthy
 
   # ============================================================
+  # Vedic BTD — Venus Rx Buy-The-Dip dedicated trader
+  # Separate wallet ($500), only trades post-Venus-Rx recovery
+  # ============================================================
+
+  vedic-btd:
+    build:
+      context: .
+      dockerfile: Dockerfile.vedic-btd
+    restart: always
+    environment:
+      - KV_URL=redis://redis:6379
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ============================================================
   # Copynix — Solana Copy Trading Agent
   # ============================================================
 
