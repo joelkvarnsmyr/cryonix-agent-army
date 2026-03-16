@@ -147,15 +147,16 @@ export class SolanixPersistence {
         avgEntryPrice: number,
         confidence?: number,
         reasoning?: string,
+        metadata?: Record<string, unknown>,
     ): Promise<number | null> {
         if (!this.pool) return null;
         try {
             const { rows } = await this.pool.query(
                 `INSERT INTO solanix_positions
-                    (symbol, mint_address, qty, avg_entry_price, current_price, high_watermark, paper_trading, confidence, reasoning)
-                 VALUES ($1, $2, $3, $4, $4, $4, TRUE, $5, $6)
+                    (symbol, mint_address, qty, avg_entry_price, current_price, high_watermark, paper_trading, confidence, reasoning, metadata)
+                 VALUES ($1, $2, $3, $4, $4, $4, TRUE, $5, $6, $7)
                  RETURNING id`,
-                [symbol, mintAddress, qty, avgEntryPrice, confidence ?? null, reasoning ?? null],
+                [symbol, mintAddress, qty, avgEntryPrice, confidence ?? null, reasoning ?? null, metadata ? JSON.stringify(metadata) : null],
             );
             return rows[0]?.id ?? null;
         } catch (err: any) {

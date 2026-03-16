@@ -35,6 +35,10 @@ interface BetaPosterior {
     losses: number;
     expectedWinRate: number;
     sampleSize: number;
+    /** Cumulative P&L in dollars — better metric than win/loss count */
+    totalPnl: number;
+    /** Average P&L per trade (dollar-weighted, not just win/loss) */
+    avgPnl: number;
 }
 
 interface SignalFeatures {
@@ -88,14 +92,17 @@ export class BayesianLearner {
         let adjustment = 0;
         let adjustmentCount = 0;
 
-        // 1. Symbol posterior
+        // 1. Symbol posterior — uses avgPnl as primary signal (not just WR)
+        //    A token with 60% WR but -$0.50 avgPnl is bad; +$2 avgPnl is good.
         const symPost = this.symbolPosteriors.get(features.symbol);
         if (symPost && symPost.sampleSize >= 3) {
-            const symDelta = (symPost.expectedWinRate - 0.5) * credibilityWeight(symPost.sampleSize);
+            // Normalize avgPnl: $2 avg → +0.10 boost, -$2 avg → -0.10 penalty
+            const pnlSignal = Math.max(-0.15, Math.min(0.15, symPost.avgPnl * 0.05));
+            const symDelta = pnlSignal * credibilityWeight(symPost.sampleSize);
             adjustment += symDelta;
             adjustmentCount++;
             if (Math.abs(symDelta) > 0.02) {
-                factors.push(`${features.symbol} WR=${(symPost.expectedWinRate * 100).toFixed(0)}% (n=${symPost.sampleSize}) → ${symDelta > 0 ? '+' : ''}${(symDelta * 100).toFixed(1)}%`);
+                factors.push(`${features.symbol} avgPnl=$${symPost.avgPnl.toFixed(2)} WR=${(symPost.expectedWinRate * 100).toFixed(0)}% (n=${symPost.sampleSize}) → ${symDelta > 0 ? '+' : ''}${(symDelta * 100).toFixed(1)}%`);
             }
         }
 
@@ -151,6 +158,8 @@ export class BayesianLearner {
 
         try {
             // Get all closed position pairs (BUY that has a matching SELL)
+            // Exclude rotations — they don't reflect signal quality,
+            // just that a better opportunity appeared.
             const { rows } = await this.pool.query(`
                 SELECT
                     p.symbol,
@@ -162,6 +171,7 @@ export class BayesianLearner {
                     EXTRACT(HOUR FROM p.opened_at) AS hour_utc
                 FROM solanix_positions p
                 WHERE p.status = 'CLOSED'
+                  AND p.close_reason != 'rotation'
                 ORDER BY p.closed_at
             `);
 
@@ -173,19 +183,20 @@ export class BayesianLearner {
             this.globalPosterior = makePrior();
 
             for (const row of rows) {
-                const win = (row.pnl ?? 0) > 0;
+                const pnl = row.pnl ?? 0;
+                const win = pnl > 0;
                 const symbol = row.symbol;
                 const conf = row.confidence ?? 0.5;
                 const hour = Math.floor(row.hour_utc ?? 0);
                 const source = (row.metadata as any)?.source ?? 'ta';
                 const band = confidenceBand(conf);
 
-                // Update all buckets
-                updatePosterior(this.globalPosterior, win);
-                updatePosterior(getOrCreate(this.symbolPosteriors, symbol), win);
-                updatePosterior(getOrCreate(this.confidenceBandPosteriors, band), win);
-                updatePosterior(getOrCreateNum(this.hourPosteriors, hour), win);
-                updatePosterior(getOrCreate(this.sourcePosteriors, source), win);
+                // Update all buckets with P&L-aware posteriors
+                updatePosterior(this.globalPosterior, win, pnl);
+                updatePosterior(getOrCreate(this.symbolPosteriors, symbol), win, pnl);
+                updatePosterior(getOrCreate(this.confidenceBandPosteriors, band), win, pnl);
+                updatePosterior(getOrCreateNum(this.hourPosteriors, hour), win, pnl);
+                updatePosterior(getOrCreate(this.sourcePosteriors, source), win, pnl);
             }
 
             this.lastRefresh = Date.now();
@@ -216,7 +227,7 @@ export class BayesianLearner {
 
         for (const [sym, p] of this.symbolPosteriors) {
             if (p.sampleSize >= 2) {
-                lines.push(`  ${sym}: ${(p.expectedWinRate * 100).toFixed(0)}% (${p.wins}W/${p.losses}L)`);
+                lines.push(`  ${sym}: ${(p.expectedWinRate * 100).toFixed(0)}% (${p.wins}W/${p.losses}L) avgPnl=$${p.avgPnl.toFixed(2)}`);
             }
         }
         return lines.join('\n');
@@ -237,10 +248,12 @@ function makePrior(): BetaPosterior {
         losses: 0,
         expectedWinRate: ALPHA_0 / (ALPHA_0 + BETA_0),
         sampleSize: 0,
+        totalPnl: 0,
+        avgPnl: 0,
     };
 }
 
-function updatePosterior(p: BetaPosterior, win: boolean): void {
+function updatePosterior(p: BetaPosterior, win: boolean, pnlDollar: number): void {
     if (win) {
         p.alpha++;
         p.wins++;
@@ -249,6 +262,8 @@ function updatePosterior(p: BetaPosterior, win: boolean): void {
         p.losses++;
     }
     p.sampleSize++;
+    p.totalPnl += pnlDollar;
+    p.avgPnl = p.totalPnl / p.sampleSize;
     p.expectedWinRate = p.alpha / (p.alpha + p.beta);
 }
 

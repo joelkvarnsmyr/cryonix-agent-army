@@ -660,6 +660,7 @@ export class SolanaAgent extends BaseAgent {
             const posId = await this.persistence.openPosition(
                 symbol, mint, result.filledQty ?? 0, result.filledAvgPrice ?? 0,
                 confidence, reasoning ?? undefined,
+                { source: source ?? 'ta', hourUtc: new Date().getUTCHours() },
             );
             if (posId) this.positionDbIds.set(symbol, posId);
             await this.persistence.logTrade({
