@@ -2447,8 +2447,9 @@ async function executeBuy(signal: Signal): Promise<{
     const pairMinNotional = market.limits?.cost?.min || CONFIG.MIN_ORDER_VALUE;
     const notionalBuffer = TOML?.capital?.notional_safety_buffer ?? 1.5;
     const safeMinNotional = Math.max(pairMinNotional * notionalBuffer, CONFIG.MIN_ORDER_VALUE);
-    if (positionValue < safeMinNotional) {
-      return { success: false, error: `Value $${positionValue.toFixed(2)} < $${safeMinNotional.toFixed(2)} safe min (${signal.symbol}, notional=${pairMinNotional})` };
+    // Use 95% tolerance — $14.98 vs $15.00 is close enough, Binance actual min is $5
+    if (positionValue < safeMinNotional * 0.95) {
+      return { success: false, error: `Value $${positionValue.toFixed(2)} < $${(safeMinNotional * 0.95).toFixed(2)} safe min (${signal.symbol}, notional=${pairMinNotional})` };
     }
 
     console.log(`[AUTO-TRADE] BUY ${signal.symbol}: qty=${quantity}, ~$${positionValue.toFixed(2)}, minNotional=${market.limits?.cost?.min || '?'}`);
