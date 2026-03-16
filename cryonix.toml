@@ -94,7 +94,7 @@ default_leverage = 3
 # 0.35 = 35%. On a $40 account, max position = $14.
 # Smart Dip Hunter: 3 positions × 35% = 105% cap (allocator enforces actual limits).
 # When to change: reduce to 0.25 if adding more than 3 position slots.
-max_position_size_pct = 0.35
+max_position_size_pct = 0.45
 
 # Absolute minimum order value in USD. Orders below this are rejected.
 # Binance NOTIONAL minimum is ~$5. We use $15 (3x NOTIONAL) to prevent
@@ -116,9 +116,9 @@ notional_safety_buffer = 1.5
 #   reserve     — always kept as free cash (safety buffer)
 # When to change: increase grid_pool in ranging markets, increase reserve
 # if you want more safety margin.
-signal_pool_pct = 0.70
+signal_pool_pct = 0.85
 grid_pool_pct = 0.00
-scalp_pool_pct = 0.15
+scalp_pool_pct = 0.00
 reserve_pct = 0.15
 
 # Kelly Criterion position sizing multiplier.
