@@ -17,6 +17,7 @@ interface DashboardLayoutProps {
 }
 
 // ─── Nav structure ────────────────────────────────────────────────────────────
+// Main nav: one entry per instance. Sub-pages shown as tabs on the instance page.
 const NAV_GROUPS = [
   {
     id: 'cryonix',
@@ -25,10 +26,13 @@ const NAV_GROUPS = [
     dot: 'bg-primary',
     glow: 'shadow-[0_0_8px_hsl(var(--primary)/0.5)]',
     items: [
-      { href: '/',           label: 'Terminal',  icon: Activity,       desc: 'Live crypto trading' },
-      { href: '/analytics',  label: 'Analytics', icon: LineChart,      desc: 'Trade journal & performance' },
-      { href: '/backtest',   label: 'Backtest',  icon: FlaskConical,   desc: 'Strategy backtesting' },
-      { href: '/legacy',     label: 'Monitor',   icon: BarChart3,      desc: 'Full system monitor' },
+      { href: '/', label: 'Cryonix', icon: Activity, desc: 'Crypto trading' },
+    ],
+    subPages: [
+      { href: '/',           label: 'Terminal' },
+      { href: '/analytics',  label: 'Analytics' },
+      { href: '/backtest',   label: 'Backtest' },
+      { href: '/legacy',     label: 'Monitor' },
     ],
   },
   {
@@ -38,7 +42,7 @@ const NAV_GROUPS = [
     dot: 'bg-purple-400',
     glow: 'shadow-[0_0_8px_rgba(192,132,252,0.5)]',
     items: [
-      { href: '/vedic', label: 'Vedic', icon: Moon, desc: 'Astrology V3 + BTD trader' },
+      { href: '/vedic', label: 'Vedic', icon: Moon, desc: 'Astrology + BTD trader' },
     ],
   },
   {
@@ -48,7 +52,7 @@ const NAV_GROUPS = [
     dot: 'bg-violet-400',
     glow: 'shadow-[0_0_8px_rgba(167,139,250,0.5)]',
     items: [
-      { href: '/aktienix', label: 'Stocks', icon: TrendingUp, desc: 'US equity agent' },
+      { href: '/aktienix', label: 'Aktienix', icon: TrendingUp, desc: 'US equity agent' },
     ],
   },
   {
@@ -58,7 +62,7 @@ const NAV_GROUPS = [
     dot: 'bg-amber-400',
     glow: 'shadow-[0_0_8px_rgba(251,191,36,0.5)]',
     items: [
-      { href: '/solanix', label: 'Solana', icon: CircleDollarSign, desc: 'DEX trading agent' },
+      { href: '/solanix', label: 'Solanix', icon: CircleDollarSign, desc: 'DEX trading agent' },
     ],
   },
   {
@@ -68,7 +72,7 @@ const NAV_GROUPS = [
     dot: 'bg-orange-400',
     glow: 'shadow-[0_0_8px_rgba(251,146,60,0.5)]',
     items: [
-      { href: '/polynix', label: 'Polymarket', icon: Target, desc: 'Binary options agent' },
+      { href: '/polynix', label: 'Polynix', icon: Target, desc: 'Binary options agent' },
     ],
   },
   {
@@ -78,23 +82,50 @@ const NAV_GROUPS = [
     dot: 'bg-cyan-400',
     glow: 'shadow-[0_0_8px_rgba(34,211,238,0.5)]',
     items: [
-      { href: '/copynix', label: 'Copy Trade', icon: CircleDollarSign, desc: 'Solana copy-trading agent' },
+      { href: '/copynix', label: 'Copynix', icon: CircleDollarSign, desc: 'Copy-trading agent' },
     ],
   },
 ] as const;
+
+type NavGroup = (typeof NAV_GROUPS)[number];
+type SubPage = { href: string; label: string };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function isActive(href: string, pathname: string) {
   return href === '/' ? pathname === '/' : pathname.startsWith(href);
 }
 
+/** Check if pathname belongs to a group (including sub-pages). */
+function isGroupActive(group: NavGroup, pathname: string) {
+  if (group.items.some(item => isActive(item.href, pathname))) return true;
+  if ('subPages' in group) {
+    return (group as NavGroup & { subPages: SubPage[] }).subPages.some(sp => isActive(sp.href, pathname));
+  }
+  return false;
+}
+
 function getActiveContext(pathname: string) {
   for (const group of NAV_GROUPS) {
+    // Check sub-pages first (more specific)
+    if ('subPages' in group) {
+      const subPages = (group as NavGroup & { subPages: SubPage[] }).subPages;
+      for (const sp of subPages) {
+        if (isActive(sp.href, pathname)) return { group, item: group.items[0], subPage: sp };
+      }
+    }
     for (const item of group.items) {
       if (isActive(item.href, pathname)) return { group, item };
     }
   }
   return null;
+}
+
+/** Get sub-pages for the active group, if any. */
+function getSubPages(group: NavGroup): SubPage[] {
+  if ('subPages' in group) {
+    return (group as NavGroup & { subPages: SubPage[] }).subPages;
+  }
+  return [];
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -264,45 +295,28 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             {/* Divider */}
             <div className="h-5 w-px bg-border/30 shrink-0" />
 
-            {/* Nav groups */}
-            <div className="flex items-center gap-0.5 overflow-x-auto scrollbar-none">
-              {NAV_GROUPS.map((group, gi) => (
-                <div key={group.id} className="flex items-center shrink-0">
-
-                  {/* Group separator */}
-                  {gi > 0 && (
-                    <div className="flex items-center px-1">
-                      <ChevronRight className="h-3 w-3 text-border/35" />
-                    </div>
-                  )}
-
-                  {/* Group label */}
-                  <span className={`hidden xl:block text-[8px] font-mono font-bold tracking-widest mr-1.5 ${group.accent} opacity-45`}>
-                    {group.label}
-                  </span>
-
-                  {/* Items */}
-                  {group.items.map((item) => {
-                    const Icon = item.icon;
-                    const active = isActive(item.href, pathname);
-                    return (
-                      <Link key={item.href} href={item.href}>
-                        <button
-                          title={item.desc}
-                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-                            active
-                              ? `bg-background/80 ${group.accent} shadow-sm border border-border/40`
-                              : 'text-muted-foreground hover:text-foreground hover:bg-muted/20'
-                          }`}
-                        >
-                          <Icon className="h-3.5 w-3.5 shrink-0" />
-                          <span className="hidden sm:inline">{item.label}</span>
-                        </button>
-                      </Link>
-                    );
-                  })}
-                </div>
-              ))}
+            {/* Instance buttons — one per agent */}
+            <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
+              {NAV_GROUPS.map((group) => {
+                const Icon = group.items[0].icon;
+                const active = isGroupActive(group, pathname);
+                return (
+                  <Link key={group.id} href={group.items[0].href}>
+                    <button
+                      title={group.items[0].desc}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                        active
+                          ? `bg-background/80 ${group.accent} shadow-sm border border-border/40`
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/20'
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${active ? group.dot : 'bg-muted-foreground/30'}`} />
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="hidden sm:inline">{group.items[0].label}</span>
+                    </button>
+                  </Link>
+                );
+              })}
             </div>
           </div>
 
@@ -361,18 +375,44 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </div>
 
-        {/* Breadcrumb sub-bar */}
-        {ctx && (
-          <div className="border-t border-border/20 px-4 py-1 flex items-center gap-1.5">
-            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${ctx.group.dot}`} />
-            <span className={`text-[9px] font-mono font-semibold tracking-widest uppercase opacity-55 ${ctx.group.accent}`}>
-              {ctx.group.label}
-            </span>
-            <ChevronRight className="h-2.5 w-2.5 text-muted-foreground/30 shrink-0" />
-            <span className="text-[9px] font-mono text-muted-foreground/65 font-medium">{ctx.item.label}</span>
-            <span className="text-[9px] font-mono text-muted-foreground/30 hidden sm:inline">— {ctx.item.desc}</span>
-          </div>
-        )}
+        {/* Sub-page tabs (shown when active group has sub-pages) */}
+        {ctx && (() => {
+          const subPages = getSubPages(ctx.group);
+          if (subPages.length === 0) {
+            // No sub-pages: simple breadcrumb
+            return (
+              <div className="border-t border-border/20 px-4 py-1 flex items-center gap-1.5">
+                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${ctx.group.dot}`} />
+                <span className={`text-[9px] font-mono font-semibold tracking-widest uppercase opacity-55 ${ctx.group.accent}`}>
+                  {ctx.group.label}
+                </span>
+                <ChevronRight className="h-2.5 w-2.5 text-muted-foreground/30 shrink-0" />
+                <span className="text-[9px] font-mono text-muted-foreground/65 font-medium">{ctx.item.desc}</span>
+              </div>
+            );
+          }
+          // Sub-pages: render as tab bar
+          return (
+            <div className="border-t border-border/20 px-4 py-0.5 flex items-center gap-0.5">
+              {subPages.map((sp) => {
+                const active = isActive(sp.href, pathname);
+                return (
+                  <Link key={sp.href} href={sp.href}>
+                    <button
+                      className={`px-3 py-1 text-[10px] font-mono font-medium rounded-md transition-all ${
+                        active
+                          ? `${ctx.group.accent} bg-background/60 border border-border/30`
+                          : 'text-muted-foreground/50 hover:text-foreground/70 hover:bg-muted/20'
+                      }`}
+                    >
+                      {sp.label}
+                    </button>
+                  </Link>
+                );
+              })}
+            </div>
+          );
+        })()}
       </nav>
 
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
