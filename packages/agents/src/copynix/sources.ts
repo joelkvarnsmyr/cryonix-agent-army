@@ -183,16 +183,17 @@ export async function fetchTopWalletsDune(): Promise<TopTrader[]> {
     }
 
     try {
-        // Dune query 3476547 = "Solana Top Traders by PnL (30d)"
-        // This is a popular community query. If it doesn't work, we fallback gracefully.
-        const queryId = '3476547';
+        // Dune query 5585656 = "TOP Wallet Solana 2025" — ranks 10,000 most
+        // profitable wallets on Solana by total PnL (Pump.fun + Raydium).
+        // Returns: wallet, total_pnl, total_realized_profit, total_unrealized_profit, last_tx, rank
+        const queryId = '5585656';
         const url = `https://api.dune.com/api/v1/query/${queryId}/results?limit=50`;
         const res = await fetch(url, {
             headers: {
                 'X-Dune-API-Key': apiKey,
                 'Accept': 'application/json',
             },
-            signal: AbortSignal.timeout(15_000),
+            signal: AbortSignal.timeout(20_000),
         });
 
         if (!res.ok) {
@@ -204,14 +205,11 @@ export async function fetchTopWalletsDune(): Promise<TopTrader[]> {
             result?: {
                 rows?: Array<{
                     wallet?: string;
-                    address?: string;
-                    trader?: string;
-                    pnl?: number;
                     total_pnl?: number;
-                    profit?: number;
-                    win_rate?: number;
-                    trades?: number;
-                    total_trades?: number;
+                    total_realized_profit?: number;
+                    total_unrealized_profit?: number;
+                    last_tx?: string;
+                    rank?: number;
                 }>;
             };
         };
@@ -224,25 +222,27 @@ export async function fetchTopWalletsDune(): Promise<TopTrader[]> {
 
         const results: TopTrader[] = [];
         for (const row of rows) {
-            const address = row.wallet ?? row.address ?? row.trader;
+            const address = row.wallet;
             if (!address || address.length < 20) continue;
 
-            const pnl = row.pnl ?? row.total_pnl ?? row.profit ?? 0;
-            const winRate = row.win_rate ?? 0;
-            const trades = row.trades ?? row.total_trades ?? 0;
+            const realizedPnl = row.total_realized_profit ?? 0;
+            const totalPnl = row.total_pnl ?? 0;
+            const lastTx = row.last_tx ?? '';
 
-            if (pnl < 5000 || trades < 10) continue; // Only quality wallets
+            // Filter: realized profit > $5k and active in March 2026
+            if (realizedPnl < 5000) continue;
+            if (!lastTx.includes('2026-03') && !lastTx.includes('2026-02')) continue;
 
             results.push({
                 walletAddress: address,
-                totalPnlUsd: pnl,
-                winRate: winRate > 1 ? winRate : winRate * 100, // Handle 0-1 or 0-100 format
-                tradeCount: trades,
-                source: 'dexcheck', // Reuse type for simplicity
+                totalPnlUsd: realizedPnl,
+                winRate: 60, // Dune query doesn't provide WR — estimate conservatively
+                tradeCount: 20, // Estimate — these are top traders
+                source: 'dexcheck', // Reuse type for scoring
             });
         }
 
-        console.log(`[Dune] ${results.length} profitable wallets from Dune query`);
+        console.log(`[Dune] ${results.length} profitable wallets (realized >$5k, active recently)`);
         return results;
     } catch (err) {
         console.warn(`[Dune] Error: ${err instanceof Error ? err.message : String(err)}`);
