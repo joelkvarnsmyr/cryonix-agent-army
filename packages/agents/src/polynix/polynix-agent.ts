@@ -9,6 +9,7 @@ import { PositionTracker } from './position-tracker';
 import { OrderManager } from './order-manager';
 import { loadPolynixConfig } from './config';
 import { PolynixDbLogger } from './db-logger';
+import { BayesianLearner } from './bayesian-learner';
 import type { PolynixConfig, PolynixAccountState, CryptoMicroMarket } from './types';
 
 export class PolynixAgent extends BaseAgent {
@@ -23,6 +24,7 @@ export class PolynixAgent extends BaseAgent {
     private orderManager: OrderManager;
     private statePublisher: StatePublisher | null = null;
     private dbLogger: PolynixDbLogger;
+    private bayesian: BayesianLearner;
 
     private accountState: PolynixAccountState;
     private lastHeartbeatLog = 0;
@@ -39,6 +41,7 @@ export class PolynixAgent extends BaseAgent {
         this.positionTracker = new PositionTracker();
         this.orderManager = new OrderManager(this.tomlConfig);
         this.dbLogger = new PolynixDbLogger();
+        this.bayesian = new BayesianLearner();
 
         this.accountState = {
             balance: this.tomlConfig.capital.starting_balance_usd,
@@ -64,6 +67,7 @@ export class PolynixAgent extends BaseAgent {
 
         // Connect to Postgres and restore persisted state
         await this.dbLogger.connect();
+        await this.bayesian.connect();
         const restored = await this.dbLogger.loadState();
         if (restored) {
             // Restore open positions
@@ -127,6 +131,7 @@ export class PolynixAgent extends BaseAgent {
         await this.statePublisher?.publishStatus('stopped');
         await this.statePublisher?.disconnect();
         await this.dbLogger.disconnect();
+        await this.bayesian.disconnect();
         this.setStatus('paused');
     }
 
@@ -158,6 +163,14 @@ export class PolynixAgent extends BaseAgent {
                 : 0;
 
             await this.dbLogger.logSettle(pos);
+            await this.bayesian.recordOutcome({
+                type: pos.type,
+                asset: pos.market.asset,
+                side: pos.side,
+                edge: pos.type === 'arb' ? (pos.size - pos.costBasis) / pos.size : 0.05,
+                timeToExpirySec: (pos.expiresAt - pos.enteredAt) / 1000,
+                won: pos.pnl >= 0,
+            });
             const emoji = pos.pnl >= 0 ? 'WIN' : 'LOSS';
             this.log('info', `Settled [${pos.type}]: ${pos.market.title} -> ${emoji} $${pos.pnl.toFixed(2)} (balance: $${this.accountState.balance.toFixed(2)})`);
         }
@@ -216,15 +229,26 @@ export class PolynixAgent extends BaseAgent {
                     );
 
                     if (risk.canTrade) {
+                        // Bayesian check: adjust confidence based on learned priors
+                        const bayesAdj = this.bayesian.evaluate('directional', market.asset, signal.direction, signal.edge, market.timeToExpiry);
+                        if (bayesAdj.veto) {
+                            this.log('info', `DIRECTIONAL vetoed by Bayesian: ${market.title} ${signal.direction} (${bayesAdj.reasons.join(', ')})`);
+                            continue;
+                        }
+                        if (bayesAdj.reasons.length > 0) {
+                            this.log('info', `Bayesian adj: ${bayesAdj.reasons.join(', ')} → factor ${bayesAdj.factor.toFixed(2)}`);
+                        }
+
+                        const adjustedSize = risk.suggestedSize * bayesAdj.factor;
                         const tokenId = signal.direction === 'YES' ? market.yesTokenId : market.noTokenId;
                         const price = signal.direction === 'YES' ? signal.polymarketProb : (1 - signal.polymarketProb);
-                        const order = await this.orderManager.placeOrder(tokenId, 'BUY', price, risk.suggestedSize);
+                        const order = await this.orderManager.placeOrder(tokenId, 'BUY', price, adjustedSize);
 
                         if (order.status === 'filled') {
-                            const costBasis = price * risk.suggestedSize;
+                            const costBasis = price * adjustedSize;
                             this.positionTracker.addPosition(
                                 market, 'directional', signal.direction,
-                                price, risk.suggestedSize, costBasis,
+                                price, adjustedSize, costBasis,
                             );
                             this.accountState.balance -= costBasis;
                             await this.dbLogger.logOpen(this.positionTracker.getLastAdded()!);
@@ -284,7 +308,14 @@ export class PolynixAgent extends BaseAgent {
             );
 
             if (risk.canTrade) {
-                const size = Math.min(risk.suggestedSize, arb.maxSize);
+                // Bayesian check: has this category been losing?
+                const bayesAdj = this.bayesian.evaluate('arb', market.asset, 'BOTH', arb.netEdge, market.timeToExpiry);
+                if (bayesAdj.veto) {
+                    this.log('info', `ARB vetoed by Bayesian: ${market.title} (${bayesAdj.reasons.join(', ')})`);
+                    return 'found';
+                }
+
+                const size = Math.min(risk.suggestedSize * bayesAdj.factor, arb.maxSize);
                 const orders = await this.orderManager.placeArbOrders(arb, size);
 
                 if (orders.yesOrder.status === 'filled' && orders.noOrder.status === 'filled') {
@@ -331,6 +362,10 @@ export class PolynixAgent extends BaseAgent {
             await this.statePublisher.set(
                 'polynix:trades',
                 JSON.stringify(this.positionTracker.getSettledTrades().slice(-50)),
+            );
+            await this.statePublisher.set(
+                'polynix:priors',
+                JSON.stringify(this.bayesian.getSummary()),
             );
         } catch {
             // Non-critical
