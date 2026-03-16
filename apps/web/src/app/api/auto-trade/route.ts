@@ -2434,9 +2434,11 @@ async function executeBuy(signal: Signal): Promise<{
     const qty = parseFloat(quantity);
 
     // Post-rounding check: amountToPrecision() can round down enough to drop below minimum
+    // Use 95% of MIN_ORDER_VALUE to avoid rejecting borderline orders ($14.97 vs $15.00)
+    // The real Binance NOTIONAL check below is the hard guard
     const postRoundValue = qty * signal.entry_price;
-    if (postRoundValue < CONFIG.MIN_ORDER_VALUE) {
-      return { success: false, error: `Post-rounding value $${postRoundValue.toFixed(2)} < $${CONFIG.MIN_ORDER_VALUE} min` };
+    if (postRoundValue < CONFIG.MIN_ORDER_VALUE * 0.95) {
+      return { success: false, error: `Post-rounding value $${postRoundValue.toFixed(2)} < $${(CONFIG.MIN_ORDER_VALUE * 0.95).toFixed(2)} min` };
     }
 
     const positionValue = qty * signal.entry_price;
