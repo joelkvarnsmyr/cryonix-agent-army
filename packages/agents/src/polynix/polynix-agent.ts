@@ -8,6 +8,7 @@ import { PolynixRiskManager } from './risk-manager';
 import { PositionTracker } from './position-tracker';
 import { OrderManager } from './order-manager';
 import { loadPolynixConfig } from './config';
+import { PolynixDbLogger } from './db-logger';
 import type { PolynixConfig, PolynixAccountState, CryptoMicroMarket } from './types';
 
 export class PolynixAgent extends BaseAgent {
@@ -21,6 +22,7 @@ export class PolynixAgent extends BaseAgent {
     private positionTracker: PositionTracker;
     private orderManager: OrderManager;
     private statePublisher: StatePublisher | null = null;
+    private dbLogger: PolynixDbLogger;
 
     private accountState: PolynixAccountState;
     private lastHeartbeatLog = 0;
@@ -36,6 +38,7 @@ export class PolynixAgent extends BaseAgent {
         this.riskManager = new PolynixRiskManager();
         this.positionTracker = new PositionTracker();
         this.orderManager = new OrderManager(this.tomlConfig);
+        this.dbLogger = new PolynixDbLogger();
 
         this.accountState = {
             balance: this.tomlConfig.capital.starting_balance_usd,
@@ -57,6 +60,28 @@ export class PolynixAgent extends BaseAgent {
             this.log('info', 'StatePublisher initialized (Redis).');
         } else {
             this.log('warn', 'KV_URL not set — state will not be published to Redis.');
+        }
+
+        // Connect to Postgres and restore persisted state
+        await this.dbLogger.connect();
+        const restored = await this.dbLogger.loadState();
+        if (restored) {
+            // Restore open positions
+            for (const pos of restored.openPositions) {
+                this.positionTracker.restorePosition(pos);
+            }
+            // Restore account stats
+            const startBal = this.tomlConfig.capital.starting_balance_usd;
+            const openExposure = restored.openPositions.reduce((s, p) => s + p.costBasis, 0);
+            this.accountState.totalPnl = restored.accountState.totalPnl ?? 0;
+            this.accountState.tradesTotal = restored.accountState.tradesTotal ?? 0;
+            this.accountState.wins = restored.accountState.wins ?? 0;
+            this.accountState.losses = restored.accountState.losses ?? 0;
+            this.accountState.openPositions = restored.openPositions.length;
+            this.accountState.winRate = this.accountState.tradesTotal > 0
+                ? (this.accountState.wins / this.accountState.tradesTotal) * 100 : 0;
+            this.accountState.balance = startBal + this.accountState.totalPnl - openExposure;
+            this.log('info', `Restored from DB: ${restored.openPositions.length} open positions, ${this.accountState.tradesTotal} settled, P&L $${this.accountState.totalPnl.toFixed(2)}, balance $${this.accountState.balance.toFixed(2)}`);
         }
 
         // Seed initial price data
@@ -101,6 +126,7 @@ export class PolynixAgent extends BaseAgent {
         this.isRunning = false;
         await this.statePublisher?.publishStatus('stopped');
         await this.statePublisher?.disconnect();
+        await this.dbLogger.disconnect();
         this.setStatus('paused');
     }
 
@@ -131,6 +157,7 @@ export class PolynixAgent extends BaseAgent {
                 ? (this.accountState.wins / this.accountState.tradesTotal) * 100
                 : 0;
 
+            await this.dbLogger.logSettle(pos);
             const emoji = pos.pnl >= 0 ? 'WIN' : 'LOSS';
             this.log('info', `Settled [${pos.type}]: ${pos.market.title} -> ${emoji} $${pos.pnl.toFixed(2)} (balance: $${this.accountState.balance.toFixed(2)})`);
         }
@@ -200,6 +227,7 @@ export class PolynixAgent extends BaseAgent {
                                 price, risk.suggestedSize, costBasis,
                             );
                             this.accountState.balance -= costBasis;
+                            await this.dbLogger.logOpen(this.positionTracker.getLastAdded()!);
                             signalsExecuted++;
                             this.log('info', `DIRECTIONAL ${signal.direction}: ${market.title} | edge=${(signal.edge * 100).toFixed(2)}% | price=$${signal.currentPrice.toFixed(2)} | conf=${signal.confidence} | size=$${risk.suggestedSize.toFixed(2)}`);
                             await this.logSignal('directional', market.title, signal.edge, signal.direction, true);
@@ -266,6 +294,7 @@ export class PolynixAgent extends BaseAgent {
                         arb.combinedCost, size, costBasis,
                     );
                     this.accountState.balance -= costBasis;
+                    await this.dbLogger.logOpen(this.positionTracker.getLastAdded()!);
                     this.log('info', `ARB ENTRY: ${market.title} | cost=$${arb.combinedCost.toFixed(4)} | net=${(arb.netEdge * 100).toFixed(2)}% | size=$${size.toFixed(2)} | liq=$${market.liquidity.toFixed(0)}`);
                     await this.logSignal('arb', market.title, arb.netEdge, 'BOTH', true);
                     return 'executed';

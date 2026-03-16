@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 export class PositionTracker {
     private positions: Map<string, PolynixPosition> = new Map();
     private settledTrades: PolynixPosition[] = [];
+    private lastAdded: PolynixPosition | null = null;
 
     addPosition(
         market: CryptoMicroMarket,
@@ -27,7 +28,18 @@ export class PositionTracker {
             pnl: 0,
         };
         this.positions.set(pos.id, pos);
+        this.lastAdded = pos;
         return pos;
+    }
+
+    /** Restore a position from database (on startup). */
+    restorePosition(pos: PolynixPosition): void {
+        this.positions.set(pos.id, pos);
+    }
+
+    /** Get the last position added (for DB logging). */
+    getLastAdded(): PolynixPosition | null {
+        return this.lastAdded;
     }
 
     /**

@@ -6,6 +6,7 @@ export { DirectionalEngine } from './directional-engine';
 export { PolynixRiskManager } from './risk-manager';
 export { PositionTracker } from './position-tracker';
 export { OrderManager } from './order-manager';
+export { PolynixDbLogger } from './db-logger';
 export type {
     CryptoMicroMarket,
     ArbOpportunity,
