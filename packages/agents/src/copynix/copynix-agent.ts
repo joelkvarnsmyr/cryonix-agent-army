@@ -9,6 +9,7 @@ import { CopyRiskGate } from './risk-gate';
 import { loadCopynixConfig } from './config';
 import { PolymarketIntelligence } from '../shared/polymarket-intelligence';
 import { WalletDiscovery } from './wallet-discovery';
+import { BayesianScorer } from './bayesian-scorer';
 import type { CopyPosition, CopySignal, WalletTrade } from './types';
 
 // ── Telegram Alert Helper ─────────────────────────────────────────────
@@ -115,6 +116,7 @@ export class CopynixAgent extends BaseAgent {
     private riskManager = new RiskManager();
     private polymarket = new PolymarketIntelligence(300_000);
     private tradeLogger = new CopynixTradeLogger();
+    private bayesian = new BayesianScorer();
 
     private walletDiscovery: WalletDiscovery | null = null;
     // Delay first discovery by 5 minutes to avoid Helius rate limit on startup
@@ -193,6 +195,21 @@ export class CopynixAgent extends BaseAgent {
         // Connect trade logger to Postgres
         await this.tradeLogger.connect();
 
+        // Initialize Bayesian scorer with Redis persistence
+        if (this.statePublisher) {
+            const sp = this.statePublisher;
+            await this.bayesian.connect({
+                get: (key: string) => sp.get(key),
+                set: async (key: string, value: string) => { await sp.set(key, value); },
+            });
+            // Initialize beliefs for all tracked wallets
+            for (const addr of config.wallets.tracked) {
+                const priorScore = config.wallets.scores[addr] ?? 50;
+                this.bayesian.initializeWallet(addr, priorScore);
+            }
+            this.log('info', `Bayesian scorer loaded: ${this.bayesian.getAllBeliefs().length} wallets`);
+        }
+
         this.log('info', `Tracked wallets: ${this.walletMonitor.walletCount}`);
         this.log('info', `Single-whale mode: ${Object.keys(config.wallets.scores).length} scored wallets`);
         this.log('info', `Paper trading: $${acct.usdcBalance} USDC`);
@@ -270,7 +287,9 @@ export class CopynixAgent extends BaseAgent {
                     const acct = this.executor!.getAccountState();
                     const pending = this.consensusEngine!.getPending().size;
                     const stats = this.walletMonitor!.getStats();
-                    this.log('info', `[HEARTBEAT] poll #${this.pollCount} | ${acct.totalPositions} pos | $${acct.portfolioValue.toFixed(0)} value | ${pending} pending consensus | ${this.tradesToday} trades today | API: ${stats.calls} calls, ${stats.errors} errs, ${stats.swapsFound} swaps`);
+                    const beliefs = this.bayesian.getAllBeliefs();
+                    const avgScore = beliefs.length > 0 ? beliefs.reduce((s, b) => s + b.score, 0) / beliefs.length : 0;
+                    this.log('info', `[HEARTBEAT] poll #${this.pollCount} | ${acct.totalPositions} pos | $${acct.portfolioValue.toFixed(0)} value | ${pending} pending | ${this.tradesToday} trades | API: ${stats.calls}/${stats.errors}err/${stats.swapsFound}swaps | Bayes: ${beliefs.length}w avg=${avgScore.toFixed(0)}`);
                     this.lastHeartbeat = now;
                 }
 
@@ -493,6 +512,35 @@ export class CopynixAgent extends BaseAgent {
 
     private async logSell(pos: CopyPosition, exitPrice: number, reason: string, pnl: number): Promise<void> {
         const pnlPct = pos.avgEntryPrice > 0 ? ((exitPrice - pos.avgEntryPrice) / pos.avgEntryPrice) * 100 : 0;
+        const isWin = pnl > 0;
+
+        // ── Bayesian update: learn from this trade ──
+        this.bayesian.recordOutcome({
+            walletAddresses: pos.copiedFrom,
+            consensusLevel: pos.consensusLevel,
+            pnlUsd: pnl,
+            isWin,
+            tokenSymbol: pos.tokenSymbol,
+            hourUtc: new Date().getUTCHours(),
+        });
+
+        // Check for promotions/demotions after update
+        for (const addr of pos.copiedFrom) {
+            const belief = this.bayesian.getBelief(addr);
+            if (!belief) continue;
+
+            if (this.bayesian.shouldPromote(addr)) {
+                const oldScore = this.tomlConfig.wallets.scores[addr] ?? 0;
+                if (oldScore < 80) {
+                    this.tomlConfig.wallets.scores[addr] = 80;
+                    this.log('info', `[BAYESIAN] PROMOTED ${addr.slice(0, 8)}... to single-whale (score ${belief.score.toFixed(0)}, ${belief.wins}W/${belief.losses}L)`);
+                }
+            }
+            if (this.bayesian.shouldDemote(addr)) {
+                this.log('warn', `[BAYESIAN] DEMOTED ${addr.slice(0, 8)}... — score ${belief.score.toFixed(0)} after ${belief.totalTrades} trades`);
+                this.walletMonitor?.removeWallet(addr);
+            }
+        }
 
         await this.tradeLogger.logTrade({
             tokenMint: pos.tokenMint,
@@ -505,14 +553,22 @@ export class CopynixAgent extends BaseAgent {
             realizedPnl: pnl,
             consensusLevel: pos.consensusLevel,
             exitReason: reason,
+            metadata: {
+                bayesianScores: pos.copiedFrom.map(a => ({
+                    wallet: a.slice(0, 8),
+                    score: this.bayesian.getScore(a).toFixed(0),
+                })),
+            },
         });
 
         const emoji = pnl >= 0 ? '🟢' : '🔴';
+        const walletScores = pos.copiedFrom.map(a => `${a.slice(0, 6)}:${this.bayesian.getScore(a).toFixed(0)}`).join(', ');
         await sendTelegramAlert(
             `${emoji} <b>COPYNIX SELL</b>\n` +
             `Token: <b>${pos.tokenSymbol}</b>\n` +
             `Reason: ${reason}\n` +
-            `P/L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`,
+            `P/L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)\n` +
+            `Wallet scores: ${walletScores}`,
         );
     }
 

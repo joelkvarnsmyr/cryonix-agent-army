@@ -4,6 +4,7 @@ export { WalletMonitor } from './wallet-monitor';
 export { CopyExecutor } from './copy-executor';
 export { CopyRiskGate } from './risk-gate';
 export { WalletProfiler } from './wallet-profiler';
+export { BayesianScorer } from './bayesian-scorer';
 export { loadCopynixConfig } from './config';
 export type { CopynixTomlConfig } from './config';
 export type { TrackedWallet, WalletTrade, CopySignal, CopyPosition, CopyAccountState, TokenSafetyCheck } from './types';
