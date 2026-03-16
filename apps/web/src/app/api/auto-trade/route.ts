@@ -7,6 +7,7 @@ import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
 
 import { TimingService } from '@/lib/trading/timing';
+import { updatePosterior, getBayesianAdjustment } from '@/lib/trading/bayesian';
 
 export const dynamic = 'force-dynamic';
 
@@ -1515,6 +1516,21 @@ async function monitorPositions(): Promise<MonitorResult[]> {
 
           console.log(`[MONITOR] ${pos.symbol} ${exitType}: PnL $${(realizedPnl - fees).toFixed(4)} (${pnlPct.toFixed(2)}%)`);
 
+          // Bayesian self-learning: update posteriors with trade outcome
+          try {
+            await updatePosterior(redis, {
+              system: 'cryonix',
+              pattern: pos.pattern || 'UNKNOWN',
+              symbol: pos.symbol,
+              regime: (await redis.get('market:regime')) || undefined || undefined,
+              hour: new Date(pos.openedAt || Date.now()).getUTCHours(),
+              pnlPct,
+              exitReason: exitType,
+            });
+          } catch (bayesErr) {
+            console.warn(`[BAYES] Update failed (non-critical):`, bayesErr);
+          }
+
           results.push({
             symbol: pos.symbol,
             action: exitType,
@@ -1594,6 +1610,21 @@ async function monitorPositions(): Promise<MonitorResult[]> {
 
             // Sync close to Postgres positions table
             try { await closePositionBySymbol(pos.symbol, String(currentPrice), String(pnl), String(pnlPct)); } catch (e) { console.warn(`[MONITOR] closePositionBySymbol failed for ${pos.symbol} (dust):`, e); }
+
+            // Bayesian self-learning: update posteriors with dust outcome
+            try {
+              await updatePosterior(redis, {
+                system: 'cryonix',
+                pattern: pos.pattern || 'UNKNOWN',
+                symbol: pos.symbol,
+                regime: (await redis.get('market:regime')) || undefined || undefined,
+                hour: new Date(pos.openedAt || Date.now()).getUTCHours(),
+                pnlPct,
+                exitReason: 'DUST_NOTIONAL',
+              });
+            } catch (bayesErr) {
+              console.warn(`[BAYES] Dust update failed (non-critical):`, bayesErr);
+            }
 
             results.push({
               symbol: pos.symbol,
@@ -3310,6 +3341,23 @@ export async function POST() {
     const buyResults: any[] = [];
 
     for (const { signal, raw } of topSignals) {
+
+      // ── Bayesian confidence adjustment ──
+      // Blend learned win probability with TA confidence
+      try {
+        const bayesAdj = await getBayesianAdjustment(
+          redis, 'cryonix', signal.patterns?.[0] || 'UNKNOWN', signal.symbol,
+          new Date().getUTCHours(), (await redis.get('market:regime')) || undefined,
+        );
+        if (bayesAdj.sampleSize >= 10) {
+          const modifier = bayesAdj.confidenceModifier / 100; // e.g., +0.10
+          const oldConf = signal.confidence;
+          signal.confidence = Math.max(0, Math.min(0.95, signal.confidence + modifier));
+          if (Math.abs(modifier) > 0.01) {
+            console.log(`[BAYES] ${signal.symbol} confidence ${(oldConf * 100).toFixed(0)}% → ${(signal.confidence * 100).toFixed(0)}% (${modifier >= 0 ? '+' : ''}${(modifier * 100).toFixed(1)}%, n=${bayesAdj.sampleSize})`);
+          }
+        }
+      } catch { /* Bayesian read failed — use original confidence */ }
 
       const riskCheck = await passesRiskChecks(signal);
 

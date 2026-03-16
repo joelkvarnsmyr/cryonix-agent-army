@@ -68,6 +68,71 @@ class TradeLogger {
     }
 }
 
+// ── Bayesian Updater — learns from every trade outcome ──────────────────────
+class BayesianUpdater {
+    private redis: any = null;
+    private readonly TTL = 7 * 24 * 60 * 60; // 7 days
+
+    async connect(redisUrl: string): Promise<void> {
+        try {
+            const Redis = (await import('ioredis')).default;
+            this.redis = new Redis(redisUrl);
+        } catch (err: any) {
+            console.warn('[BayesianUpdater] Redis connect failed (non-fatal):', err.message);
+        }
+    }
+
+    async updatePosterior(params: {
+        pattern: string;
+        symbol: string;
+        pnlPct: number;
+        exitReason?: string;
+    }): Promise<void> {
+        if (!this.redis) return;
+        const isWin = params.pnlPct > 0;
+        const dimensions: [string, string][] = [
+            ['pattern', params.pattern],
+            ['symbol', params.symbol],
+            ['hour', String(new Date().getUTCHours())],
+            ['combo', `${params.pattern}:${params.symbol}`],
+        ];
+        if (params.exitReason) dimensions.push(['exit', params.exitReason]);
+
+        for (const [dim, key] of dimensions) {
+            const redisKey = `bayes:aktienix:${dim}:${key}`;
+            try {
+                const raw = await this.redis.get(redisKey);
+                const prior = raw ? JSON.parse(raw) : { alpha: 1.5, beta: 1.5, n: 0, totalPnl: 0, avgWin: 0, avgLoss: 0 };
+
+                if (isWin) {
+                    const wins = Math.max(1, prior.alpha - 1.5 + 1);
+                    prior.avgWin = prior.n > 0 && (prior.alpha - 1.5) > 0
+                        ? (prior.avgWin * (prior.alpha - 1.5) + params.pnlPct) / wins
+                        : params.pnlPct;
+                    prior.alpha += 1;
+                } else {
+                    const losses = Math.max(1, prior.beta - 1.5 + 1);
+                    prior.avgLoss = prior.n > 0 && (prior.beta - 1.5) > 0
+                        ? (prior.avgLoss * (prior.beta - 1.5) + params.pnlPct) / losses
+                        : params.pnlPct;
+                    prior.beta += 1;
+                }
+                prior.n += 1;
+                prior.totalPnl += params.pnlPct;
+                prior.lastUpdated = new Date().toISOString();
+
+                await this.redis.set(redisKey, JSON.stringify(prior), 'EX', this.TTL);
+            } catch { /* skip single dimension failure */ }
+        }
+
+        console.log(`[BAYES] aktienix: ${params.symbol} ${isWin ? 'WIN' : 'LOSS'} ${params.pnlPct >= 0 ? '+' : ''}${params.pnlPct.toFixed(2)}% (${dimensions.length} dims)`);
+    }
+
+    async close(): Promise<void> {
+        try { await this.redis?.quit(); } catch { }
+    }
+}
+
 export interface AktienixAgentConfig extends AgentConfig {
     tradingConfig: AktienixConfig;
 }
@@ -93,6 +158,7 @@ export class AktienixAgent extends BaseAgent {
     private riskManager = new RiskManager();
     private statePublisher: StatePublisher | null = null;
     private tradeLogger = new TradeLogger();
+    private bayesianUpdater = new BayesianUpdater();
 
     private tomlConfig = loadAktienixConfig();
 
@@ -181,6 +247,9 @@ export class AktienixAgent extends BaseAgent {
 
         // Connect trade logger to Postgres
         await this.tradeLogger.connect();
+
+        // Connect Bayesian learner to Redis
+        await this.bayesianUpdater.connect(kvUrl || 'redis://localhost:6379');
 
         this.setStatus('idle');
         this.log('info', 'Aktienix initialization complete.');
@@ -295,6 +364,14 @@ export class AktienixAgent extends BaseAgent {
                             exitReason: decision.reason,
                             orderId: result.orderId,
                         });
+                        // Bayesian self-learning
+                        const pnlPct = pos.avgEntryPrice > 0 ? ((pos.currentPrice - pos.avgEntryPrice) / pos.avgEntryPrice) * 100 : 0;
+                        await this.bayesianUpdater.updatePosterior({
+                            pattern: decision.reason?.split(':')[0] || 'exit_monitor',
+                            symbol: decision.symbol,
+                            pnlPct,
+                            exitReason: decision.reason,
+                        });
                     } else {
                         this.log('error', `Exit order failed for ${decision.symbol}: ${result.message}`);
                     }
@@ -323,6 +400,14 @@ export class AktienixAgent extends BaseAgent {
                                 realizedPnl: pos.unrealizedPl,
                                 exitReason: 'eod_close',
                                 orderId: result.orderId,
+                            });
+                            // Bayesian self-learning
+                            const eodPnlPct = pos.avgEntryPrice > 0 ? ((pos.currentPrice - pos.avgEntryPrice) / pos.avgEntryPrice) * 100 : 0;
+                            await this.bayesianUpdater.updatePosterior({
+                                pattern: 'eod_close',
+                                symbol: pos.symbol,
+                                pnlPct: eodPnlPct,
+                                exitReason: 'eod_close',
                             });
                         } else {
                             this.log('error', `[EOD CLOSE] Failed to close ${pos.symbol}: ${result.message}`);
