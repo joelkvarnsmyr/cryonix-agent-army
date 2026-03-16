@@ -306,6 +306,36 @@ export default function VedicPage() {
           </div>
         </div>
 
+        {/* ── Bayesian Score ── */}
+        {(status as any)?.bayes && (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-zinc-300">Bayesian Posterior</h3>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">SELF-LEARNING</span>
+                <span className="text-[10px] text-zinc-600">{(status as any).bayes.totalTrades} obs</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-zinc-500">P(up)=</span>
+                <span className={`text-lg font-mono font-bold ${(status as any).bayes.probability > 0.55 ? 'text-green-400' : (status as any).bayes.probability < 0.45 ? 'text-red-400' : 'text-zinc-300'}`}>
+                  {((status as any).bayes.probability * 100).toFixed(1)}%
+                </span>
+                <span className={`text-sm px-2 py-0.5 rounded font-mono ${labelColors[(status as any).bayes.label] ?? 'text-zinc-500'}`}>
+                  {(status as any).bayes.label}
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 md:grid-cols-5 gap-2 text-xs">
+              {Object.entries((status as any).bayes.signals || {}).map(([name, sig]: [string, any]) => (
+                <div key={name} className={`rounded px-2 py-1 ${sig.direction === 'bullish' ? 'bg-green-500/10 text-green-400' : sig.direction === 'bearish' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-800 text-zinc-500'}`}>
+                  <div className="font-mono text-[10px] opacity-60">{name}</div>
+                  <div className="font-mono">{sig.state} <span className="opacity-50">LR={sig.lr}</span></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── Open Positions ── */}
         {positions.length > 0 && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">

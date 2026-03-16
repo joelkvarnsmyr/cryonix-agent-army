@@ -29,6 +29,7 @@ from src.vedic.scoring import compute_vedic_score, compute_symbol_transits
 from src.vedic.aspects import detect_aspects, detect_retrogrades
 from src.vedic.natal import CRYPTO_GENESIS
 from src.vedic.dasha import compute_all_dashas
+from src.vedic.bayesian import BayesianVedic
 
 # Symbols we trade that have natal charts
 TRACKED_SYMBOLS = [
@@ -50,6 +51,8 @@ class VedicScout:
         self.enabled = get_toml("vedic", "enabled", False)
         self.poll_interval = get_toml("vedic", "poll_interval_seconds", 900)  # 15 min
         self.last_run = 0.0
+        self.bayes = BayesianVedic()
+        self._bayes_loaded = False
 
     async def scan(self) -> Dict[str, Any]:
         """Run full vedic scan: sky state + scoring + transits."""
@@ -64,7 +67,26 @@ class VedicScout:
         # ── 3. Compute per-symbol transit scores ──
         transit_scores = compute_symbol_transits(TRACKED_SYMBOLS, sky)
 
-        # ── 4. Write everything to Redis ──
+        # ── 4. Bayesian posterior ──
+        if not self._bayes_loaded:
+            existed = await self.bayes.load(self.redis)
+            self._bayes_loaded = True
+            print(f"[{self.name}] Bayes: {'loaded from Redis' if existed else 'initialized from research priors'}")
+
+        bayes_signals = {
+            "venus_rx": vedic_score.label == "venus_rx_block",
+            "mercury_rx": vedic_score.is_mercury_retrograde,
+            "n_retrogrades": len(vedic_score.retrogrades),
+            "paksha": vedic_score.lunar_paksha,
+            "tithi_number": vedic_score.tithi_number,
+            "moon_speed": sky.planets["Moon"].speed,
+            "v3_score": vedic_score.overall_score,
+            "jupiter_rx": sky.planets["Jupiter"].is_retrograde,
+            "saturn_rx": sky.planets["Saturn"].is_retrograde,
+        }
+        bayes_prob, bayes_details = self.bayes.predict(bayes_signals)
+
+        # ── 5. Write everything to Redis ──
         pipe = self.redis.pipeline()
 
         # Overall score (V3: includes venus_rx flag)
@@ -182,6 +204,18 @@ class VedicScout:
             pipe.set(f"vedic:transit:{symbol}", json.dumps(transit_data), ex=REDIS_TTL)
             symbols_with_transits += 1
 
+        # Bayesian posterior
+        bayes_data = {
+            "probability": bayes_details["probability"],
+            "score": bayes_details["score"],
+            "label": bayes_details["label"],
+            "base_rate": bayes_details["base_rate"],
+            "signals": bayes_details["signals"],
+            "total_trades": self.bayes.state.total_trades,
+            "timestamp": vedic_score.timestamp,
+        }
+        pipe.set("vedic:bayes", json.dumps(bayes_data), ex=REDIS_TTL)
+
         await pipe.execute()
 
         scan_duration = round(time.time() - scan_start, 2)
@@ -191,15 +225,12 @@ class VedicScout:
         aspect_count = len(vedic_score.active_aspects)
 
         print(
-            f"[{self.name}] Score={vedic_score.overall_score} ({vedic_score.label}) | "
-            f"Moon={vedic_score.moon_nakshatra} ({vedic_score.moon_nakshatra_bias}) | "
+            f"[{self.name}] V3={vedic_score.overall_score} ({vedic_score.label}) | "
+            f"Bayes={bayes_details['score']} P={bayes_prob:.1%} | "
+            f"Moon={vedic_score.moon_nakshatra} | "
             f"Tithi={vedic_score.tithi_name} #{vedic_score.tithi_number} | "
-            f"Muhurta={vedic_score.muhurta_label} | "
-            f"Aspects={aspect_count} | Retro=[{retro_str}] | "
-            f"Mercury Rx={vedic_score.is_mercury_retrograde} | "
-            f"Transits={symbols_with_transits} symbols | "
-            f"Dashas={dashas_written} | "
-            f"{scan_duration}s"
+            f"Retro=[{retro_str}] | MercRx={vedic_score.is_mercury_retrograde} | "
+            f"Transits={symbols_with_transits} | {scan_duration}s"
         )
 
         # Update agent status

@@ -46,6 +46,7 @@ from src.vedic.aspects import mercury_retrograde
 from src.vedic.nakshatras import nakshatra_at_longitude
 from src.vedic.natal import CRYPTO_GENESIS
 from src.vedic.dasha import compute_all_dashas
+from src.vedic.bayesian import BayesianVedic
 
 # ── Configuration ─────────────────────────────────────────────────────
 
@@ -138,6 +139,8 @@ class VedicTrader:
         self.redis = aioredis.from_url(kv_url, decode_responses=True)
         self.name = "VedicTrader"
         self.wallet: Optional[PaperWallet] = None
+        self.bayes = BayesianVedic()
+        self._bayes_loaded = False
         # Venus Rx BTD state tracking
         self.prev_venus_rx = False
         self.venus_rx_ended_at: Optional[float] = None  # timestamp when Venus went direct
@@ -341,6 +344,20 @@ class VedicTrader:
         if dasha_state:
             dasha_info = f"{dasha_state.maha_dasha_lord}/{dasha_state.antar_dasha_lord}"
 
+        # Capture vedic signals at entry for Bayesian update on close
+        sky = get_sky_state()
+        bayes_entry_signals = {
+            "venus_rx": vedic_score.label == "venus_rx_block",
+            "mercury_rx": vedic_score.is_mercury_retrograde,
+            "n_retrogrades": len(vedic_score.retrogrades),
+            "paksha": vedic_score.lunar_paksha,
+            "tithi_number": vedic_score.tithi_number,
+            "moon_speed": sky.planets["Moon"].speed,
+            "v3_score": vedic_score.overall_score,
+            "jupiter_rx": sky.planets["Jupiter"].is_retrograde,
+            "saturn_rx": sky.planets["Saturn"].is_retrograde,
+        }
+
         position = {
             "symbol": f"{symbol}/USDC",
             "base_asset": symbol,
@@ -354,6 +371,7 @@ class VedicTrader:
             "peak_price": price,
             "trailing_active": False,
             "trailing_stop_price": 0.0,
+            "bayes_signals": bayes_entry_signals,
         }
         self.wallet.positions[symbol] = position
         await self.save_wallet()
@@ -413,6 +431,17 @@ class VedicTrader:
             self.wallet.best_trade_pnl = pnl
         if pnl < self.wallet.worst_trade_pnl:
             self.wallet.worst_trade_pnl = pnl
+
+        # Bayesian update: teach the model from this trade outcome
+        bayes_signals = pos.get("bayes_signals")
+        if bayes_signals:
+            if not self._bayes_loaded:
+                await self.bayes.load(self.redis)
+                self._bayes_loaded = True
+            self.bayes.update(bayes_signals, won=(pnl > 0))
+            await self.bayes.save(self.redis)
+            print(f"[{self.name}] Bayes updated: {'WIN' if pnl > 0 else 'LOSS'} "
+                  f"(total={self.bayes.state.total_trades})")
 
         # Remove position
         del self.wallet.positions[symbol]

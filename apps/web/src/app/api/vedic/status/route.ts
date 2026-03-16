@@ -11,9 +11,10 @@ export async function GET() {
   let traderStats: any = null;
   let btdStats: any = null;
   let btdState: any = null;
+  let bayesData: any = null;
 
   try {
-    const [scoreRaw, moonRaw, planetsRaw, aspectsRaw, traderRaw, btdStatsRaw, btdStateRaw] =
+    const [scoreRaw, moonRaw, planetsRaw, aspectsRaw, traderRaw, btdStatsRaw, btdStateRaw, bayesRaw] =
       await Promise.all([
         redis.get('vedic:score'),
         redis.get('vedic:moon'),
@@ -22,6 +23,7 @@ export async function GET() {
         redis.get('vedic_trader:stats'),
         redis.get('vedic_btd:stats'),
         redis.get('vedic_btd:state'),
+        redis.get('vedic:bayes'),
       ]);
 
     if (scoreRaw) try { vedicScore = JSON.parse(scoreRaw as string); } catch {}
@@ -31,6 +33,7 @@ export async function GET() {
     if (traderRaw) try { traderStats = JSON.parse(traderRaw as string); } catch {}
     if (btdStatsRaw) try { btdStats = JSON.parse(btdStatsRaw as string); } catch {}
     if (btdStateRaw) try { btdState = JSON.parse(btdStateRaw as string); } catch {}
+    if (bayesRaw) try { bayesData = JSON.parse(bayesRaw as string); } catch {}
   } catch (error) {
     console.error('[vedic/status] Redis error:', error);
   }
@@ -90,6 +93,14 @@ export async function GET() {
       openPositions: btdStats.open_positions ?? 0,
       entriesThisCycle: btdStats.entries_this_cycle ?? 0,
     } : { running: false, phase: 'OFFLINE' },
+    bayes: bayesData ? {
+      probability: bayesData.probability ?? 0.5,
+      score: bayesData.score ?? 0,
+      label: bayesData.label ?? 'neutral',
+      baseRate: bayesData.base_rate ?? 0.55,
+      totalTrades: bayesData.total_trades ?? 0,
+      signals: bayesData.signals ?? {},
+    } : null,
     timestamp: new Date().toISOString(),
   });
 }
