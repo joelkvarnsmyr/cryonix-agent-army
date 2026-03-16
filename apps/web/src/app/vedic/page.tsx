@@ -1,700 +1,409 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout';
 import {
-  ComposedChart,
-  Line,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-  Bar,
-} from 'recharts';
-import {
-  CurrentStatePanel,
-  VedicSignalBadge,
-  DashaBadge,
-  PlanetGlyph,
   MoonPhaseSvg,
+  PlanetGlyph,
+  VedicSignalBadge,
 } from './vedic-visuals';
 
 // ── Types ────────────────────────────────────────────────────────────
 
-interface VedicDataPoint {
-  date: string;
-  price: number;
-  score: number;
-  label: string;
-  muhurta: string;
-  muhurta_score: number;
-  nakshatra: string;
-  nakshatra_score: number;
-  tithi: string;
-  tithi_number: number;
-  paksha: string;
-  moon_phase: number;
-  mercury_rx: boolean;
-  aspect_score: number;
-  retrogrades: string[];
-  transit_score: number;
-  lagna_sign: string;
-  bhava_score: number;
-  dasha_lord: string;
-  dasha_bias: number;
+interface VedicStatus {
+  scout: {
+    running: boolean;
+    score: number;
+    label: string;
+    venusRx: boolean;
+    mercuryRx: boolean;
+    nRetrogrades: number;
+    muhurtaLabel: string;
+  };
+  moon: {
+    nakshatra: string;
+    nakshatraBias: string;
+    tithi: string;
+    tithiNumber: number;
+    moonPhasePct: number;
+    paksha: string;
+    horaLord: string;
+    vara: string;
+  } | null;
+  planets: Record<string, { longitude: number; sign: string; degrees_in_sign: number; speed: number; is_retrograde: boolean }> | null;
+  aspects: { active: number; nature: string; score: number } | null;
+  trader: {
+    running: boolean;
+    balance?: number;
+    totalPnl?: number;
+    totalReturnPct?: number;
+    trades?: number;
+    wins?: number;
+    losses?: number;
+    winRate?: number;
+    openPositions?: number;
+    positions?: string[];
+  };
+  btd: {
+    running: boolean;
+    phase?: string;
+    daysSinceDirect?: number;
+    balance?: number;
+    totalPnl?: number;
+    totalReturnPct?: number;
+    trades?: number;
+    wins?: number;
+    winRate?: number;
+    openPositions?: number;
+    entriesThisCycle?: number;
+  };
+  timestamp: string;
 }
 
-// ── Constants ────────────────────────────────────────────────────────
+interface Position {
+  symbol: string;
+  pair: string;
+  entryPrice: number;
+  quantity: number;
+  entryTime: number;
+  entryReason: string;
+  peakPrice: number;
+  trailingActive: boolean;
+  btdCycle?: string;
+  btdDay?: number;
+  source: 'trader' | 'btd';
+}
 
-const SYMBOLS = [
-  'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'AVAX', 'DOT',
-  'LINK', 'ATOM', 'DOGE', 'NEAR', 'SUI', 'UNI', 'AAVE', 'LTC',
-];
+interface Trade {
+  action: string;
+  base_asset: string;
+  price: number;
+  quantity: number;
+  pnl?: number;
+  pnl_pct?: number;
+  reason?: string;
+  hold_hours?: number;
+  source: string;
+  timestamp: number;
+  datetime?: string;
+}
 
-const PERIOD_OPTIONS = [
-  { label: '3M', days: 90 },
-  { label: '6M', days: 180 },
-  { label: '1Y', days: 365 },
-];
+interface TradesSummary {
+  total: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  totalPnl: number;
+}
 
-const LABEL_COLORS: Record<string, string> = {
-  very_bullish: '#10b981',
-  bullish: '#6ee7b7',
-  neutral: '#6b7280',
-  bearish: '#f87171',
-  very_bearish: '#dc2626',
+// ── Phase colors ─────────────────────────────────────────────────────
+
+const phaseColors: Record<string, string> = {
+  WAITING: 'text-zinc-400',
+  VENUS_RX: 'text-red-400',
+  COUNTDOWN: 'text-amber-400',
+  ACTIVE: 'text-green-400',
+  COOLDOWN: 'text-blue-400',
+  OFFLINE: 'text-zinc-600',
 };
 
-// ── Helper: format date ──────────────────────────────────────────────
+const labelColors: Record<string, string> = {
+  strong_buy: 'text-green-400 bg-green-400/10',
+  buy: 'text-green-300 bg-green-300/10',
+  neutral: 'text-zinc-400 bg-zinc-400/10',
+  avoid: 'text-amber-400 bg-amber-400/10',
+  strong_avoid: 'text-red-400 bg-red-400/10',
+  venus_rx_block: 'text-red-500 bg-red-500/20 animate-pulse',
+};
 
-function formatDate(d: string) {
-  const [, m, day] = d.split('-');
-  const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${months[Number(m)]} ${Number(day)}`;
-}
-
-function formatPrice(p: number) {
-  if (p >= 10000) return `$${(p / 1000).toFixed(1)}k`;
-  if (p >= 100) return `$${p.toFixed(0)}`;
-  if (p >= 1) return `$${p.toFixed(2)}`;
-  return `$${p.toFixed(4)}`;
-}
-
-// ── Custom Tooltip ───────────────────────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) {
-  if (!active || !payload?.length) return null;
-
-  const point = payload[0]?.payload as VedicDataPoint | undefined;
-  if (!point) return null;
-
-  return (
-    <div className="bg-zinc-900/95 border border-zinc-700/60 rounded-lg px-3 py-2 text-xs font-mono shadow-xl max-w-xs">
-      <div className="flex items-center gap-2 mb-1.5">
-        <MoonPhaseSvg phase={point.moon_phase} paksha={point.paksha} size={28} />
-        <div>
-          <div className="text-zinc-400">{label}</div>
-          <div className="flex items-center gap-1 mt-0.5">
-            <VedicSignalBadge score={point.score} label={point.label} />
-          </div>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
-        <span className="text-zinc-500">Price</span>
-        <span className="text-white">{formatPrice(point.price)}</span>
-
-        <span className="text-zinc-500">Vedic Score</span>
-        <span style={{ color: LABEL_COLORS[point.label] || '#6b7280' }}>
-          {point.score} ({point.label?.replace('_', ' ')})
-        </span>
-
-        <span className="text-zinc-500">Transit</span>
-        <span className={point.transit_score > 0 ? 'text-emerald-400' : point.transit_score < -10 ? 'text-red-400' : 'text-zinc-300'}>
-          {point.transit_score}
-        </span>
-
-        <span className="text-zinc-500">Lagna</span>
-        <span className="text-amber-300">{point.lagna_sign || '—'}</span>
-
-        <span className="text-zinc-500">Bhava</span>
-        <span className={point.bhava_score > 0 ? 'text-emerald-400' : 'text-red-400'}>
-          {point.bhava_score?.toFixed(2)}
-        </span>
-
-        <span className="text-zinc-500">Muhurta</span>
-        <span className="text-zinc-300">{point.muhurta}</span>
-
-        <span className="text-zinc-500">Moon</span>
-        <span className="text-zinc-300">{point.nakshatra} ({point.paksha})</span>
-
-        <span className="text-zinc-500">Tithi</span>
-        <span className="text-zinc-300">#{point.tithi_number} {point.tithi}</span>
-
-        <span className="text-zinc-500">Dasha</span>
-        <span className="text-violet-400">{point.dasha_lord} ({point.dasha_bias > 0 ? '+' : ''}{point.dasha_bias?.toFixed(1)})</span>
-
-        {point.mercury_rx && (
-          <>
-            <span className="text-zinc-500">Mercury</span>
-            <span className="text-red-400">RETROGRADE</span>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Stats Card ───────────────────────────────────────────────────────
-
-function StatCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
-  return (
-    <div className="bg-zinc-900/60 border border-zinc-800/60 rounded-lg px-3 py-2">
-      <div className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</div>
-      <div className={`text-sm font-mono font-semibold ${color ?? 'text-white'}`}>{value}</div>
-      {sub && <div className="text-[10px] text-zinc-500">{sub}</div>}
-    </div>
-  );
-}
-
-// ── Main Page ────────────────────────────────────────────────────────
+// ── Page ─────────────────────────────────────────────────────────────
 
 export default function VedicPage() {
-  const [symbol, setSymbol] = useState('BTC');
-  const [days, setDays] = useState(365);
-  const [data, setData] = useState<VedicDataPoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [overlay, setOverlay] = useState<'score' | 'transit' | 'muhurta' | 'moon'>('score');
+  const [status, setStatus] = useState<VedicStatus | null>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [summary, setSummary] = useState<TradesSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const fetchAll = useCallback(async () => {
     try {
-      const res = await fetch(`/api/vedic/chart?symbol=${symbol}&days=${days}`);
-      if (!res.ok) throw new Error(`API error ${res.status}`);
-      const json = await res.json();
-      setData(json.data ?? []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load');
-    } finally {
-      setLoading(false);
-    }
-  }, [symbol, days]);
-
-  useEffect(() => { fetchData(); }, [fetchData]);
-
-  // ── Computed stats ──
-  const stats = useMemo(() => {
-    if (!data.length) return null;
-
-    const scores = data.map(d => d.score);
-    const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-    const bullishDays = data.filter(d => d.score >= 15).length;
-    const bearishDays = data.filter(d => d.score <= -15).length;
-    const mercRxDays = data.filter(d => d.mercury_rx).length;
-    const shukla = data.filter(d => d.paksha === 'Shukla').length;
-
-    // Price change
-    const firstPrice = data[0]?.price ?? 0;
-    const lastPrice = data[data.length - 1]?.price ?? 0;
-    const priceChange = firstPrice > 0 ? ((lastPrice - firstPrice) / firstPrice * 100) : 0;
-
-    // Correlation: vedic score vs next-day price change
-    let corrSum = 0;
-    let count = 0;
-    for (let i = 0; i < data.length - 1; i++) {
-      const nextReturn = (data[i + 1].price - data[i].price) / data[i].price;
-      corrSum += data[i].score * nextReturn;
-      count++;
-    }
-
-    // Current state
-    const latest = data[data.length - 1];
-
-    return {
-      avgScore: avgScore.toFixed(1),
-      bullishDays,
-      bearishDays,
-      mercRxDays,
-      shukla,
-      priceChange: priceChange.toFixed(1),
-      corrSignal: count > 0 ? (corrSum / count > 0 ? 'positive' : 'negative') : 'n/a',
-      latest,
-    };
-  }, [data]);
-
-  // ── Overlay Y value ──
-  const getOverlayKey = () => {
-    switch (overlay) {
-      case 'score': return 'score';
-      case 'transit': return 'transit_score';
-      case 'muhurta': return 'muhurta_score';
-      case 'moon': return 'moon_phase';
-    }
-  };
-
-  const overlayLabel = () => {
-    switch (overlay) {
-      case 'score': return 'Vedic Score';
-      case 'transit': return 'Transit Score';
-      case 'muhurta': return 'Muhurta';
-      case 'moon': return 'Moon Phase %';
-    }
-  };
-
-  // Mercury retrograde periods for highlighting
-  const mercRxPeriods = useMemo(() => {
-    const periods: { start: string; end: string }[] = [];
-    let current: { start: string; end: string } | null = null;
-    for (const d of data) {
-      if (d.mercury_rx) {
-        if (!current) current = { start: d.date, end: d.date };
-        else current.end = d.date;
-      } else {
-        if (current) { periods.push(current); current = null; }
+      const [statusRes, posRes, tradesRes] = await Promise.all([
+        fetch('/api/vedic/status'),
+        fetch('/api/vedic/positions'),
+        fetch('/api/vedic/trades'),
+      ]);
+      if (statusRes.ok) setStatus(await statusRes.json());
+      if (posRes.ok) {
+        const p = await posRes.json();
+        setPositions(p.positions ?? []);
       }
+      if (tradesRes.ok) {
+        const t = await tradesRes.json();
+        setTrades(t.trades ?? []);
+        setSummary(t.summary ?? null);
+      }
+      setError(null);
+    } catch (err) {
+      setError('Failed to fetch vedic data');
     }
-    if (current) periods.push(current);
-    return periods;
-  }, [data]);
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+    const iv = setInterval(fetchAll, 10_000);
+    return () => clearInterval(iv);
+  }, [fetchAll]);
+
+  const s = status?.scout;
+  const m = status?.moon;
+  const tr = status?.trader;
+  const btd = status?.btd;
 
   return (
     <DashboardLayout>
-      <div className="max-w-6xl mx-auto space-y-4">
-
-        {/* Header */}
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2.5">
-            <span className="text-xs font-mono font-semibold text-violet-400">VEDIC ASTROLOGY</span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-violet-400/30 bg-violet-400/5 text-violet-400">
-              RESEARCH
+      <div className="space-y-4 p-4 max-w-6xl mx-auto">
+        {/* ── Header ── */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-purple-400">VEDIC</h1>
+            <span className="text-xs px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono">
+              V3 DATA-DRIVEN
             </span>
+            {s?.venusRx && (
+              <span className="text-xs px-2 py-0.5 rounded bg-red-500/30 text-red-300 animate-pulse font-bold">
+                VENUS Rx ACTIVE
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-zinc-500">{status?.timestamp ? new Date(status.timestamp).toLocaleString() : ''}</span>
+        </div>
+
+        {error && <div className="text-red-400 text-sm bg-red-500/10 px-3 py-2 rounded">{error}</div>}
+
+        {/* ── V3 Score Card ── */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {/* Score */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+            <div className="text-xs text-zinc-500 mb-1">V3 Composite Score</div>
+            <div className="flex items-center gap-3">
+              <span className={`text-4xl font-bold font-mono ${(s?.score ?? 0) > 0 ? 'text-green-400' : (s?.score ?? 0) < -20 ? 'text-red-400' : 'text-zinc-300'}`}>
+                {s?.score ?? '—'}
+              </span>
+              <span className={`text-sm px-2 py-0.5 rounded font-mono ${labelColors[s?.label ?? ''] ?? 'text-zinc-500'}`}>
+                {s?.label ?? 'loading'}
+              </span>
+            </div>
+            <div className="mt-2 flex gap-3 text-xs text-zinc-500">
+              <span>Venus Rx: <span className={s?.venusRx ? 'text-red-400 font-bold' : 'text-green-400'}>{s?.venusRx ? 'YES' : 'No'}</span></span>
+              <span>Merc Rx: <span className={s?.mercuryRx ? 'text-amber-400' : 'text-zinc-400'}>{s?.mercuryRx ? 'YES' : 'No'}</span></span>
+              <span>Retro: {s?.nRetrogrades ?? 0}</span>
+            </div>
           </div>
 
-          {/* Controls */}
-          <div className="flex items-center gap-2">
-            {/* Symbol selector */}
-            <select
-              value={symbol}
-              onChange={e => setSymbol(e.target.value)}
-              title="Select crypto symbol"
-              className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs font-mono text-white focus:outline-none focus:border-violet-500"
-            >
-              {SYMBOLS.map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
+          {/* Moon */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+            <div className="text-xs text-zinc-500 mb-1">Moon State</div>
+            {m ? (
+              <div className="flex items-center gap-3">
+                <MoonPhaseSvg phase={m.moonPhasePct} size={48} paksha={m.paksha} />
+                <div>
+                  <div className="text-sm font-mono text-zinc-200">{m.nakshatra}</div>
+                  <div className="text-xs text-zinc-500">{m.tithi} ({m.paksha}) #{m.tithiNumber}</div>
+                  <div className="text-xs text-zinc-500">Phase: {m.moonPhasePct}% | Hora: {m.horaLord} | {m.vara}</div>
+                </div>
+              </div>
+            ) : <div className="text-zinc-600 text-sm">Loading...</div>}
+          </div>
 
-            {/* Period */}
-            <div className="flex gap-0.5 bg-zinc-900 border border-zinc-700 rounded p-0.5">
-              {PERIOD_OPTIONS.map(p => (
-                <button
-                  key={p.days}
-                  onClick={() => setDays(p.days)}
-                  className={`px-2 py-0.5 text-[10px] font-mono rounded transition-colors ${
-                    days === p.days
-                      ? 'bg-violet-500/20 text-violet-400'
-                      : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Overlay selector */}
-            <div className="flex gap-0.5 bg-zinc-900 border border-zinc-700 rounded p-0.5">
-              {(['score', 'transit', 'muhurta', 'moon'] as const).map(o => (
-                <button
-                  key={o}
-                  onClick={() => setOverlay(o)}
-                  className={`px-2 py-0.5 text-[10px] font-mono rounded transition-colors ${
-                    overlay === o
-                      ? 'bg-violet-500/20 text-violet-400'
-                      : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  {o === 'score' ? 'Score' : o === 'transit' ? 'Transit' : o === 'muhurta' ? 'Muhurta' : 'Moon'}
-                </button>
-              ))}
-            </div>
+          {/* Planets */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+            <div className="text-xs text-zinc-500 mb-1">Planets</div>
+            {status?.planets ? (
+              <div className="grid grid-cols-3 gap-1 text-xs">
+                {Object.entries(status.planets).map(([name, p]) => (
+                  <div key={name} className={`flex items-center gap-1 ${p.is_retrograde ? 'text-red-400' : 'text-zinc-400'}`}>
+                    <PlanetGlyph planet={name} size={14} />
+                    <span className="font-mono">{p.sign.slice(0, 3)}</span>
+                    {p.is_retrograde && <span className="text-[10px]">Rx</span>}
+                  </div>
+                ))}
+              </div>
+            ) : <div className="text-zinc-600 text-sm">Loading...</div>}
           </div>
         </div>
 
-        {/* Loading / Error */}
-        {loading && (
-          <div className="h-96 flex items-center justify-center">
-            <div className="text-xs font-mono text-zinc-500 animate-pulse">
-              Computing {days} days of vedic data for {symbol}...
-            </div>
-          </div>
-        )}
-
-        {error && (
-          <div className="h-96 flex items-center justify-center">
-            <div className="text-xs font-mono text-red-400">{error}</div>
-          </div>
-        )}
-
-        {/* Chart */}
-        {!loading && !error && data.length > 0 && (
-          <>
-            {/* Current vedic state — rich SVG visuals */}
-            {stats?.latest && (
-              <CurrentStatePanel
-                score={stats.latest.score}
-                label={stats.latest.label}
-                moonPhase={stats.latest.moon_phase}
-                paksha={stats.latest.paksha}
-                nakshatra={stats.latest.nakshatra}
-                lagnaSign={stats.latest.lagna_sign}
-                dashaLord={stats.latest.dasha_lord}
-                dashaBias={stats.latest.dasha_bias}
-                retrogrades={stats.latest.retrogrades ?? []}
-                mercuryRx={stats.latest.mercury_rx}
-                muhurta={stats.latest.muhurta}
-                tithi={stats.latest.tithi}
-                tithiNumber={stats.latest.tithi_number}
-              />
-            )}
-
-            {/* Stats row */}
-            {stats && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-                <StatCard
-                  label="Avg Score"
-                  value={stats.avgScore}
-                  color={Number(stats.avgScore) > 0 ? 'text-emerald-400' : 'text-red-400'}
-                />
-                <StatCard label="Bullish Days" value={String(stats.bullishDays)} sub={`of ${data.length}`} color="text-emerald-400" />
-                <StatCard label="Bearish Days" value={String(stats.bearishDays)} sub={`of ${data.length}`} color="text-red-400" />
-                <StatCard label="Price" value={`${stats.priceChange}%`} color={Number(stats.priceChange) >= 0 ? 'text-emerald-400' : 'text-red-400'} />
-                <StatCard label="Mercury Rx" value={`${stats.mercRxDays}d`} sub={`${(stats.mercRxDays / data.length * 100).toFixed(0)}%`} color="text-amber-400" />
-                <StatCard label="Shukla" value={`${stats.shukla}d`} sub="waxing moon" color="text-sky-400" />
-                <StatCard
-                  label="Now"
-                  value={stats.latest?.label?.replace('_', ' ') ?? '—'}
-                  sub={`score: ${stats.latest?.score ?? '—'}`}
-                  color={LABEL_COLORS[stats.latest?.label ?? ''] ? `text-[${LABEL_COLORS[stats.latest?.label ?? '']}]` : 'text-zinc-300'}
-                />
-                <StatCard
-                  label="Dasha"
-                  value={stats.latest?.dasha_lord ?? '—'}
-                  sub={`bias: ${stats.latest?.dasha_bias?.toFixed(1) ?? '—'}`}
-                  color="text-violet-400"
-                />
+        {/* ── Wallets ── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* V3 Trader Wallet */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${tr?.running ? 'bg-green-400 animate-pulse' : 'bg-zinc-600'}`} />
+                <span className="text-sm font-bold text-zinc-200">V3 Trader</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">PAPER</span>
               </div>
-            )}
-
-            {/* Main chart */}
-            <div className="bg-zinc-900/60 border border-zinc-800/60 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-zinc-400">
-                  {symbol}/USDC + {overlayLabel()} ({data.length} days)
-                </span>
-                <div className="flex items-center gap-3 text-[10px] font-mono text-zinc-500">
-                  <span className="flex items-center gap-1">
-                    <span className="w-2 h-0.5 bg-white inline-block" /> Price
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-2 h-0.5 bg-violet-400 inline-block" /> {overlayLabel()}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 bg-red-400/20 inline-block rounded" /> Mercury Rx
-                  </span>
+              <span className="text-xs text-zinc-500">{tr?.openPositions ?? 0} pos</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div>
+                <div className="text-lg font-mono text-zinc-200">${tr?.balance?.toFixed(0) ?? '—'}</div>
+                <div className="text-[10px] text-zinc-500">Balance</div>
+              </div>
+              <div>
+                <div className={`text-lg font-mono ${(tr?.totalPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  ${tr?.totalPnl?.toFixed(2) ?? '0.00'}
                 </div>
+                <div className="text-[10px] text-zinc-500">P&L</div>
               </div>
-
-              <ResponsiveContainer width="100%" height={420}>
-                <ComposedChart data={data} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-
-                  <XAxis
-                    dataKey="date"
-                    tickFormatter={formatDate}
-                    tick={{ fill: '#71717a', fontSize: 10, fontFamily: 'monospace' }}
-                    interval={Math.max(Math.floor(data.length / 12), 1)}
-                    stroke="#3f3f46"
-                  />
-
-                  {/* Left Y: Price */}
-                  <YAxis
-                    yAxisId="price"
-                    orientation="left"
-                    tickFormatter={formatPrice}
-                    tick={{ fill: '#71717a', fontSize: 10, fontFamily: 'monospace' }}
-                    stroke="#3f3f46"
-                    domain={['auto', 'auto']}
-                  />
-
-                  {/* Right Y: Vedic Score */}
-                  <YAxis
-                    yAxisId="vedic"
-                    orientation="right"
-                    tick={{ fill: '#8b5cf6', fontSize: 10, fontFamily: 'monospace' }}
-                    stroke="#3f3f46"
-                    domain={overlay === 'moon' ? [0, 100] : [-100, 100]}
-                  />
-
-                  <Tooltip content={<ChartTooltip />} />
-
-                  {/* Zero line for vedic score */}
-                  {overlay !== 'moon' && (
-                    <ReferenceLine yAxisId="vedic" y={0} stroke="#4b5563" strokeDasharray="2 2" />
-                  )}
-
-                  {/* Mercury Rx periods as semi-transparent bars */}
-                  <Bar
-                    yAxisId="vedic"
-                    dataKey={(d: VedicDataPoint) => d.mercury_rx ? (overlay === 'moon' ? 100 : 100) : 0}
-                    fill="#ef444420"
-                    stroke="none"
-                    isAnimationActive={false}
-                  />
-
-                  {/* Vedic score area */}
-                  <Area
-                    yAxisId="vedic"
-                    dataKey={getOverlayKey()}
-                    stroke="#8b5cf6"
-                    strokeWidth={1}
-                    fill="#8b5cf610"
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-
-                  {/* Price line */}
-                  <Line
-                    yAxisId="price"
-                    type="monotone"
-                    dataKey="price"
-                    stroke="#ffffff"
-                    strokeWidth={1.5}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
+              <div>
+                <div className="text-lg font-mono text-zinc-200">{tr?.winRate?.toFixed(0) ?? 0}%</div>
+                <div className="text-[10px] text-zinc-500">WR ({tr?.trades ?? 0}T)</div>
+              </div>
             </div>
+          </div>
 
-            {/* Correlation analysis */}
-            <div className="bg-zinc-900/60 border border-zinc-800/60 rounded-lg p-4">
-              <div className="text-xs font-mono text-zinc-400 mb-3">Vedic Signal Correlation Analysis</div>
-              <CorrelationTable data={data} />
+          {/* BTD Wallet */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${btd?.running ? 'bg-purple-400 animate-pulse' : 'bg-zinc-600'}`} />
+                <span className="text-sm font-bold text-zinc-200">BTD Trader</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">PAPER</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${phaseColors[btd?.phase ?? ''] ?? 'text-zinc-600'}`}>
+                  {btd?.phase ?? 'OFFLINE'}
+                </span>
+              </div>
+              <span className="text-xs text-zinc-500">
+                {btd?.phase === 'ACTIVE' ? `Day ${btd?.daysSinceDirect?.toFixed(0)}` : ''}
+              </span>
             </div>
-
-            {/* Dasha timeline */}
-            <div className="bg-zinc-900/60 border border-zinc-800/60 rounded-lg p-4">
-              <div className="text-xs font-mono text-zinc-400 mb-3">Dasha Period Performance</div>
-              <DashaTable data={data} />
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div>
+                <div className="text-lg font-mono text-zinc-200">${btd?.balance?.toFixed(0) ?? '—'}</div>
+                <div className="text-[10px] text-zinc-500">Balance</div>
+              </div>
+              <div>
+                <div className={`text-lg font-mono ${(btd?.totalPnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  ${btd?.totalPnl?.toFixed(2) ?? '0.00'}
+                </div>
+                <div className="text-[10px] text-zinc-500">P&L</div>
+              </div>
+              <div>
+                <div className="text-lg font-mono text-zinc-200">{btd?.winRate?.toFixed(0) ?? 0}%</div>
+                <div className="text-[10px] text-zinc-500">WR ({btd?.trades ?? 0}T)</div>
+              </div>
             </div>
-
-            {/* Mercury Rx performance */}
-            {mercRxPeriods.length > 0 && (
-              <div className="bg-zinc-900/60 border border-zinc-800/60 rounded-lg p-4">
-                <div className="text-xs font-mono text-zinc-400 mb-3">Mercury Retrograde Periods</div>
-                <MercuryRxTable data={data} periods={mercRxPeriods} />
+            {btd?.phase === 'COUNTDOWN' && (
+              <div className="mt-2 text-xs text-amber-400 bg-amber-400/10 rounded px-2 py-1">
+                Venus went direct — BTD entry in {Math.max(0, 7 - (btd?.daysSinceDirect ?? 0)).toFixed(0)} days
               </div>
             )}
-          </>
+            {btd?.phase === 'ACTIVE' && (
+              <div className="mt-2 text-xs text-green-400 bg-green-400/10 rounded px-2 py-1">
+                BTD window ACTIVE — {Math.max(0, 60 - (btd?.daysSinceDirect ?? 0)).toFixed(0)} days remaining | RSI&lt;50 filter
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Open Positions ── */}
+        {positions.length > 0 && (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+            <h3 className="text-sm font-bold text-zinc-300 mb-2">Open Positions</h3>
+            <div className="space-y-2">
+              {positions.map((pos, i) => (
+                <div key={i} className="flex items-center justify-between bg-zinc-800/50 rounded px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${pos.source === 'btd' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'}`}>
+                      {pos.source === 'btd' ? 'BTD' : 'V3'}
+                    </span>
+                    <span className="font-mono text-sm text-zinc-200">{pos.symbol}</span>
+                    <span className="text-xs text-zinc-500">@ ${pos.entryPrice.toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="text-zinc-500">qty: {pos.quantity.toFixed(6)}</span>
+                    {pos.trailingActive && <span className="text-amber-400">TRAILING</span>}
+                    {pos.btdCycle && <span className="text-purple-400">{pos.btdCycle} D+{pos.btdDay}</span>}
+                    <span className="text-zinc-500">{pos.entryReason?.slice(0, 40)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
+
+        {/* ── Trade History ── */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-bold text-zinc-300">Trade History</h3>
+            {summary && (
+              <div className="flex gap-3 text-xs text-zinc-500">
+                <span>{summary.total} trades</span>
+                <span className="text-green-400">{summary.wins}W</span>
+                <span className="text-red-400">{summary.losses}L</span>
+                <span>WR: {summary.winRate}%</span>
+                <span className={summary.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                  ${summary.totalPnl.toFixed(2)}
+                </span>
+              </div>
+            )}
+          </div>
+          {trades.length === 0 ? (
+            <div className="text-zinc-600 text-sm py-4 text-center">No trades yet</div>
+          ) : (
+            <div className="space-y-1 max-h-96 overflow-y-auto">
+              {trades.slice(0, 50).map((t, i) => (
+                <div key={i} className={`flex items-center justify-between text-xs py-1.5 px-2 rounded ${t.action === 'SELL' ? (t.pnl && t.pnl > 0 ? 'bg-green-500/5' : 'bg-red-500/5') : 'bg-zinc-800/30'}`}>
+                  <div className="flex items-center gap-2">
+                    <span className={`font-mono font-bold ${t.action === 'BUY' ? 'text-green-400' : t.pnl && t.pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {t.action}
+                    </span>
+                    <span className={`px-1 rounded text-[10px] ${t.source === 'btd' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'}`}>
+                      {t.source === 'btd' ? 'BTD' : 'V3'}
+                    </span>
+                    <span className="font-mono text-zinc-300">{t.base_asset}</span>
+                    <span className="text-zinc-500">@ ${t.price?.toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {t.pnl != null && (
+                      <span className={`font-mono ${t.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${t.pnl.toFixed(2)} ({t.pnl_pct?.toFixed(1)}%)
+                      </span>
+                    )}
+                    {t.hold_hours != null && <span className="text-zinc-600">{t.hold_hours.toFixed(0)}h</span>}
+                    <span className="text-zinc-600">{t.reason?.slice(0, 30)}</span>
+                    <span className="text-zinc-700">{t.datetime ? new Date(t.datetime).toLocaleDateString() : ''}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Research Info ── */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+          <h3 className="text-sm font-bold text-zinc-300 mb-2">Research Basis</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-zinc-500">
+            <div>
+              <div className="text-zinc-400 font-bold mb-1">V3 Model</div>
+              <p>6 symbols x 2000 days. OOS validated +3.4%.</p>
+              <p>Venus Rx gate (p&lt;0.0001) + Merc Rx + Retro count + Paksha.</p>
+            </div>
+            <div>
+              <div className="text-zinc-400 font-bold mb-1">BTD Strategy</div>
+              <p>Entry Day+7 post-Venus-Rx, RSI&lt;50 filter.</p>
+              <p>+33.7% avg 60d return. SL=12%, TP=40%.</p>
+              <p>Mercury Rx gate (skip if both Rx).</p>
+            </div>
+            <div>
+              <div className="text-zinc-400 font-bold mb-1">SHORT Signal (Futures)</div>
+              <p>Sharpe 4.49, 96.4% WR, +6.5%/trade.</p>
+              <p>Day+7 into Rx + trailing stop.</p>
+              <p className="text-amber-400">Requires futures account (prepared).</p>
+            </div>
+          </div>
+        </div>
       </div>
     </DashboardLayout>
-  );
-}
-
-// ── Correlation Table ────────────────────────────────────────────────
-
-function CorrelationTable({ data }: { data: VedicDataPoint[] }) {
-  const analysis = useMemo(() => {
-    const buckets: Record<string, { returns: number[]; count: number }> = {
-      'very_bullish': { returns: [], count: 0 },
-      'bullish': { returns: [], count: 0 },
-      'neutral': { returns: [], count: 0 },
-      'bearish': { returns: [], count: 0 },
-      'very_bearish': { returns: [], count: 0 },
-    };
-
-    for (let i = 0; i < data.length - 1; i++) {
-      const label = data[i].label;
-      const nextReturn = (data[i + 1].price - data[i].price) / data[i].price * 100;
-      if (buckets[label]) {
-        buckets[label].returns.push(nextReturn);
-        buckets[label].count++;
-      }
-    }
-
-    return Object.entries(buckets).map(([label, b]) => {
-      const avg = b.returns.length > 0 ? b.returns.reduce((a, c) => a + c, 0) / b.returns.length : 0;
-      const positive = b.returns.filter(r => r > 0).length;
-      const winRate = b.returns.length > 0 ? (positive / b.returns.length * 100) : 0;
-      return { label, count: b.count, avgReturn: avg, winRate };
-    });
-  }, [data]);
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs font-mono">
-        <thead>
-          <tr className="text-zinc-500 border-b border-zinc-800">
-            <th className="text-left py-1.5 px-2">Vedic Label</th>
-            <th className="text-right py-1.5 px-2">Days</th>
-            <th className="text-right py-1.5 px-2">Avg Next-Day Return</th>
-            <th className="text-right py-1.5 px-2">Win Rate</th>
-            <th className="text-left py-1.5 px-2">Signal Value</th>
-          </tr>
-        </thead>
-        <tbody>
-          {analysis.map(a => {
-            const valueColor = a.avgReturn > 0.1 ? 'text-emerald-400' :
-              a.avgReturn < -0.1 ? 'text-red-400' : 'text-zinc-400';
-            const quality = a.label.includes('bullish') && a.avgReturn > 0 ? 'CONFIRMED' :
-              a.label.includes('bearish') && a.avgReturn < 0 ? 'CONFIRMED' :
-                a.count === 0 ? '—' : 'MIXED';
-
-            return (
-              <tr key={a.label} className="border-b border-zinc-800/50 hover:bg-zinc-800/20">
-                <td className="py-1.5 px-2" style={{ color: LABEL_COLORS[a.label] }}>
-                  {a.label.replace('_', ' ')}
-                </td>
-                <td className="text-right py-1.5 px-2 text-zinc-300">{a.count}</td>
-                <td className={`text-right py-1.5 px-2 ${valueColor}`}>
-                  {a.avgReturn > 0 ? '+' : ''}{a.avgReturn.toFixed(3)}%
-                </td>
-                <td className="text-right py-1.5 px-2 text-zinc-300">
-                  {a.count > 0 ? `${a.winRate.toFixed(0)}%` : '—'}
-                </td>
-                <td className={`py-1.5 px-2 ${quality === 'CONFIRMED' ? 'text-emerald-400' : quality === 'MIXED' ? 'text-amber-400' : 'text-zinc-500'}`}>
-                  {quality}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ── Dasha Performance Table ──────────────────────────────────────────
-
-function DashaTable({ data }: { data: VedicDataPoint[] }) {
-  const dashaPerf = useMemo(() => {
-    const buckets: Record<string, { returns: number[]; days: number }> = {};
-
-    for (let i = 0; i < data.length - 1; i++) {
-      const lord = data[i].dasha_lord || 'Unknown';
-      if (!buckets[lord]) buckets[lord] = { returns: [], days: 0 };
-      const ret = (data[i + 1].price - data[i].price) / data[i].price * 100;
-      buckets[lord].returns.push(ret);
-      buckets[lord].days++;
-    }
-
-    return Object.entries(buckets)
-      .map(([lord, b]) => {
-        const avg = b.returns.reduce((a, c) => a + c, 0) / b.returns.length;
-        const total = b.returns.reduce((a, c) => a + c, 0);
-        return { lord, days: b.days, avgReturn: avg, totalReturn: total };
-      })
-      .sort((a, b) => b.totalReturn - a.totalReturn);
-  }, [data]);
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs font-mono">
-        <thead>
-          <tr className="text-zinc-500 border-b border-zinc-800">
-            <th className="text-left py-1.5 px-2">Dasha Lord</th>
-            <th className="text-right py-1.5 px-2">Days</th>
-            <th className="text-right py-1.5 px-2">Avg Daily Return</th>
-            <th className="text-right py-1.5 px-2">Total Return</th>
-          </tr>
-        </thead>
-        <tbody>
-          {dashaPerf.map(d => (
-            <tr key={d.lord} className="border-b border-zinc-800/50 hover:bg-zinc-800/20">
-              <td className="py-1.5 px-2 text-violet-400 flex items-center gap-1">
-                    <PlanetGlyph planet={d.lord} size={18} />
-                    {d.lord}
-                  </td>
-              <td className="text-right py-1.5 px-2 text-zinc-300">{d.days}</td>
-              <td className={`text-right py-1.5 px-2 ${d.avgReturn > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                {d.avgReturn > 0 ? '+' : ''}{d.avgReturn.toFixed(3)}%
-              </td>
-              <td className={`text-right py-1.5 px-2 ${d.totalReturn > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                {d.totalReturn > 0 ? '+' : ''}{d.totalReturn.toFixed(2)}%
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ── Mercury Rx Table ─────────────────────────────────────────────────
-
-function MercuryRxTable({ data, periods }: { data: VedicDataPoint[]; periods: { start: string; end: string }[] }) {
-  const rxPerf = useMemo(() => {
-    return periods.map(p => {
-      const start = data.find(d => d.date === p.start);
-      const end = data.find(d => d.date === p.end);
-      if (!start || !end) return null;
-
-      const priceChange = ((end.price - start.price) / start.price * 100);
-      const daysInPeriod = data.filter(d => d.date >= p.start && d.date <= p.end).length;
-
-      return {
-        start: p.start,
-        end: p.end,
-        days: daysInPeriod,
-        startPrice: start.price,
-        endPrice: end.price,
-        change: priceChange,
-      };
-    }).filter(Boolean) as Array<{ start: string; end: string; days: number; startPrice: number; endPrice: number; change: number }>;
-  }, [data, periods]);
-
-  const avgChange = rxPerf.length > 0 ? rxPerf.reduce((a, p) => a + p.change, 0) / rxPerf.length : 0;
-
-  return (
-    <div>
-      <div className="text-[10px] font-mono text-zinc-500 mb-2">
-        {rxPerf.length} retrograde periods | Avg price change: {' '}
-        <span className={avgChange > 0 ? 'text-emerald-400' : 'text-red-400'}>
-          {avgChange > 0 ? '+' : ''}{avgChange.toFixed(2)}%
-        </span>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs font-mono">
-          <thead>
-            <tr className="text-zinc-500 border-b border-zinc-800">
-              <th className="text-left py-1.5 px-2">Period</th>
-              <th className="text-right py-1.5 px-2">Days</th>
-              <th className="text-right py-1.5 px-2">Start Price</th>
-              <th className="text-right py-1.5 px-2">End Price</th>
-              <th className="text-right py-1.5 px-2">Change</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rxPerf.map((p, i) => (
-              <tr key={i} className="border-b border-zinc-800/50 hover:bg-zinc-800/20">
-                <td className="py-1.5 px-2 text-amber-400">{p.start} → {p.end}</td>
-                <td className="text-right py-1.5 px-2 text-zinc-300">{p.days}</td>
-                <td className="text-right py-1.5 px-2 text-zinc-300">{formatPrice(p.startPrice)}</td>
-                <td className="text-right py-1.5 px-2 text-zinc-300">{formatPrice(p.endPrice)}</td>
-                <td className={`text-right py-1.5 px-2 ${p.change > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {p.change > 0 ? '+' : ''}{p.change.toFixed(2)}%
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
   );
 }

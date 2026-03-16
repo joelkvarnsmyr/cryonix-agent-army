@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import {
   Activity, BarChart3, LineChart, Settings, Wifi, WifiOff,
-  FlaskConical, TrendingUp, CircleDollarSign, ChevronRight, Target,
+  FlaskConical, TrendingUp, CircleDollarSign, ChevronRight, Target, Moon,
 } from 'lucide-react';
 import { Button } from '@cryonix/ui';
 import { useSystemHealth } from '@/hooks/useSystemHealth';
@@ -29,6 +29,16 @@ const NAV_GROUPS = [
       { href: '/analytics',  label: 'Analytics', icon: LineChart,      desc: 'Trade journal & performance' },
       { href: '/backtest',   label: 'Backtest',  icon: FlaskConical,   desc: 'Strategy backtesting' },
       { href: '/legacy',     label: 'Monitor',   icon: BarChart3,      desc: 'Full system monitor' },
+    ],
+  },
+  {
+    id: 'vedic',
+    label: 'VEDIC',
+    accent: 'text-purple-400',
+    dot: 'bg-purple-400',
+    glow: 'shadow-[0_0_8px_rgba(192,132,252,0.5)]',
+    items: [
+      { href: '/vedic', label: 'Vedic', icon: Moon, desc: 'Astrology V3 + BTD trader' },
     ],
   },
   {
