@@ -9,12 +9,12 @@
  *   Loss:      Beta(α, β + 1)
  *   Posterior:  E[p] = α / (α + β)
  *
- * Categories tracked:
- *   - type:       arb | directional
- *   - asset:      BTC | ETH | SOL | MACRO | CRYPTO
- *   - edge_bucket: low (2-5%) | medium (5-15%) | high (15%+)
- *   - side:       YES | NO | BOTH
- *   - expiry:     short (<7d) | medium (7-30d) | long (30d+)
+ * Design decisions (from audit):
+ *   - Arb trades are OBSERVATION-ONLY — never penalized or vetoed (arb = risk-free by design)
+ *   - Only directional trades get adjustments
+ *   - Uses single worst-category factor (no multiplicative stacking)
+ *   - High minimum observations (10 penalty, 20 veto) to avoid noise-fitting
+ *   - Combo categories removed (too sparse to be useful early on)
  *
  * Persisted to Postgres table `polynix_priors` (survives restarts).
  */
@@ -28,35 +28,31 @@ const TABLE = 'polynix_priors';
 // ---------------------------------------------------------------------------
 
 export interface BetaParams {
-    alpha: number;  // wins + prior_alpha
-    beta: number;   // losses + prior_beta
+    alpha: number;
+    beta: number;
 }
 
 export interface CategoryPrior extends BetaParams {
     category: string;
     key: string;
     observations: number;
-    winRate: number;       // posterior mean: alpha / (alpha + beta)
-    confidence: number;    // how "sure" we are (0-1), based on observation count
+    winRate: number;
+    confidence: number;
 }
 
 export interface TradeFeatures {
     type: 'arb' | 'directional';
     asset: string;
     side: 'YES' | 'NO' | 'BOTH';
-    edge: number;           // 0-1
+    edge: number;           // 0-1 (actual edge from signal)
     timeToExpirySec: number;
     won: boolean;
 }
 
 export interface BayesianAdjustment {
-    /** Multiplicative adjustment to apply to confidence (e.g., 0.8 = 20% penalty) */
     factor: number;
-    /** Human-readable reasons for the adjustment */
     reasons: string[];
-    /** Posterior win rates for each relevant category */
     posteriors: Record<string, number>;
-    /** Should we skip this trade entirely? */
     veto: boolean;
 }
 
@@ -68,14 +64,11 @@ export class BayesianLearner {
     private priors: Map<string, BetaParams> = new Map();
     private pg: PgClient | null = null;
 
-    // Uninformative prior: Beta(1, 1) = uniform
-    // Slightly informative for arb: Beta(5, 1) = expect ~83% win rate
     private readonly DEFAULT_PRIOR: BetaParams = { alpha: 1, beta: 1 };
-    private readonly ARB_PRIOR: BetaParams = { alpha: 5, beta: 1 };
 
-    // Minimum observations before we trust the posterior enough to act on it
-    private readonly MIN_OBS_FOR_PENALTY = 3;
-    private readonly MIN_OBS_FOR_VETO = 8;
+    // High thresholds — need real data before acting
+    private readonly MIN_OBS_FOR_PENALTY = 10;
+    private readonly MIN_OBS_FOR_VETO = 20;
 
     async connect(pgUrl?: string): Promise<void> {
         const url = pgUrl ?? process.env.POSTGRES_URL;
@@ -93,7 +86,9 @@ export class BayesianLearner {
     }
 
     /**
-     * Record a trade outcome and update all relevant category priors.
+     * Record a trade outcome. Updates all relevant category priors.
+     * Both arb and directional outcomes are recorded for observation,
+     * but only directional categories are used for trading adjustments.
      */
     async recordOutcome(features: TradeFeatures): Promise<void> {
         const categories = this.featuresToCategories(features);
@@ -111,9 +106,12 @@ export class BayesianLearner {
     }
 
     /**
-     * Get a Bayesian adjustment for a proposed trade.
-     * Returns a factor (0-1.5) to multiply the confidence by,
-     * and optionally a veto if the category has very poor track record.
+     * Get a Bayesian adjustment for a proposed DIRECTIONAL trade.
+     * Arb trades always return factor=1.0, veto=false (arb is risk-free by design).
+     *
+     * Uses single worst-category approach (no multiplicative stacking):
+     * - Find the category with the lowest win rate
+     * - Apply that single adjustment as the factor
      */
     evaluate(
         type: 'arb' | 'directional',
@@ -122,78 +120,64 @@ export class BayesianLearner {
         edge: number,
         timeToExpirySec: number,
     ): BayesianAdjustment {
+        // Arb: never adjust — risk-free by design
+        if (type === 'arb') {
+            return { factor: 1.0, reasons: [], posteriors: {}, veto: false };
+        }
+
         const categories = this.featuresToCategories({
-            type, asset, side, edge, timeToExpirySec, won: false, // won doesn't matter for evaluation
+            type, asset, side, edge, timeToExpirySec, won: false,
         });
 
         const reasons: string[] = [];
         const posteriors: Record<string, number> = {};
-        let factorProduct = 1.0;
+        let worstFactor = 1.0;
+        let worstCat = '';
         let veto = false;
 
         for (const cat of categories) {
             const prior = this.getPrior(cat);
-            const observations = (prior.alpha - 1) + (prior.beta - 1); // subtract initial prior
+            const observations = (prior.alpha - 1) + (prior.beta - 1);
             const winRate = prior.alpha / (prior.alpha + prior.beta);
             posteriors[cat] = winRate;
 
             if (observations < this.MIN_OBS_FOR_PENALTY) continue;
 
-            // Category-specific adjustment
-            const catType = cat.split(':')[0];
-
-            if (catType === 'type' && cat.includes('directional')) {
-                // Directional: penalize if win rate < 40%, boost if > 65%
-                if (winRate < 0.30 && observations >= this.MIN_OBS_FOR_VETO) {
-                    veto = true;
-                    reasons.push(`Veto: ${cat} win rate ${(winRate * 100).toFixed(0)}% (${observations} obs)`);
-                } else if (winRate < 0.40) {
-                    const penalty = 0.6 + (winRate / 0.40) * 0.4; // 0.6-1.0
-                    factorProduct *= penalty;
-                    reasons.push(`${cat}: WR ${(winRate * 100).toFixed(0)}% → ${(penalty * 100).toFixed(0)}% factor`);
-                } else if (winRate > 0.65) {
-                    const boost = 1.0 + ((winRate - 0.65) / 0.35) * 0.3; // 1.0-1.3
-                    factorProduct *= boost;
-                    reasons.push(`${cat}: WR ${(winRate * 100).toFixed(0)}% → ${(boost * 100).toFixed(0)}% boost`);
-                }
+            // Veto: consistent loser with enough data
+            if (winRate < 0.25 && observations >= this.MIN_OBS_FOR_VETO) {
+                veto = true;
+                reasons.push(`Veto: ${cat} WR ${(winRate * 100).toFixed(0)}% (n=${observations})`);
+                continue;
             }
 
-            if (catType === 'asset') {
-                // Asset-specific: penalize poorly performing assets
-                if (winRate < 0.35 && observations >= this.MIN_OBS_FOR_PENALTY) {
-                    const penalty = 0.7 + (winRate / 0.35) * 0.3;
-                    factorProduct *= penalty;
-                    reasons.push(`${cat}: WR ${(winRate * 100).toFixed(0)}% → ${(penalty * 100).toFixed(0)}% factor`);
-                }
+            // Penalty: WR below 40% → factor 0.5-1.0
+            // Boost: WR above 60% → factor 1.0-1.3
+            let factor = 1.0;
+            if (winRate < 0.40) {
+                factor = 0.5 + (winRate / 0.40) * 0.5; // 0.5 at WR=0%, 1.0 at WR=40%
+                reasons.push(`${cat}: WR ${(winRate * 100).toFixed(0)}% → ${(factor * 100).toFixed(0)}%`);
+            } else if (winRate > 0.60 && observations >= this.MIN_OBS_FOR_PENALTY) {
+                factor = 1.0 + ((winRate - 0.60) / 0.40) * 0.3; // 1.0 at WR=60%, 1.3 at WR=100%
+                reasons.push(`${cat}: WR ${(winRate * 100).toFixed(0)}% → +${((factor - 1) * 100).toFixed(0)}% boost`);
             }
 
-            if (catType === 'edge') {
-                // Edge bucket: if low-edge trades consistently lose, penalize
-                if (winRate < 0.40 && observations >= this.MIN_OBS_FOR_PENALTY) {
-                    const penalty = 0.7 + (winRate / 0.40) * 0.3;
-                    factorProduct *= penalty;
-                    reasons.push(`${cat}: WR ${(winRate * 100).toFixed(0)}% → ${(penalty * 100).toFixed(0)}% factor`);
-                }
+            // Track worst (most conservative) single factor
+            if (factor < worstFactor) {
+                worstFactor = factor;
+                worstCat = cat;
             }
-
-            if (catType === 'side') {
-                // Side: if YES or NO consistently loses
-                if (winRate < 0.30 && observations >= this.MIN_OBS_FOR_VETO) {
-                    veto = true;
-                    reasons.push(`Veto: ${cat} win rate ${(winRate * 100).toFixed(0)}% (${observations} obs)`);
-                }
+            // Track best boost separately
+            if (factor > 1.0 && worstFactor >= 1.0) {
+                worstFactor = factor; // Apply boost only if no penalties
             }
         }
 
-        // Clamp factor
-        factorProduct = Math.max(0.3, Math.min(1.5, factorProduct));
+        // Clamp: floor 0.5, ceiling 1.3
+        worstFactor = Math.max(0.5, Math.min(1.3, worstFactor));
 
-        return { factor: factorProduct, reasons, posteriors, veto };
+        return { factor: worstFactor, reasons, posteriors, veto };
     }
 
-    /**
-     * Get a summary of all learned priors (for dashboard/logging).
-     */
     getSummary(): CategoryPrior[] {
         const result: CategoryPrior[] = [];
         for (const [key, params] of this.priors) {
@@ -206,7 +190,7 @@ export class BayesianLearner {
                 beta: params.beta,
                 observations,
                 winRate: params.alpha / (params.alpha + params.beta),
-                confidence: Math.min(1, observations / 20), // 20 obs = full confidence
+                confidence: Math.min(1, observations / 30),
             });
         }
         return result.sort((a, b) => b.observations - a.observations);
@@ -219,16 +203,11 @@ export class BayesianLearner {
     private featuresToCategories(f: TradeFeatures): string[] {
         const cats: string[] = [];
 
-        // Type
         cats.push(`type:${f.type}`);
-
-        // Asset
         cats.push(`asset:${f.asset.toLowerCase()}`);
-
-        // Side
         cats.push(`side:${f.side}`);
 
-        // Edge bucket
+        // Edge bucket (using actual edge value)
         const edgePct = f.edge * 100;
         if (edgePct < 5) cats.push('edge:low');
         else if (edgePct < 15) cats.push('edge:medium');
@@ -240,8 +219,7 @@ export class BayesianLearner {
         else if (days < 30) cats.push('expiry:medium');
         else cats.push('expiry:long');
 
-        // Combo: type + asset
-        cats.push(`combo:${f.type}_${f.asset.toLowerCase()}`);
+        // No combo categories — too sparse with limited data
 
         return cats;
     }
@@ -250,8 +228,6 @@ export class BayesianLearner {
         if (this.priors.has(category)) {
             return { ...this.priors.get(category)! };
         }
-        // Informative prior for arb (expected to win most of the time)
-        if (category.includes('arb')) return { ...this.ARB_PRIOR };
         return { ...this.DEFAULT_PRIOR };
     }
 

@@ -167,7 +167,9 @@ export class PolynixAgent extends BaseAgent {
                 type: pos.type,
                 asset: pos.market.asset,
                 side: pos.side,
-                edge: pos.type === 'arb' ? (pos.size - pos.costBasis) / pos.size : 0.05,
+                edge: pos.type === 'arb'
+                    ? (pos.size - pos.costBasis) / pos.size   // arb: actual gross edge
+                    : pos.entryPrice > 0 ? Math.abs(0.5 - pos.entryPrice) : 0.05, // directional: distance from 50/50
                 timeToExpirySec: (pos.expiresAt - pos.enteredAt) / 1000,
                 won: pos.pnl >= 0,
             });
@@ -308,14 +310,7 @@ export class PolynixAgent extends BaseAgent {
             );
 
             if (risk.canTrade) {
-                // Bayesian check: has this category been losing?
-                const bayesAdj = this.bayesian.evaluate('arb', market.asset, 'BOTH', arb.netEdge, market.timeToExpiry);
-                if (bayesAdj.veto) {
-                    this.log('info', `ARB vetoed by Bayesian: ${market.title} (${bayesAdj.reasons.join(', ')})`);
-                    return 'found';
-                }
-
-                const size = Math.min(risk.suggestedSize * bayesAdj.factor, arb.maxSize);
+                const size = Math.min(risk.suggestedSize, arb.maxSize);
                 const orders = await this.orderManager.placeArbOrders(arb, size);
 
                 if (orders.yesOrder.status === 'filled' && orders.noOrder.status === 'filled') {
