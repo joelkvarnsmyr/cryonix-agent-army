@@ -34,8 +34,8 @@ export class WebSocketMonitor {
      */
     async connect(): Promise<boolean> {
         try {
-            const wsModule = await import('ws');
-            const WebSocket = wsModule.default ?? wsModule;
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const WebSocket = require('ws');
             // Use free Solana public WebSocket — no API key needed.
             // logsSubscribe with accountInclude filter detects when tracked
             // wallets interact with any program (including Jupiter/Raydium swaps).
