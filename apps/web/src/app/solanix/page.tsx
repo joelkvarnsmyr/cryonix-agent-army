@@ -191,6 +191,94 @@ export default function SolanixPage() {
           )}
         </div>
 
+        {/* How it works */}
+        <details className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm">
+          <summary className="px-4 py-3 cursor-pointer select-none flex items-center justify-between">
+            <span className="text-[10px] font-mono text-muted-foreground/60 tracking-widest">HOW SOLANIX TRADES</span>
+            <span className="text-[10px] text-muted-foreground/30">click to expand</span>
+          </summary>
+          <div className="px-4 pb-4 space-y-4 text-xs text-muted-foreground leading-relaxed">
+
+            {/* Pipeline */}
+            <div>
+              <div className="text-[10px] font-mono text-amber-400/70 tracking-widest mb-1.5">SIGNAL PIPELINE</div>
+              <div className="font-mono text-[11px] space-y-1 text-muted-foreground/70">
+                <div className="flex gap-2"><span className="text-muted-foreground/40 w-4">1.</span><span>DexScreener scans 25 tokens every 15 min (h1/h6/h24 momentum, volume, buy pressure)</span></div>
+                <div className="flex gap-2"><span className="text-muted-foreground/40 w-4">2.</span><span>Macro filter adjusts confidence (Fear &amp; Greed, BTC dominance, X sentiment)</span></div>
+                <div className="flex gap-2"><span className="text-muted-foreground/40 w-4">3.</span><span>Stablecoin depeg check + token unlock penalty</span></div>
+                <div className="flex gap-2"><span className="text-muted-foreground/40 w-4">4.</span><span>Bayesian self-learning adjusts based on historical trade P&amp;L</span></div>
+                <div className="flex gap-2"><span className="text-muted-foreground/40 w-4">5.</span><span>Final confidence &gt; 25% threshold &rarr; BUY via Jupiter quote</span></div>
+              </div>
+            </div>
+
+            {/* Bayesian learning */}
+            <div>
+              <div className="text-[10px] font-mono text-amber-400/70 tracking-widest mb-1.5">BAYESIAN SELF-LEARNING</div>
+              <p className="text-muted-foreground/70">
+                Uses Beta-Binomial conjugate priors to learn from closed trades.
+                Each signal&apos;s confidence is adjusted by four learned posteriors:
+              </p>
+              <div className="mt-1.5 grid grid-cols-2 gap-2">
+                <div className="rounded-lg bg-white/[0.02] p-2">
+                  <div className="text-[9px] font-mono text-muted-foreground/40 mb-0.5">PER SYMBOL</div>
+                  <div className="text-muted-foreground/60">Avg P&amp;L per token &mdash; boost winners, penalize losers</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.02] p-2">
+                  <div className="text-[9px] font-mono text-muted-foreground/40 mb-0.5">CONFIDENCE BAND</div>
+                  <div className="text-muted-foreground/60">Calibrates: are 40% signals really winning 40%?</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.02] p-2">
+                  <div className="text-[9px] font-mono text-muted-foreground/40 mb-0.5">HOUR OF DAY</div>
+                  <div className="text-muted-foreground/60">Learns best trading hours (UTC)</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.02] p-2">
+                  <div className="text-[9px] font-mono text-muted-foreground/40 mb-0.5">SIGNAL SOURCE</div>
+                  <div className="text-muted-foreground/60">TA vs DexScreener breakout win rate</div>
+                </div>
+              </div>
+              <p className="mt-1.5 text-muted-foreground/50 text-[10px]">
+                Prior: Beta(2,2) &mdash; weak 50% belief. Credibility grows with sample size: n/(n+10). Max &plusmn;20% adjustment cap.
+                Rotations excluded from learning (they reflect opportunity, not signal quality).
+              </p>
+            </div>
+
+            {/* Risk management */}
+            <div>
+              <div className="text-[10px] font-mono text-amber-400/70 tracking-widest mb-1.5">RISK MANAGEMENT</div>
+              <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
+                <div className="rounded-lg bg-white/[0.02] p-2 text-center">
+                  <div className="text-emerald-400/70">TP +8%</div>
+                  <div className="text-[9px] text-muted-foreground/40">take profit</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.02] p-2 text-center">
+                  <div className="text-red-400/70">SL -4%</div>
+                  <div className="text-[9px] text-muted-foreground/40">stop loss</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.02] p-2 text-center">
+                  <div className="text-amber-400/70">Trail 5%</div>
+                  <div className="text-[9px] text-muted-foreground/40">after +3% gain</div>
+                </div>
+              </div>
+              <div className="mt-2 space-y-0.5 text-muted-foreground/50 text-[10px]">
+                <div>Max 5 positions &middot; $50/trade &middot; 20 trades/day &middot; 5% daily loss limit</div>
+                <div>Smart rotation: swaps weakest position if new signal scores 15+ pts higher</div>
+                <div>Stagnation exit: closes flat positions after 3 days (&lt;0.5% move)</div>
+              </div>
+            </div>
+
+            {/* Data flow */}
+            <div>
+              <div className="text-[10px] font-mono text-amber-400/70 tracking-widest mb-1.5">ARCHITECTURE</div>
+              <div className="font-mono text-[10px] text-muted-foreground/50 leading-5">
+                <span className="text-muted-foreground/70">DexScreener API</span> &rarr; Signal scoring &rarr; Macro filter &rarr; Bayes &rarr; <span className="text-muted-foreground/70">Jupiter quote</span> &rarr; Paper fill<br/>
+                <span className="text-muted-foreground/70">Postgres</span> &larr; Position persist &middot; Trade journal &middot; Bayesian training data<br/>
+                <span className="text-muted-foreground/70">Redis</span> &larr; Live state (dashboard) &middot; Macro data (from Cryonix engine)
+              </div>
+            </div>
+
+          </div>
+        </details>
+
       </div>
     </DashboardLayout>
   );
