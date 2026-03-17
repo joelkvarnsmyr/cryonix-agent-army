@@ -13,6 +13,7 @@
  */
 
 import { PsiEngine, type PsiSignal } from './psi-engine';
+import { SignalCollector } from './signal-collector';
 
 function signal(dir: number, weight: number = 0.5, id: string = 'test'): PsiSignal {
     return { sourceId: id, direction: dir, weight, timestamp: Date.now() };
@@ -226,6 +227,35 @@ async function runTests(): Promise<void> {
         assert(s2!.direction === -1, 'SELL → -1');
         assertApprox(s1!.weight, 0.9, 0.01, 'Score 90 → weight 0.9');
         assertApprox(s2!.weight, 0.6, 0.01, 'Score 60 → weight 0.6');
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // 8. SIGNAL COLLECTOR — parseTASignal
+    // ═══════════════════════════════════════════════════════════════
+
+    test('parseTASignal: converts trades:pending JSON to PsiSignal', () => {
+        const raw = JSON.stringify({
+            symbol: 'BTC/USDC', action: 'BUY', confidence: 82,
+            patterns: ['dip_buy', 'rsi_oversold'], timestamp: Date.now(),
+        });
+        const signal = SignalCollector.parseTASignal(raw, 'BTC');
+        assert(signal !== null, 'Should parse valid signal');
+        assert(signal!.direction > 0, 'BUY → positive direction');
+        assertApprox(signal!.direction, 0.64, 0.01, 'confidence 82 → (82-50)/50 = 0.64');
+        assertApprox(signal!.weight, 0.7, 0.01, 'TA weight should be 0.7');
+    });
+
+    test('parseTASignal: SELL → negative direction', () => {
+        const raw = JSON.stringify({ symbol: 'ETH/USDC', action: 'SELL', confidence: 90 });
+        const signal = SignalCollector.parseTASignal(raw, 'ETH');
+        assert(signal !== null, 'Should parse');
+        assert(signal!.direction < 0, 'SELL → negative direction');
+    });
+
+    test('parseTASignal: filters by symbol base', () => {
+        const raw = JSON.stringify({ symbol: 'SOL/USDC', action: 'BUY', confidence: 75 });
+        const signal = SignalCollector.parseTASignal(raw, 'BTC');
+        assert(signal === null, 'SOL signal should be null when filtering for BTC');
     });
 
     // ═══════════════════════════════════════════════════════════════

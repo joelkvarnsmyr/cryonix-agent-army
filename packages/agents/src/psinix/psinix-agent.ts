@@ -150,6 +150,7 @@ export class PsinixAgent {
             this.collector = new SignalCollector({
                 get: async (key: string) => this.redis.get(key),
                 keys: async (pattern: string) => this.redis.keys(pattern),
+                lrange: async (key: string, start: number, stop: number) => this.redis.lrange(key, start, stop),
             });
 
             console.log('[psinix] Redis connected — signal collector ready');

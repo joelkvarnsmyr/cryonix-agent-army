@@ -14,6 +14,7 @@ import type { PsiSignal } from './psi-engine';
 export interface RedisReader {
     get(key: string): Promise<string | null>;
     keys(pattern: string): Promise<string[]>;
+    lrange(key: string, start: number, stop: number): Promise<string[]>;
 }
 
 export class SignalCollector {
@@ -45,6 +46,14 @@ export class SignalCollector {
         // ── 4. Smart Money overall ──
         const overall = await this.getSmartMoneyOverall();
         if (overall) signals.push(overall);
+
+        // ── 5. Cryonix TA (trades:pending queue) ──
+        const ta = await this.getCryonixTA(symbol);
+        if (ta) signals.push(ta);
+
+        // ── 6. Market Regime ──
+        const regime = await this.getMarketRegime();
+        if (regime) signals.push(regime);
 
         return signals;
     }
@@ -160,6 +169,84 @@ export class SignalCollector {
                 sourceId: 'fear_greed',
                 direction: Math.max(-1, Math.min(1, contrarian)),
                 weight: 0.4, // Moderate weight — lagging indicator
+                timestamp: Date.now(),
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Cryonix TA: reads trades:pending LIST (rpush'd by Python engine).
+     * Scans from newest to oldest, returns first matching symbol signal.
+     */
+    private async getCryonixTA(symbol: string): Promise<PsiSignal | null> {
+        try {
+            const base = symbol.split('/')[0];
+            const entries = await this.redis.lrange('trades:pending', 0, -1);
+            if (!entries || entries.length === 0) return null;
+
+            // Scan from newest (end of list) to oldest
+            for (let i = entries.length - 1; i >= 0; i--) {
+                const signal = SignalCollector.parseTASignal(entries[i], base);
+                if (signal) return signal;
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Parse a trades:pending JSON entry into a PsiSignal.
+     * Returns null if the signal doesn't match filterBase or is unparseable.
+     */
+    static parseTASignal(raw: string, filterBase: string): PsiSignal | null {
+        try {
+            const data = JSON.parse(raw);
+            const signalBase = (data.symbol ?? '').split('/')[0];
+            if (signalBase !== filterBase) return null;
+
+            const confidence = data.confidence ?? 50;
+            const isBuy = (data.action ?? '').toUpperCase() === 'BUY';
+            const magnitude = (confidence - 50) / 50;
+            const direction = isBuy ? magnitude : -magnitude;
+
+            return {
+                sourceId: `cryonix_ta:${signalBase}`,
+                direction: Math.max(-1, Math.min(1, direction)),
+                weight: 0.7,
+                timestamp: data.timestamp ?? Date.now(),
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Market Regime: reads market:regime key written by Python engine.
+     * Maps regime string to directional bias.
+     */
+    private async getMarketRegime(): Promise<PsiSignal | null> {
+        try {
+            const raw = await this.redis.get('market:regime');
+            if (!raw) return null;
+
+            const data = JSON.parse(raw);
+            const regimeMap: Record<string, number> = {
+                'bullish': 0.5, 'trending_up': 0.5,
+                'bearish': -0.5, 'trending_down': -0.5,
+                'volatile': 0, 'choppy': -0.2,
+                'ranging': 0, 'neutral': 0,
+            };
+
+            const direction = regimeMap[data.regime ?? data.state ?? ''] ?? 0;
+            if (direction === 0) return null;
+
+            return {
+                sourceId: 'market:regime',
+                direction,
+                weight: 0.3,
                 timestamp: Date.now(),
             };
         } catch {
