@@ -159,12 +159,14 @@ export default function CopynixPage() {
                     <div className="flex items-start justify-between mb-1">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm font-semibold text-foreground">{pos.symbol}</span>
-                        <span className={`text-[9px] font-mono px-1 py-0.5 rounded border ${CONSENSUS_COLOR[pos.consensusLevel] ?? CONSENSUS_COLOR.single}`}>
-                          {pos.consensusLevel.toUpperCase()}
-                        </span>
+                        {pos.consensusLevel && (
+                          <span className={`text-[9px] font-mono px-1 py-0.5 rounded border ${CONSENSUS_COLOR[pos.consensusLevel] ?? CONSENSUS_COLOR.single}`}>
+                            {pos.consensusLevel.toUpperCase()}
+                          </span>
+                        )}
                       </div>
                       <span className={`text-base font-bold ${plColor}`}>
-                        {pos.unrealizedPlPct >= 0 ? '+' : ''}{pos.unrealizedPlPct.toFixed(2)}%
+                        {(pos.unrealizedPlPct ?? 0) >= 0 ? '+' : ''}{(pos.unrealizedPlPct ?? 0).toFixed(2)}%
                       </span>
                     </div>
 
@@ -179,10 +181,10 @@ export default function CopynixPage() {
                         </span>
                       </div>
                       <div className={plColor}>
-                        {pos.unrealizedPl >= 0 ? '+' : ''}${pos.unrealizedPl.toFixed(2)} unrealized
+                        {(pos.unrealizedPl ?? 0) >= 0 ? '+' : ''}${(pos.unrealizedPl ?? 0).toFixed(2)} unrealized
                       </div>
                       <div className="text-muted-foreground/50">
-                        {pos.qty.toFixed(2)} tokens · {timeAgo(pos.entryTime)}
+                        {(pos.qty ?? 0).toFixed(2)} tokens · {pos.entryTime ? timeAgo(pos.entryTime) : 'now'}
                       </div>
                     </div>
 
@@ -194,7 +196,7 @@ export default function CopynixPage() {
                       </div>
                       <div className="h-1 rounded-full bg-white/[0.06] overflow-hidden">
                         {(() => {
-                          const pct = pos.unrealizedPlPct;
+                          const pct = pos.unrealizedPlPct ?? 0;
                           const normalized = ((pct + SL_PCT) / (SL_PCT + TP_PCT)) * 100;
                           const clamped = Math.max(0, Math.min(100, normalized));
                           const barColor = pct >= 0 ? 'bg-emerald-400' : 'bg-red-400';
@@ -275,13 +277,13 @@ export default function CopynixPage() {
                   </div>
                   <div className="flex items-center gap-3">
                     {t.side === 'SELL' && t.realizedPnl != null && (
-                      <span className={`text-xs font-mono ${t.realizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {t.realizedPnl >= 0 ? '+' : ''}${t.realizedPnl.toFixed(2)}
+                      <span className={`text-xs font-mono ${(t.realizedPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {(t.realizedPnl ?? 0) >= 0 ? '+' : ''}${(t.realizedPnl ?? 0).toFixed(2)}
                       </span>
                     )}
                     {t.side === 'BUY' && t.dollarAmount != null && (
                       <span className="text-xs font-mono text-muted-foreground/50">
-                        ${t.dollarAmount.toFixed(0)}
+                        ${(t.dollarAmount ?? 0).toFixed(0)}
                       </span>
                     )}
                     <span className="text-[10px] font-mono text-muted-foreground/40 w-14 text-right">
