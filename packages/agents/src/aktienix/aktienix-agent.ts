@@ -584,29 +584,47 @@ export class AktienixAgent extends BaseAgent {
             }
         }
 
-        // Sector exposure cap: prevent over-concentration in one sector
-        if (action === 'BUY') {
-            const SECTOR_MAP: Record<string, string> = {
-                AAPL: 'tech', MSFT: 'tech', GOOGL: 'tech', AMZN: 'tech', NVDA: 'tech', META: 'tech', TSLA: 'tech',
-                SPY: 'index', QQQ: 'index',
-                JPM: 'finance', JNJ: 'healthcare',
-                MSTR: 'crypto', COIN: 'crypto',
-                XOM: 'energy', CVX: 'energy', XLE: 'energy', USO: 'energy', COP: 'energy',
-                UAL: 'transport', DAL: 'transport', FDX: 'transport', UPS: 'transport',
-            };
-            const maxSectorPct = 0.50; // 50% max per sector
-            const sector = SECTOR_MAP[symbol] || 'other';
-            const portfolioValue = this.accountState?.portfolioValue ?? 0;
+        // Smart rotation: if at max positions and new signal is strong,
+        // consider closing the weakest loser to make room
+        if (action === 'BUY' && this.positions.length >= config.limits.max_open_positions && this.brokerClient) {
+            const losers = this.positions
+                .filter(p => (p.unrealizedPl ?? 0) < 0)
+                .sort((a, b) => (a.unrealizedPl ?? 0) - (b.unrealizedPl ?? 0));
 
-            if (portfolioValue > 0 && sector !== 'index') {
-                const sectorExposure = this.positions
-                    .filter(p => (SECTOR_MAP[p.symbol] || 'other') === sector)
-                    .reduce((sum, p) => sum + (p.marketValue ?? p.qty * p.avgEntryPrice), 0);
-                const sectorPct = sectorExposure / portfolioValue;
+            if (losers.length > 0 && confidence >= 0.55) {
+                const worst = losers[0];
+                const worstPnlPct = worst.avgEntryPrice > 0
+                    ? ((worst.currentPrice - worst.avgEntryPrice) / worst.avgEntryPrice) * 100 : 0;
 
-                if (sectorPct >= maxSectorPct) {
-                    this.log('info', `SECTOR CAP: ${sector} at ${(sectorPct * 100).toFixed(1)}% (max ${maxSectorPct * 100}%). Skipping ${symbol}.`);
-                    return;
+                // Only rotate if the loser is down >1% and new signal confidence > 55%
+                if (worstPnlPct < -1.0) {
+                    this.log('info', `SMART ROTATION: Closing ${worst.symbol} (${worstPnlPct.toFixed(2)}%) to open ${symbol} (conf: ${confidence.toFixed(2)})`);
+                    try {
+                        const closeResult = await this.brokerClient.submitOrder({
+                            symbol: worst.symbol, action: 'SELL', qty: worst.qty, orderType: 'MARKET',
+                        });
+                        if (closeResult.success) {
+                            this.riskManager.recordExit(worst.unrealizedPl ?? 0);
+                            this.exitMonitor.clearPosition(worst.symbol);
+                            const pnlPct = worst.avgEntryPrice > 0
+                                ? ((worst.currentPrice - worst.avgEntryPrice) / worst.avgEntryPrice) * 100 : 0;
+                            await this.tradeLogger.logTrade({
+                                symbol: worst.symbol, side: 'SELL', qty: worst.qty,
+                                fillPrice: worst.currentPrice, dollarAmount: worst.qty * worst.currentPrice,
+                                realizedPnl: worst.unrealizedPl ?? 0,
+                                exitReason: `smart_rotation: replaced by ${symbol}`,
+                                orderId: closeResult.orderId,
+                            });
+                            await this.bayesianUpdater.updatePosterior({
+                                pattern: 'smart_rotation', symbol: worst.symbol,
+                                pnlPct, exitReason: 'smart_rotation',
+                            });
+                            // Refresh positions after close
+                            this.positions = await this.brokerClient.getPositions();
+                        }
+                    } catch (err) {
+                        this.log('error', `Smart rotation close failed: ${err}`);
+                    }
                 }
             }
         }

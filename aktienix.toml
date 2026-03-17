@@ -123,9 +123,9 @@ bars_count = 220
 [capital]
 
 # Max value for a single position in USD.
-# Rule of thumb: never risk more than 5-10% of portfolio per position.
-# $5,000 on a $100k paper account = 5%.
-max_position_size_usd = 5000
+# $10,000 on $100k = 10%. Allows meaningful positions in conviction plays.
+# Combined with max_single_position_pct, prevents runaway concentration.
+max_position_size_usd = 10000
 
 # Maximum % of settled cash to deploy per order.
 # 0.95 = 95%. The 5% buffer prevents "insufficient funds" edge cases.
@@ -136,8 +136,8 @@ max_capital_per_trade_pct = 0.95
 min_order_value = 5.00
 
 # Maximum single position as % of portfolio value. Prevents concentration.
-# 0.10 = 10%. On $100k, no single position exceeds $10k.
-max_single_position_pct = 0.10
+# 0.15 = 15%. On $100k, max $15k in one symbol. Balances conviction vs risk.
+max_single_position_pct = 0.15
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
