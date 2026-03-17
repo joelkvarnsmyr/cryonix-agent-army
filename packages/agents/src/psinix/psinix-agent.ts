@@ -15,6 +15,7 @@ import { join } from 'path';
 import { PsiEngine, type PsiResult } from './psi-engine';
 import { SignalCollector, type RedisReader } from './signal-collector';
 import { OHLCVFetcher } from './ohlcv-fetcher';
+import { BayesianWeightTracker } from './bayesian-weights';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -39,6 +40,7 @@ interface PaperPosition {
     entryTime: number;
     highWatermark: number;
     trailingActive: boolean;
+    signalSourceIds: string[];
 }
 
 interface PaperTrade {
@@ -118,6 +120,7 @@ export class PsinixAgent {
     private collector: SignalCollector | null = null;
     private ohlcv = new OHLCVFetcher(60_000);
     private logger = new PsinixTradeLogger();
+    private weights = new BayesianWeightTracker(0.92);
     private isRunning = false;
 
     // Paper trading state
@@ -154,6 +157,12 @@ export class PsinixAgent {
             });
 
             console.log('[psinix] Redis connected — signal collector ready');
+
+            // Restore Bayesian weights from Redis
+            try {
+                const saved = await this.redis?.get('psinix:weights');
+                if (saved) this.weights = BayesianWeightTracker.deserialize(saved, 0.92);
+            } catch { /* start fresh if restore fails */ }
         } catch (err: any) {
             console.error('[psinix] Redis connect failed:', err.message);
         }
@@ -237,6 +246,12 @@ export class PsinixAgent {
         const signals = await this.collector.collect(symbol);
         if (signals.length < this.config.signals.min_signals) return;
 
+        // Apply dynamic Bayesian weights before Ψ computation
+        for (const sig of signals) {
+            const dynWeight = this.weights.getWeight(sig.sourceId);
+            sig.weight = dynWeight;
+        }
+
         // Get recent prices for entropy calculation
         const prices = await this.getRecentPrices(symbol);
         const entropy = PsiEngine.computeMarketEntropy(prices, this.config.psi.entropy_bins);
@@ -259,13 +274,14 @@ export class PsinixAgent {
 
         // Trade decision
         if (result.phaseTransition && Math.abs(result.psi) >= this.config.trading.min_psi_magnitude) {
-            await this.executeTrade(symbol, result);
+            const sourceIds = signals.map(s => s.sourceId);
+            await this.executeTrade(symbol, result, sourceIds);
         }
     }
 
     // ── Trade Execution ──────────────────────────────────────────────
 
-    private async executeTrade(symbol: string, psi: PsiResult): Promise<void> {
+    private async executeTrade(symbol: string, psi: PsiResult, sourceIds: string[] = []): Promise<void> {
         // Already have position?
         if (this.positions.has(symbol)) return;
 
@@ -297,6 +313,7 @@ export class PsinixAgent {
             entryTime: Date.now(),
             highWatermark: currentPrice,
             trailingActive: false,
+            signalSourceIds: sourceIds,
         });
 
         const trade: PaperTrade = {
@@ -387,6 +404,15 @@ export class PsinixAgent {
         if (pnl > 0) this.wins++;
         else this.losses++;
 
+        // Update Bayesian weights for contributing signal sources
+        const profitable = pnl > 0;
+        for (const sourceId of pos.signalSourceIds) {
+            this.weights.update(sourceId, pos.side === 'LONG' ? 1 : -1, profitable);
+        }
+        try {
+            await this.redis?.set('psinix:weights', this.weights.serialize());
+        } catch { /* non-critical */ }
+
         this.positions.delete(symbol);
 
         const trade: PaperTrade = {
@@ -452,6 +478,7 @@ export class PsinixAgent {
                 losses: this.losses,
                 winRate: this.wins + this.losses > 0 ? this.wins / (this.wins + this.losses) : 0,
                 pollCount: this.pollCount,
+                weights: Object.fromEntries(this.weights.getAll()),
                 updatedAt: Date.now(),
             };
             await this.redis.set('psinix:state', JSON.stringify(state));
