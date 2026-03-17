@@ -18,7 +18,7 @@ function timeAgo(iso: string) {
 }
 
 export default function HomePage() {
-  const { portfolio } = usePortfolio(15_000);
+  const { portfolio, loading: portfolioLoading } = usePortfolio(15_000);
   const { data: autoTrade } = useAutoTrade(10_000);
   const { health } = useSystemHealth(30_000);
 
@@ -78,7 +78,7 @@ export default function HomePage() {
         <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-6 text-center">
           <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest mb-1">PORTFOLIO VALUE</div>
           <div className="text-3xl font-bold tracking-tight text-glow-cyan">
-            ${totalValue.toFixed(2)}
+            {portfolioLoading && !portfolio ? '...' : `$${totalValue.toFixed(2)}`}
           </div>
           <div className="mt-1 flex items-center justify-center gap-3 text-sm">
             <span className={dailyPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
