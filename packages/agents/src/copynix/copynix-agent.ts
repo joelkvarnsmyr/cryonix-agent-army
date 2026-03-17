@@ -494,7 +494,7 @@ export class CopynixAgent extends BaseAgent {
 
         // Dedup: check Postgres for recent BUY on same token (survives restarts)
         try {
-            const recent = await this.tradeLogger.hasRecentBuy(signal.tokenMint, 4); // 4h cooldown
+            const recent = await this.tradeLogger.hasRecentBuy(signal.tokenMint, 24); // 24h cooldown
             if (recent) {
                 this.log('info', `[DEDUP] Already bought ${signal.tokenSymbol} recently — skipping`);
                 return;

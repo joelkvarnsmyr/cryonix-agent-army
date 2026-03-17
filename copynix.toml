@@ -127,17 +127,19 @@ max_weekly_loss_pct = 0.20
 max_consecutive_losses = 4
 
 [safety]
-# Paper trading — wide open to gather data and see what happens.
-# Only filter absolute zero-liquidity honeypots.
+# Lesson learned: 3 of 4 positions had $0 liquidity = unsellable.
+# Min $5K liquidity ensures we can actually exit positions.
 min_token_age_hours = 0
-min_liquidity_usd = 0
+min_liquidity_usd = 5000
 min_holders = 0
 min_lp_burnt_pct = 0
 require_immutable_supply = false
 
 [exits]
 take_profit_pct = 25.0
-stop_loss_pct = 15.0
+# SL widened from 15% to 25% — memecoins routinely dip 20-30% before pumping.
+# Gany hit -15% SL then bounced +155%. Wider SL reduces false exits.
+stop_loss_pct = 25.0
 trailing_stop_pct = 8.0
 trailing_activation_pct = 10.0
 leader_exit_enabled = true
