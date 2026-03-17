@@ -83,6 +83,31 @@ export async function GET() {
     console.error('[aktienix/status] Redis error:', error);
   }
 
+  // Fallback: if no account data in Redis, fetch directly from Alpaca API
+  if (!account) {
+    try {
+      const apiKey = process.env.ALPACA_PAPER_API_KEY || process.env.ALPACA_API_KEY;
+      const apiSecret = process.env.ALPACA_PAPER_API_SECRET || process.env.ALPACA_API_SECRET;
+      if (apiKey && apiSecret) {
+        const res = await fetch('https://paper-api.alpaca.markets/v2/account', {
+          headers: { 'APCA-API-KEY-ID': apiKey, 'APCA-API-SECRET-KEY': apiSecret },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+          const acc = await res.json();
+          account = {
+            buyingPower: parseFloat(acc.buying_power),
+            settledCash: parseFloat(acc.cash),
+            portfolioValue: parseFloat(acc.portfolio_value),
+            isPatternDayTrader: acc.pattern_day_trader,
+          };
+          // Cache in Redis for 5min so we don't hit Alpaca on every poll
+          try { await redis.set('aktienix:account', JSON.stringify(account), 'EX', 300); } catch { }
+        }
+      }
+    } catch { /* Alpaca API unavailable — leave account null */ }
+  }
+
   return NextResponse.json({
     status: agentStatus,
     agent: {

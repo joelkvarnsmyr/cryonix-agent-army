@@ -71,9 +71,37 @@ export async function GET() {
     });
   } catch (error) {
     console.error('[aktienix/positions] DB error:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch positions', details: String(error) },
-      { status: 500 }
-    );
   }
+
+  // 3. Final fallback: fetch directly from Alpaca API
+  try {
+    const apiKey = process.env.ALPACA_PAPER_API_KEY || process.env.ALPACA_API_KEY;
+    const apiSecret = process.env.ALPACA_PAPER_API_SECRET || process.env.ALPACA_API_SECRET;
+    if (apiKey && apiSecret) {
+      const res = await fetch('https://paper-api.alpaca.markets/v2/positions', {
+        headers: { 'APCA-API-KEY-ID': apiKey, 'APCA-API-SECRET-KEY': apiSecret },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const raw = await res.json();
+        const positions: AktienixPosition[] = raw.map((p: any) => ({
+          symbol: p.symbol,
+          qty: parseFloat(p.qty),
+          avgEntryPrice: parseFloat(p.avg_entry_price),
+          currentPrice: parseFloat(p.current_price),
+          marketValue: parseFloat(p.market_value),
+          unrealizedPl: parseFloat(p.unrealized_pl),
+          unrealizedPlPct: parseFloat(p.unrealized_plpc) * 100,
+          openedAt: new Date().toISOString(),
+          broker: 'alpaca',
+          paperTrading: true,
+        }));
+        // Cache for 5min
+        try { await redis.set('aktienix:positions', JSON.stringify(positions), 'EX', 300); } catch { }
+        return NextResponse.json({ positions, source: 'alpaca', count: positions.length });
+      }
+    }
+  } catch { /* Alpaca unavailable */ }
+
+  return NextResponse.json({ positions: [], source: 'none', count: 0 });
 }

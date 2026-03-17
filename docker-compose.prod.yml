@@ -114,6 +114,8 @@ services:
       - ENABLE_AUTO_TRADING=true
       - ENGINE_URL=http://engine:8000
       - NEXT_PUBLIC_APP_URL=http://localhost:${WEB_PORT:-3000}
+      - ALPACA_PAPER_API_KEY=${ALPACA_PAPER_API_KEY:-}
+      - ALPACA_PAPER_API_SECRET=${ALPACA_PAPER_API_SECRET:-}
     networks:
       - cryonix-net
     depends_on:
