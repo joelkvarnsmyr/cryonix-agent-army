@@ -5,17 +5,19 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const [statusRaw, accountRaw, riskRaw] = await Promise.all([
+    const [statusRaw, accountRaw, riskRaw, shadowsRaw] = await Promise.all([
       redis.get('solanix:status'),
       redis.get('solanix:account'),
       redis.get('solanix:risk'),
+      redis.get('solanix:shadows'),
     ]);
 
     const status = statusRaw ?? null;
     const account = accountRaw ? JSON.parse(accountRaw as string) : null;
     const risk = riskRaw ? JSON.parse(riskRaw as string) : null;
+    const shadows = shadowsRaw ? JSON.parse(shadowsRaw as string) : [];
 
-    return NextResponse.json({ status, account, risk, timestamp: new Date().toISOString() });
+    return NextResponse.json({ status, account, risk, shadows, timestamp: new Date().toISOString() });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

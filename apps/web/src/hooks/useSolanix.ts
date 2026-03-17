@@ -48,10 +48,21 @@ interface SolanaRiskState {
   dayTradesThisWeek: number;
 }
 
+export interface ShadowStats {
+  name: string;
+  balance: number;
+  portfolioValue: number;
+  positions: number;
+  realizedPnl: number;
+  trades: number;
+  winRate: number;
+}
+
 interface SolanixStatus {
   status: string | null;
   account: SolanaAccountState | null;
   risk: SolanaRiskState | null;
+  shadows: ShadowStats[];
   timestamp: string;
 }
 

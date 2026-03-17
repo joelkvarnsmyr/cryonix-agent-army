@@ -1,6 +1,6 @@
 'use client';
 
-import { useSolanixStatus, useSolanixPositions, useSolanixSignals } from '@/hooks/useSolanix';
+import { useSolanixStatus, useSolanixPositions, useSolanixSignals, type ShadowStats } from '@/hooks/useSolanix';
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout';
 import { PositionTpSlBar } from '@/components/dashboard/position-tp-sl-bar';
 
@@ -41,6 +41,7 @@ export default function SolanixPage() {
   const tradesToday     = status?.risk?.tradesToday        ?? 0;
   const positionsUsed   = positions.length;
   const maxPositions    = 5;
+  const shadows: ShadowStats[] = status?.shadows ?? [];
 
   return (
     <DashboardLayout>
@@ -153,6 +154,56 @@ export default function SolanixPage() {
             </div>
           )}
         </div>
+
+        {/* A/B Test — Shadow strategies comparison */}
+        {shadows.length > 0 && (
+          <div>
+            <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest mb-2">
+              A/B TEST — EXIT STRATEGY COMPARISON
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Primary strategy card */}
+              <div className="rounded-xl border border-emerald-400/20 bg-card/60 backdrop-blur-sm p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <span className="text-[10px] font-mono text-emerald-400/80 tracking-widest">PRIMARY</span>
+                </div>
+                <div className="text-lg font-bold text-foreground">${portfolioValue.toFixed(2)}</div>
+                <div className="text-xs font-mono text-muted-foreground/50 mt-1 space-y-0.5">
+                  <div>TP 8% / SL 4% / Trail 5%</div>
+                  <div>{positionsUsed} positions · {tradesToday} trades today</div>
+                </div>
+              </div>
+
+              {/* Shadow strategy cards */}
+              {shadows.map((s) => {
+                const pnlColor = s.portfolioValue >= 250 ? 'text-emerald-400' : 'text-red-400';
+                const isLeading = s.portfolioValue > portfolioValue && s.portfolioValue > Math.max(...shadows.filter(x => x.name !== s.name).map(x => x.portfolioValue), 0);
+                return (
+                  <div key={s.name} className={`rounded-xl border ${isLeading ? 'border-amber-400/30' : 'border-white/[0.06]'} bg-card/60 backdrop-blur-sm p-4`}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`w-2 h-2 rounded-full ${s.name === 'wide-trail' ? 'bg-blue-400' : 'bg-purple-400'}`} />
+                      <span className="text-[10px] font-mono text-muted-foreground/60 tracking-widest">{s.name.toUpperCase()}</span>
+                      {isLeading && <span className="text-[9px] font-mono text-amber-400/70 border border-amber-400/20 px-1 rounded">LEADING</span>}
+                    </div>
+                    <div className={`text-lg font-bold ${pnlColor}`}>${s.portfolioValue.toFixed(2)}</div>
+                    <div className="text-xs font-mono text-muted-foreground/50 mt-1 space-y-0.5">
+                      <div>
+                        {s.name === 'wide-trail' ? 'TP 12% / SL 2.5% / Trail 8%' : 'TP 4% / SL 2% / Trail 3%'}
+                      </div>
+                      <div>{s.positions} pos · {s.trades} exits · WR {s.winRate.toFixed(0)}%</div>
+                      {s.realizedPnl !== 0 && (
+                        <div className={s.realizedPnl >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}>
+                          Realized: {s.realizedPnl >= 0 ? '+' : ''}${s.realizedPnl.toFixed(2)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Recent signals */}
         <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
