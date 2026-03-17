@@ -209,6 +209,8 @@ export class CopynixAgent extends BaseAgent {
                 this.bayesian.initializeWallet(addr, priorScore);
             }
             this.log('info', `Bayesian scorer loaded: ${this.bayesian.getAllBeliefs().length} wallets`);
+            // Persist beliefs immediately so they survive container restarts
+            await this.bayesian.persistNow();
         }
 
         this.log('info', `Tracked wallets: ${this.walletMonitor.walletCount}`);
@@ -408,14 +410,17 @@ export class CopynixAgent extends BaseAgent {
             this.tradesToday++;
             this.log('info', `[BUY] ${result.message}`);
 
-            // Log to Postgres
+            // Log to Postgres — get actual position for accurate qty/amount
+            const boughtPos = this.executor!.getPosition(signal.tokenMint);
+            const actualQty = boughtPos?.qty ?? 0;
+            const actualDollar = actualQty * (signal.avgPriceUsd || 0);
             await this.tradeLogger.logTrade({
                 tokenMint: signal.tokenMint,
                 tokenSymbol: signal.tokenSymbol,
                 side: 'BUY',
-                qty: signal.avgPriceUsd > 0 ? (this.tomlConfig.capital.max_position_size_usd / signal.avgPriceUsd) : 0,
+                qty: actualQty,
                 entryPrice: signal.avgPriceUsd,
-                dollarAmount: signal.totalVolumeUsd,
+                dollarAmount: actualDollar > 0 ? actualDollar : (boughtPos ? boughtPos.qty * boughtPos.avgEntryPrice : 0),
                 consensusLevel: signal.consensusLevel,
                 walletCount: signal.walletCount,
                 confidence: adjustedConfidence,

@@ -257,6 +257,14 @@ export class BayesianScorer {
         this.beliefs.set(address, belief);
     }
 
+    /**
+     * Persist current state to Redis. Call after batch initialization
+     * so beliefs survive container restarts even before any trades.
+     */
+    async persistNow(): Promise<void> {
+        await this.saveState();
+    }
+
     // ── Internal ──────────────────────────────────────────────────
 
     private newBelief(address: string): WalletBelief {
