@@ -112,13 +112,13 @@ export class WalletMonitor {
             if (!res.ok) {
                 if (res.status === 429) {
                     this.pollStats.rateLimited++;
-                    // Only log 429 once per backoff cycle (not every wallet)
                     if (this.pollStats.rateLimited <= 1 || this.pollStats.rateLimited % 10 === 0) {
-                        console.warn(`[WalletMonitor] Helius rate limited (429) — backoff active`);
+                        console.warn(`[WalletMonitor] Helius rate limited (429) — falling back to RPC`);
                     }
-                } else {
-                    console.warn(`[WalletMonitor] ${label}... Helius HTTP ${res.status}: ${res.statusText}`);
+                    // Fall back to RPC instead of returning empty
+                    return this.fetchViaRpc(walletAddress);
                 }
+                console.warn(`[WalletMonitor] ${label}... Helius HTTP ${res.status}: ${res.statusText}`);
                 return [];
             }
 

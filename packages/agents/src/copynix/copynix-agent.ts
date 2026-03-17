@@ -119,8 +119,9 @@ export class CopynixAgent extends BaseAgent {
     private bayesian = new BayesianScorer();
 
     private walletDiscovery: WalletDiscovery | null = null;
-    // Delay first discovery by 5 minutes to avoid Helius rate limit on startup
-    private lastDiscoveryTime = Date.now();
+    // Delay first discovery by 10 minutes after startup (avoid Helius burst),
+    // then run every discovery_interval_hours (24h).
+    private lastDiscoveryTime = Date.now() - (23.83 * 3_600_000); // = 10 min from now at 24h interval
 
     private lastResetDay = new Date().getUTCDate();
     private tradesToday = 0;
