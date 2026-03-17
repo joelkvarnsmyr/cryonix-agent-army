@@ -35,9 +35,10 @@ export class WebSocketMonitor {
     async connect(): Promise<boolean> {
         try {
             const WebSocket = (await import('ws')).default;
-            // Try Helius WebSocket first (enhanced, requires paid plan)
-            // Fallback: standard Solana WebSocket (free but limited parsing)
-            const wsUrl = `wss://mainnet.helius-rpc.com/?api-key=${this.heliusKey}`;
+            // Use free Solana public WebSocket — no API key needed.
+            // logsSubscribe with accountInclude filter detects when tracked
+            // wallets interact with any program (including Jupiter/Raydium swaps).
+            const wsUrl = 'wss://api.mainnet-beta.solana.com';
 
             return new Promise((resolve) => {
                 this.ws = new WebSocket(wsUrl);
@@ -86,128 +87,121 @@ export class WebSocketMonitor {
     }
 
     /**
-     * Subscribe to transactions for all tracked wallets.
-     * Uses Helius transactionSubscribe with accountInclude filter.
+     * Subscribe to log events mentioning tracked wallets.
+     * Uses standard Solana logsSubscribe (free, no API key).
+     *
+     * We subscribe per wallet using "mentions" filter — each subscription
+     * fires when the wallet appears in any transaction logs.
+     * Max ~40 subscriptions on public RPC.
      */
     private subscribe(): void {
         if (!this.ws || !this.connected) return;
 
-        // Subscribe to transactions involving any of our tracked wallets
-        // Helius supports filtering by accountInclude
-        const subscribeMsg = {
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'transactionSubscribe',
-            params: [
-                {
-                    accountInclude: this.wallets,
-                },
-                {
-                    commitment: 'confirmed',
-                    encoding: 'jsonParsed',
-                    transactionDetails: 'full',
-                    maxSupportedTransactionVersion: 0,
-                },
-            ],
-        };
+        // Subscribe to each wallet individually using logsSubscribe
+        // (Solana public WS doesn't support batch accountInclude)
+        for (let i = 0; i < this.wallets.length; i++) {
+            const subscribeMsg = {
+                jsonrpc: '2.0',
+                id: i + 1,
+                method: 'logsSubscribe',
+                params: [
+                    { mentions: [this.wallets[i]] },
+                    { commitment: 'confirmed' },
+                ],
+            };
+            this.ws.send(JSON.stringify(subscribeMsg));
+        }
 
-        this.ws.send(JSON.stringify(subscribeMsg));
-        console.log(`[WS-Monitor] Subscribed to ${this.wallets.length} wallets`);
+        console.log(`[WS-Monitor] Subscribed to ${this.wallets.length} wallets via logsSubscribe`);
     }
 
     /**
-     * Handle incoming WebSocket message — parse for swap transactions.
+     * Handle incoming WebSocket message.
+     * logsSubscribe returns log notifications with signature — we then
+     * use Helius enhanced API to get full parsed transaction details.
      */
     private handleMessage(msg: any): void {
-        // Subscription confirmation
-        if (msg.result !== undefined && msg.id === 1) {
-            this.subscriptionId = msg.result;
-            console.log(`[WS-Monitor] Subscription confirmed: ${this.subscriptionId}`);
+        // Subscription confirmations
+        if (msg.result !== undefined && typeof msg.id === 'number') {
+            if (!this.subscriptionId) {
+                this.subscriptionId = msg.result;
+                console.log(`[WS-Monitor] First subscription confirmed (id: ${msg.result})`);
+            }
             return;
         }
 
-        // Transaction notification
-        if (msg.method === 'transactionNotification' && msg.params?.result) {
-            const tx = msg.params.result;
-            this.parseTransaction(tx);
+        // Log notification — a tracked wallet had activity
+        if (msg.method === 'logsNotification' && msg.params?.result?.value) {
+            const value = msg.params.result.value;
+            const signature = value.signature;
+            const err = value.err;
+
+            // Skip failed transactions
+            if (err) return;
+
+            // Detect swap programs in the logs
+            const logs: string[] = value.logs ?? [];
+            const isSwap = logs.some((log: string) =>
+                log.includes('JUP') ||           // Jupiter
+                log.includes('whirLbMiicV') ||    // Orca Whirlpool
+                log.includes('675kPX9MHTjS') ||   // Raydium AMM
+                log.includes('CAMMCzo5Y') ||       // Raydium CLMM
+                log.includes('srmqPvymJe') ||      // Serum/OpenBook
+                log.includes('Swap') ||
+                log.includes('swap'),
+            );
+
+            if (!isSwap) return;
+
+            // We detected a swap — fetch full details via Helius
+            this.fetchAndParseTransaction(signature);
         }
     }
 
     /**
-     * Parse a WebSocket transaction notification for swap activity.
+     * Fetch full transaction details from Helius and parse swap direction.
+     * Called when WebSocket detects swap activity.
      */
-    private parseTransaction(tx: any): void {
+    private async fetchAndParseTransaction(signature: string): Promise<void> {
         try {
-            const signature = tx.signature;
-            const transaction = tx.transaction;
-            if (!transaction) return;
+            const url = `https://api.helius.xyz/v0/transactions/?api-key=${this.heliusKey}&transactions=${signature}`;
+            const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+            if (!res.ok) return;
 
-            // Find which tracked wallet is the fee payer
-            const accountKeys = transaction.message?.accountKeys ?? [];
-            const feePayer = accountKeys[0]?.pubkey;
+            const txns = await res.json() as any[];
+            if (!Array.isArray(txns) || txns.length === 0) return;
+
+            const tx = txns[0];
+            const feePayer = tx.feePayer;
             if (!feePayer || !this.wallets.includes(feePayer)) return;
 
-            // Look for token transfers that indicate swaps
-            const meta = tx.meta;
-            if (!meta) return;
+            // Parse swap from Helius enhanced format
+            if (tx.events?.swap) {
+                const swap = tx.events.swap;
+                const tokenIn = swap.tokenInputs?.[0];
+                const tokenOut = swap.tokenOutputs?.[0];
+                if (!tokenIn || !tokenOut) return;
 
-            const preBalances = meta.preTokenBalances ?? [];
-            const postBalances = meta.postTokenBalances ?? [];
+                const isBuy = STABLECOINS.has(tokenIn.mint) && !STABLECOINS.has(tokenOut.mint);
+                const isSell = !STABLECOINS.has(tokenIn.mint) && STABLECOINS.has(tokenOut.mint);
+                if (!isBuy && !isSell) return;
 
-            // Detect token flow: what went in/out for the fee payer
-            let sentStable = false;
-            let receivedToken: { mint: string; amount: number } | null = null;
-            let sentToken: { mint: string; amount: number } | null = null;
-            let receivedStable = false;
-
-            for (const post of postBalances) {
-                const pre = preBalances.find((p: any) => p.accountIndex === post.accountIndex && p.mint === post.mint);
-                const preAmount = pre?.uiTokenAmount?.uiAmount ?? 0;
-                const postAmount = post.uiTokenAmount?.uiAmount ?? 0;
-                const diff = postAmount - preAmount;
-                const owner = post.owner;
-
-                if (owner !== feePayer) continue;
-
-                if (STABLECOINS.has(post.mint)) {
-                    if (diff < 0) sentStable = true;
-                    if (diff > 0) receivedStable = true;
-                } else {
-                    if (diff > 0) receivedToken = { mint: post.mint, amount: diff };
-                    if (diff < 0) sentToken = { mint: post.mint, amount: Math.abs(diff) };
-                }
-            }
-
-            // Determine trade direction
-            if (sentStable && receivedToken) {
-                this.tradeBuffer.push({
+                const trade: WalletTrade = {
                     walletAddress: feePayer,
-                    tokenMint: receivedToken.mint,
-                    tokenSymbol: 'UNKNOWN', // Will be enriched by DexScreener
-                    action: 'BUY',
+                    tokenMint: isBuy ? tokenOut.mint : tokenIn.mint,
+                    tokenSymbol: isBuy ? (tokenOut.symbol ?? 'UNKNOWN') : (tokenIn.symbol ?? 'UNKNOWN'),
+                    action: isBuy ? 'BUY' : 'SELL',
                     amountUsd: 0,
                     priceUsd: 0,
-                    timestamp: Date.now(),
+                    timestamp: (tx.timestamp ?? 0) * 1000 || Date.now(),
                     txSignature: signature,
-                });
-                console.log(`[WS-Monitor] REAL-TIME BUY detected: ${feePayer.slice(0, 8)}... → ${receivedToken.mint.slice(0, 8)}...`);
-            }
+                };
 
-            if (sentToken && receivedStable) {
-                this.tradeBuffer.push({
-                    walletAddress: feePayer,
-                    tokenMint: sentToken.mint,
-                    tokenSymbol: 'UNKNOWN',
-                    action: 'SELL',
-                    amountUsd: 0,
-                    priceUsd: 0,
-                    timestamp: Date.now(),
-                    txSignature: signature,
-                });
-                console.log(`[WS-Monitor] REAL-TIME SELL detected: ${feePayer.slice(0, 8)}... ← ${sentToken.mint.slice(0, 8)}...`);
+                this.tradeBuffer.push(trade);
+                console.log(`[WS-Monitor] REAL-TIME ${trade.action}: ${feePayer.slice(0, 8)}... ${trade.tokenSymbol}`);
             }
         } catch {
-            // Ignore parse errors on individual transactions
+            // Non-critical — skip this transaction
         }
     }
 
@@ -235,7 +229,7 @@ export class WebSocketMonitor {
             this.reconnectTimer = null;
             console.log('[WS-Monitor] Attempting reconnect...');
             await this.connect();
-        }, 10_000);
+        }, 30_000); // 30s between reconnects
     }
 
     async disconnect(): Promise<void> {
