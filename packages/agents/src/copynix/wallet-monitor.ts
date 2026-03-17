@@ -11,6 +11,8 @@ export class WalletMonitor {
     private lastSeenTx = new Map<string, string>(); // wallet -> last tx signature
     private pollIntervalMs: number;
     private pollStats = { calls: 0, errors: 0, rateLimited: 0, swapsFound: 0 };
+    private walletRotationIndex = 0;
+    private readonly WALLETS_PER_POLL = 10; // Only poll 10 wallets per cycle to save API credits
 
     constructor(config: {
         wallets: string[];
@@ -42,7 +44,21 @@ export class WalletMonitor {
     async pollNewTrades(): Promise<WalletTrade[]> {
         const allTrades: WalletTrade[] = [];
 
-        for (const wallet of this.trackedWallets) {
+        // Rotate through wallets — poll WALLETS_PER_POLL per cycle to save API credits.
+        // With 40 wallets and 10/poll, full rotation = 4 cycles = ~60 min at 15min interval.
+        const walletArray = Array.from(this.trackedWallets);
+        const batch = walletArray.slice(
+            this.walletRotationIndex,
+            this.walletRotationIndex + this.WALLETS_PER_POLL,
+        );
+        // Wrap around
+        if (batch.length < this.WALLETS_PER_POLL && this.walletRotationIndex > 0) {
+            const remaining = this.WALLETS_PER_POLL - batch.length;
+            batch.push(...walletArray.slice(0, remaining));
+        }
+        this.walletRotationIndex = (this.walletRotationIndex + this.WALLETS_PER_POLL) % walletArray.length;
+
+        for (const wallet of batch) {
             const label = wallet.slice(0, 8);
             try {
                 this.pollStats.calls++;
