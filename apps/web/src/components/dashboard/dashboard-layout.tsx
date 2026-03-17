@@ -85,6 +85,16 @@ const NAV_GROUPS = [
       { href: '/copynix', label: 'Copynix', icon: CircleDollarSign, desc: 'Copy-trading agent' },
     ],
   },
+  {
+    id: 'psinix',
+    label: 'ΨNIX',
+    accent: 'text-violet-400',
+    dot: 'bg-violet-400',
+    glow: 'shadow-[0_0_8px_rgba(139,92,246,0.5)]',
+    items: [
+      { href: '/psinix', label: 'Ψnix', icon: CircleDollarSign, desc: 'Phase convergence agent' },
+    ],
+  },
 ] as const;
 
 type NavGroup = (typeof NAV_GROUPS)[number];
