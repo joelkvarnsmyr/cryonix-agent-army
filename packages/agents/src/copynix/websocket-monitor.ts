@@ -62,15 +62,18 @@ export class WebSocketMonitor {
 
                 this.ws.on('close', () => {
                     if (this.connected) {
-                        // Only reconnect if we were previously connected (not initial 403)
                         console.warn('[WS-Monitor] WebSocket disconnected — reconnecting in 30s');
                         this.connected = false;
                         this.scheduleReconnect();
                     }
+                    // If never connected (initial 403), don't reconnect — handled by error event
                 });
 
                 this.ws.on('error', (err: any) => {
-                    console.error('[WS-Monitor] WebSocket error:', err.message);
+                    if (!this.connected) {
+                        // Initial connection failed — log once and give up
+                        console.warn(`[WS-Monitor] WebSocket failed: ${err.message} — using polling mode`);
+                    }
                     this.connected = false;
                     resolve(false);
                 });

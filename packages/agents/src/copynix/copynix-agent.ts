@@ -253,7 +253,8 @@ export class CopynixAgent extends BaseAgent {
             if (wsOk) {
                 this.log('info', 'WebSocket monitor connected — real-time swap detection active');
             } else {
-                this.log('warn', 'WebSocket connection failed — falling back to polling');
+                this.log('info', 'WebSocket unavailable — using polling mode (set SOLANA_WS_URL for real-time)');
+                await this.wsMonitor.disconnect();
                 this.wsMonitor = null;
             }
         }
