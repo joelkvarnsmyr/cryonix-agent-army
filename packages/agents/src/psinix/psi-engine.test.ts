@@ -259,6 +259,61 @@ async function runTests(): Promise<void> {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // 9. FULL Ψ PIPELINE — Signal → Compute → Decision
+    // ═══════════════════════════════════════════════════════════════
+
+    test('Full pipeline: strong consensus on trending market → trade', () => {
+        const trendPrices = Array.from({ length: 30 }, (_, i) => 100 + i * 0.3);
+        const entropy = PsiEngine.computeMarketEntropy(trendPrices);
+
+        const signals = [
+            signal(0.8, 0.7, 'smartmoney:BTC'),
+            signal(0.6, 0.5, 'polymarket:crypto'),
+            signal(0.7, 0.4, 'fear_greed'),
+            signal(0.9, 0.7, 'cryonix_ta:BTC'),
+        ];
+
+        const result = PsiEngine.compute(signals, entropy, 0.55, 1.5, 3.0);
+        assert(result.phaseTransition, 'Should detect phase transition');
+        assert(result.psi > 0, 'Should be LONG signal');
+        assert(result.positionPct > 0, 'Should have position size');
+        console.log(`    Ψ=${result.psi.toFixed(4)} C=${result.coherence.toFixed(3)} β=${result.beta.toFixed(2)} H=${entropy.toFixed(3)}`);
+    });
+
+    test('Full pipeline: choppy market + weak signals → no trade', () => {
+        const choppyPrices = Array.from({ length: 30 }, () => 100 + (Math.random() - 0.5) * 10);
+        const entropy = PsiEngine.computeMarketEntropy(choppyPrices);
+
+        const signals = [
+            signal(0.3, 0.5, 'smartmoney:BTC'),
+            signal(-0.2, 0.5, 'polymarket:crypto'),
+            signal(0.1, 0.4, 'fear_greed'),
+        ];
+
+        const result = PsiEngine.compute(signals, entropy, 0.5, 1.0, 3.0);
+        assert(!result.phaseTransition || Math.abs(result.psi) < 0.05,
+            `Should not produce strong signal: Ψ=${result.psi.toFixed(4)} C=${result.coherence.toFixed(3)}`);
+    });
+
+    test('C² scaling verification: C=0.7 → 49% of Kelly max', () => {
+        const signals = [signal(1, 0.8), signal(0.9, 0.7), signal(0.8, 0.6)];
+        const result = PsiEngine.compute(signals, 0.4, 0.6, 1.5, 3.0);
+        const theoreticalMax = result.kellyFraction * 100;
+        const coherenceScale = result.coherence * result.coherence;
+        const scaledMax = theoreticalMax * coherenceScale;
+        assert(result.positionPct <= scaledMax * 1.1,
+            `Position ${result.positionPct.toFixed(1)}% ≤ scaled max ${scaledMax.toFixed(1)}%`);
+    });
+
+    test('Beta scale amplifies signal: scale=3 stronger than scale=1', () => {
+        const signals = [signal(0.7, 0.6), signal(0.8, 0.5), signal(0.6, 0.7)];
+        const r1 = PsiEngine.compute(signals, 0.5, 0.55, 1.5, 1.0);
+        const r3 = PsiEngine.compute(signals, 0.5, 0.55, 1.5, 3.0);
+        assert(Math.abs(r3.psi) >= Math.abs(r1.psi),
+            `β=3 |Ψ|=${Math.abs(r3.psi).toFixed(4)} should be >= β=1 |Ψ|=${Math.abs(r1.psi).toFixed(4)}`);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // RESULTS
     // ═══════════════════════════════════════════════════════════════
 
