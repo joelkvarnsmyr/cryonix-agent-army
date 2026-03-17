@@ -1,0 +1,49 @@
+[broker]
+paper_trading = true
+exchange = "binance"
+# Paper wallet: virtual $1000 USDC starting capital
+initial_balance_usd = 1000
+
+[signals]
+# Signal sources to aggregate (Redis keys)
+# Each source produces σᵢ ∈ [-1,+1] directional signals
+sources = [
+    "smartmoney",      # Copynix whale BUY/SELL sentiment
+    "polymarket",      # Prediction market scores (fed, geo, oil, crypto)
+    "fear_greed",      # CoinMarketCap Fear & Greed index
+    "cryonix_ta",      # Technical analysis patterns from Python engine
+]
+# Minimum signals needed for Ψ computation
+min_signals = 3
+
+[psi]
+# Kuramoto phase transition threshold — C above this = synchronized
+phase_transition_threshold = 0.6
+# Kelly fraction cap — never risk more than this
+kelly_fraction_cap = 0.25
+# Shannon entropy bins for market temperature
+entropy_bins = 10
+# Entropy floor (prevents division by zero)
+entropy_floor = 0.1
+
+[trading]
+# Only trade when Ψ magnitude exceeds this threshold
+min_psi_magnitude = 0.05
+# Maximum position size in USD
+max_position_size_usd = 200
+# Maximum concurrent positions
+max_positions = 3
+# Symbols to trade (Binance USDC pairs)
+symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC", "BNB/USDC"]
+
+[exits]
+take_profit_pct = 5.0
+stop_loss_pct = 3.0
+trailing_stop_pct = 2.0
+trailing_activation_pct = 2.5
+
+[timing]
+# Main loop interval (how often to compute Ψ)
+poll_interval_ms = 60000
+# Price update interval
+price_update_ms = 30000

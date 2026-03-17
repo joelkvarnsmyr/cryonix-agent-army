@@ -347,6 +347,29 @@ services:
         condition: service_healthy
 
   # ============================================================
+  # Ψnix — Phase Convergence Trading Agent (Kuramoto + Kelly)
+  # ============================================================
+
+  psinix:
+    build:
+      context: .
+      dockerfile: Dockerfile.psinix
+    restart: unless-stopped
+    volumes:
+      - ./psinix.toml:/app/psinix.toml:ro
+    environment:
+      - NODE_ENV=production
+      - KV_URL=redis://redis:6379
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ============================================================
   # Vedic BTD — Venus Rx Buy-The-Dip dedicated trader
   # Separate wallet ($500), only trades post-Venus-Rx recovery
   # ============================================================
