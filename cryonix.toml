@@ -320,7 +320,7 @@ deep_value_tp_atr = 8.0
 # sell it to free the slot for higher-conviction signals.
 # 8h is conservative — most breakouts happen within 4h of pattern detection.
 # When to change: lower to 6h for faster turnover, raise to 12h for patience.
-stagnation_timeout_hours = 16
+stagnation_timeout_hours = 72
 stagnation_min_pnl_pct = 1.0
 # HWM-aware stagnation: if a position reached this % profit (HWM above entry)
 # AND trailing stop is active above entry, skip stagnation exit and let
@@ -363,9 +363,9 @@ t3_pct_standard = 0.30
 t3_pct_moonshot = 0.45
 
 # Stagnation per type (hours)
-stagnation_scalp = 4
-stagnation_standard = 16
-stagnation_moonshot = 48
+stagnation_scalp = 72
+stagnation_standard = 72
+stagnation_moonshot = 72
 
 # Ratcheting trail — multiplier on base trailing_stop_pct at profit thresholds
 ratchet_5pct_mult = 2.0
