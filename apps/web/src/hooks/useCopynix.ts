@@ -39,6 +39,7 @@ export interface CopynixPosition {
 export interface CopynixWallet {
   address: string;
   label: string;
+  score: number | null;
   winRate: number | null;
   pnl: number | null;
   lastActive: string | null;
