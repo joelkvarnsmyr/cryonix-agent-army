@@ -1046,10 +1046,15 @@ async function monitorPositions(): Promise<MonitorResult[]> {
       let shouldSell = false;
       let exitReason = '';
 
+      // Dust prevention: sell positions approaching Binance's actual NOTIONAL minimum.
+      // Use the real pair notional (typically $5) with safety buffer, NOT MIN_ORDER_VALUE ($15)
+      // which is our desired minimum buy size — not the exchange minimum.
       const dustFloor = TOML?.reconciliation?.dust_sell_floor ?? 5.0;
-      if (currentValue < CONFIG.MIN_ORDER_VALUE && currentValue >= dustFloor) {
+      const pairNotional = 5.0; // Binance default NOTIONAL minimum
+      const dustThreshold = pairNotional * (TOML?.capital?.notional_safety_buffer ?? 1.5); // $7.50
+      if (currentValue < dustThreshold && currentValue >= dustFloor) {
         shouldSell = true;
-        exitReason = `Dust prevention: value $${currentValue.toFixed(2)} approaching NOTIONAL minimum`;
+        exitReason = `Dust prevention: value $${currentValue.toFixed(2)} approaching NOTIONAL minimum ($${dustThreshold.toFixed(2)})`;
       }
 
       // ── TIERED EXIT ENGINE (Phase 3) ──────────────────────────────────
