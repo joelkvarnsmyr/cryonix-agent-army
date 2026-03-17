@@ -201,7 +201,7 @@ function predictOutcome(
     direction: 'above' | 'below',
     daysToExpiry: number,
 ): { prediction: 'YES' | 'NO'; impliedProb: number } {
-    const dailyVol = 0.02;
+    const dailyVol = 0.03; // 3% — matches live engine (backtest-calibrated)
     const totalVol = dailyVol * Math.sqrt(Math.max(daysToExpiry, 0.1));
     const distancePct = (currentPrice - target) / target;
 
@@ -212,7 +212,8 @@ function predictOutcome(
         zScore = -distancePct / totalVol;
     }
 
-    const impliedProb = 1 / (1 + Math.exp(-1.7 * zScore));
+    const rawProb = 1 / (1 + Math.exp(-1.7 * zScore));
+    const impliedProb = Math.max(0.05, Math.min(0.85, rawProb)); // Cap at 85%
     const prediction = impliedProb > 0.5 ? 'YES' : 'NO';
 
     return { prediction, impliedProb };
@@ -264,7 +265,9 @@ async function main() {
         const edge = Math.abs(impliedProb - 0.5);
         const minEdge = 0.02;
 
-        const finalPrediction = edge >= minEdge ? prediction : 'SKIP';
+        // Risk/reward filter: reject entry price > 0.80 (bad asymmetry)
+        const simEntryPrice = prediction === 'YES' ? impliedProb : (1 - impliedProb);
+        const finalPrediction = (edge >= minEdge && simEntryPrice <= 0.80) ? prediction : 'SKIP';
         const correct = finalPrediction === market.resolution;
 
         // Hypothetical P&L (assume $10 bet at implied prob price)
