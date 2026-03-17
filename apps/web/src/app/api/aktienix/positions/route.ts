@@ -63,7 +63,20 @@ export async function GET() {
       ORDER BY opened_at DESC
     `);
 
-    const positions = Array.from(rows) as unknown as AktienixPosition[];
+    const positions: AktienixPosition[] = Array.from(rows as any).map((r: any) => ({
+      id: r.id,
+      symbol: r.symbol,
+      qty: parseFloat(r.qty) || 0,
+      avgEntryPrice: parseFloat(r.avgEntryPrice) || 0,
+      currentPrice: parseFloat(r.currentPrice) || 0,
+      marketValue: parseFloat(r.marketValue) || 0,
+      unrealizedPl: parseFloat(r.unrealizedPl) || 0,
+      unrealizedPlPct: parseFloat(r.unrealizedPlPct) || 0,
+      openedAt: r.openedAt?.toString?.() ?? new Date().toISOString(),
+      status: r.status,
+      broker: r.broker,
+      paperTrading: r.paperTrading,
+    }));
     return NextResponse.json({
       positions,
       source: 'database',
