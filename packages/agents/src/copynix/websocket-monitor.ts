@@ -35,7 +35,9 @@ export class WebSocketMonitor {
     async connect(): Promise<boolean> {
         try {
             const WebSocket = (await import('ws')).default;
-            const wsUrl = `wss://atlas-mainnet.helius-rpc.com?api-key=${this.heliusKey}`;
+            // Try Helius WebSocket first (enhanced, requires paid plan)
+            // Fallback: standard Solana WebSocket (free but limited parsing)
+            const wsUrl = `wss://mainnet.helius-rpc.com/?api-key=${this.heliusKey}`;
 
             return new Promise((resolve) => {
                 this.ws = new WebSocket(wsUrl);
