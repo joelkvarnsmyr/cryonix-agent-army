@@ -63,11 +63,13 @@ max_weekly_loss_pct = 0.20
 max_consecutive_losses = 4
 
 [safety]
-min_token_age_hours = 24
-min_liquidity_usd = 50000
-min_holders = 50
-min_lp_burnt_pct = 50
-require_immutable_supply = true
+# Relaxed for memecoin copy trading — our tracked wallets trade new tokens.
+# Just enough to filter zero-liquidity honeypots and instant rugs.
+min_token_age_hours = 1
+min_liquidity_usd = 5000
+min_holders = 10
+min_lp_burnt_pct = 0
+require_immutable_supply = false
 
 [exits]
 take_profit_pct = 25.0
