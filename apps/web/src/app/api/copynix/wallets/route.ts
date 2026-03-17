@@ -58,6 +58,7 @@ function loadWalletsFromConfig(): WalletInfo[] {
 
 interface WalletStats {
   [address: string]: {
+    score?: number;
     winRate?: number;
     pnl?: number;
     roi?: number;
