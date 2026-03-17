@@ -304,7 +304,12 @@ export class CopynixAgent extends BaseAgent {
                     await this.processTrade(trade);
                 }
 
-                // 3. Check exits on existing positions
+                // 3a. Publish Smart Money sentiment to Redis (for Cryonix cross-intel)
+                if (newTrades.length > 0) {
+                    await this.publishSmartMoneySentiment(newTrades);
+                }
+
+                // 4. Check exits on existing positions
                 await this.checkExits();
 
                 // 4. Update position prices
@@ -583,8 +588,9 @@ export class CopynixAgent extends BaseAgent {
     // -------------------------------------------------------------------------
 
     private async enrichTradePrices(trades: WalletTrade[]): Promise<void> {
+        // Collect mints needing price OR symbol resolution
         const mintsToEnrich = [...new Set(
-            trades.filter(t => t.priceUsd <= 0).map(t => t.tokenMint)
+            trades.filter(t => t.priceUsd <= 0 || t.tokenSymbol === 'UNKNOWN').map(t => t.tokenMint)
         )];
         if (mintsToEnrich.length === 0) return;
 
@@ -594,7 +600,7 @@ export class CopynixAgent extends BaseAgent {
             if (!res.ok) return;
 
             const pairs = (await res.json()) as Array<{
-                baseToken: { address: string };
+                baseToken: { address: string; symbol: string; name: string };
                 priceUsd: string;
                 chainId: string;
                 liquidity?: { usd: number };
@@ -602,7 +608,7 @@ export class CopynixAgent extends BaseAgent {
             if (!Array.isArray(pairs)) return;
 
             // Pick highest-liquidity pair per token
-            const priceMap = new Map<string, { price: number; liquidity: number }>();
+            const tokenMap = new Map<string, { price: number; symbol: string; liquidity: number }>();
             for (const pair of pairs) {
                 if (pair.chainId !== 'solana') continue;
                 const addr = pair.baseToken.address.toLowerCase();
@@ -610,22 +616,128 @@ export class CopynixAgent extends BaseAgent {
                 if (!price || price <= 0) continue;
                 const liq = pair.liquidity?.usd ?? 0;
 
-                const existing = priceMap.get(addr);
+                const existing = tokenMap.get(addr);
                 if (!existing || liq > existing.liquidity) {
-                    priceMap.set(addr, { price, liquidity: liq });
+                    tokenMap.set(addr, {
+                        price,
+                        symbol: pair.baseToken.symbol || 'UNKNOWN',
+                        liquidity: liq,
+                    });
                 }
             }
 
+            let resolved = 0;
             for (const trade of trades) {
-                if (trade.priceUsd > 0) continue;
-                const data = priceMap.get(trade.tokenMint.toLowerCase());
-                if (data) {
-                    trade.priceUsd = data.price;
-                    this.log('info', `[ENRICH] ${trade.tokenSymbol} price: $${data.price.toFixed(6)}`);
+                const data = tokenMap.get(trade.tokenMint.toLowerCase());
+                if (!data) continue;
+
+                if (trade.priceUsd <= 0) trade.priceUsd = data.price;
+
+                // Resolve UNKNOWN symbols from DexScreener
+                if (trade.tokenSymbol === 'UNKNOWN' && data.symbol !== 'UNKNOWN') {
+                    trade.tokenSymbol = data.symbol;
+                    resolved++;
                 }
+            }
+
+            if (resolved > 0) {
+                this.log('info', `[ENRICH] Resolved ${resolved} UNKNOWN token symbol(s) via DexScreener`);
             }
         } catch (err) {
             this.log('error', `[ENRICH] DexScreener error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Smart Money Sentiment Bridge (Copynix → Cryonix cross-intelligence)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Aggregate whale BUY/SELL activity into per-asset sentiment scores.
+     * Written to Redis so Cryonix auto-trader can read them as signals.
+     *
+     * Maps Solana token symbols to Binance CEX symbols where possible:
+     *   SOL → SOL, BONK → BONK, JUP → JUP, etc.
+     *   Unmapped tokens contribute to general "crypto_risk" sentiment.
+     *
+     * Score: -100 (mass selling) to +100 (mass buying)
+     * TTL: 30 min (stale whale data is worse than no data)
+     */
+    private async publishSmartMoneySentiment(trades: WalletTrade[]): Promise<void> {
+        if (!this.statePublisher) return;
+
+        try {
+            // Count buys/sells per symbol
+            const activity = new Map<string, { buys: number; sells: number; buyVolume: number; sellVolume: number; wallets: Set<string> }>();
+
+            for (const trade of trades) {
+                if (trade.tokenSymbol === 'UNKNOWN') continue;
+                const symbol = trade.tokenSymbol.toUpperCase();
+
+                let entry = activity.get(symbol);
+                if (!entry) {
+                    entry = { buys: 0, sells: 0, buyVolume: 0, sellVolume: 0, wallets: new Set() };
+                    activity.set(symbol, entry);
+                }
+
+                entry.wallets.add(trade.walletAddress);
+                if (trade.action === 'BUY') {
+                    entry.buys++;
+                    entry.buyVolume += trade.amountUsd;
+                } else {
+                    entry.sells++;
+                    entry.sellVolume += trade.amountUsd;
+                }
+            }
+
+            // Publish per-asset sentiment
+            let published = 0;
+            for (const [symbol, data] of activity) {
+                const totalTrades = data.buys + data.sells;
+                if (totalTrades === 0) continue;
+
+                // Score: buy-ratio normalized to -100..+100
+                const buyRatio = data.buys / totalTrades;
+                const score = Math.round((buyRatio - 0.5) * 200); // 0.5 → 0, 1.0 → 100, 0.0 → -100
+
+                const sentiment = {
+                    symbol,
+                    score,
+                    buys: data.buys,
+                    sells: data.sells,
+                    buyVolume: data.buyVolume,
+                    sellVolume: data.sellVolume,
+                    uniqueWallets: data.wallets.size,
+                    timestamp: Date.now(),
+                };
+
+                await this.statePublisher.set(
+                    `smartmoney:${symbol}`,
+                    JSON.stringify(sentiment),
+                );
+                published++;
+            }
+
+            // Aggregate crypto risk sentiment (overall whale mood)
+            const totalBuys = [...activity.values()].reduce((s, d) => s + d.buys, 0);
+            const totalSells = [...activity.values()].reduce((s, d) => s + d.sells, 0);
+            const totalTrades = totalBuys + totalSells;
+            if (totalTrades > 0) {
+                const overallScore = Math.round(((totalBuys / totalTrades) - 0.5) * 200);
+                await this.statePublisher.set('smartmoney:_overall', JSON.stringify({
+                    score: overallScore,
+                    buys: totalBuys,
+                    sells: totalSells,
+                    uniqueAssets: activity.size,
+                    timestamp: Date.now(),
+                }));
+            }
+
+            if (published > 0) {
+                this.log('info', `[SMART-MONEY] Published sentiment for ${published} asset(s) (${totalBuys}B/${totalSells}S)`);
+            }
+        } catch (err) {
+            this.log('warn', `[SMART-MONEY] Publish failed: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
 

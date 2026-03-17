@@ -3523,6 +3523,30 @@ export async function POST() {
         } catch { /* sentiment unavailable — no adjustment */ }
       }
 
+      // Smart Money sentiment (Copynix whale tracking → Cryonix intelligence)
+      if (signal.action === 'BUY') {
+        try {
+          const baseAsset = signal.symbol.split('/')[0];
+          const smRaw = await redis.get(`smartmoney:${baseAsset}`) as string | null;
+          if (smRaw) {
+            const sm = JSON.parse(smRaw);
+            const smScore = sm.score ?? 0; // -100 to +100
+            const smWallets = sm.uniqueWallets ?? 0;
+
+            if (smScore >= 50 && smWallets >= 2) {
+              // Strong whale buying consensus — boost confidence
+              signal.confidence += 0.05;
+              console.log(`[SMART-MONEY] ${signal.symbol}: +5% boost (whale score ${smScore}, ${smWallets} wallets buying)`);
+            } else if (smScore <= -50 && smWallets >= 2) {
+              // Whales dumping — penalize
+              signal.confidence -= 0.05;
+              console.log(`[SMART-MONEY] ${signal.symbol}: -5% penalty (whale score ${smScore}, ${smWallets} wallets selling)`);
+            }
+            signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
+          }
+        } catch { /* smart money data unavailable — no adjustment */ }
+      }
+
       // Dedup lock: prevent duplicate executions for the same symbol
       const dedupKey = `executing:${signal.symbol}`;
       const acquired = await redis.set(dedupKey, '1', 'EX', 30, 'NX');
