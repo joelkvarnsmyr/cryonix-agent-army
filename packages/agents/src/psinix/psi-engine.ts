@@ -61,6 +61,7 @@ export class PsiEngine {
      * @param entropy   H(market) — Shannon entropy of recent market state
      * @param winRate   Overall win rate for Kelly calculation (0-1)
      * @param avgWinLossRatio  Average win/loss ratio for Kelly (e.g., 1.5)
+     * @param betaScale Scale factor for β = betaScale / H (default 1.0, research recommends 3.0)
      * @returns         PsiResult with position signal and diagnostics
      */
     static compute(
@@ -68,6 +69,7 @@ export class PsiEngine {
         entropy: number,
         winRate: number = 0.5,
         avgWinLossRatio: number = 1.0,
+        betaScale: number = 1.0,
     ): PsiResult {
         // Edge case: not enough signals
         if (signals.length < MIN_SIGNALS) {
@@ -97,9 +99,10 @@ export class PsiEngine {
         const coherence = Math.sqrt(realSum * realSum + imagSum * imagSum) / N;
 
         // ── Step 3: Entropy temperature β(t) ──
-        // β = 1 / H(market) — low entropy = sharp decisions, high = cautious
+        // β = betaScale / H(market) — low entropy = sharp decisions, high = cautious
+        // Research: betaScale=3.0 is optimal (β most sensitive parameter)
         const H = Math.max(entropy, ENTROPY_FLOOR);
-        const beta = 1 / H;
+        const beta = (betaScale ?? 1) / H;
 
         // ── Step 4: Weighted signal sum Σ wᵢσᵢ ──
         let weightedSum = 0;

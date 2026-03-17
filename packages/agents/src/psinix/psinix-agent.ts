@@ -14,13 +14,14 @@ import { parse } from '@iarna/toml';
 import { join } from 'path';
 import { PsiEngine, type PsiResult } from './psi-engine';
 import { SignalCollector, type RedisReader } from './signal-collector';
+import { OHLCVFetcher } from './ohlcv-fetcher';
 
 // ── Types ────────────────────────────────────────────────────────────
 
 interface PsinixConfig {
     broker: { paper_trading: boolean; exchange: string; initial_balance_usd: number };
     signals: { sources: string[]; min_signals: number };
-    psi: { phase_transition_threshold: number; kelly_fraction_cap: number; entropy_bins: number; entropy_floor: number };
+    psi: { phase_transition_threshold: number; kelly_fraction_cap: number; entropy_bins: number; entropy_floor: number; beta_scale: number };
     trading: { min_psi_magnitude: number; max_position_size_usd: number; max_positions: number; symbols: string[] };
     exits: { take_profit_pct: number; stop_loss_pct: number; trailing_stop_pct: number; trailing_activation_pct: number };
     timing: { poll_interval_ms: number; price_update_ms: number };
@@ -115,6 +116,7 @@ export class PsinixAgent {
     private config: PsinixConfig;
     private redis: any = null;
     private collector: SignalCollector | null = null;
+    private ohlcv = new OHLCVFetcher(60_000);
     private logger = new PsinixTradeLogger();
     private isRunning = false;
 
@@ -153,6 +155,14 @@ export class PsinixAgent {
             console.log('[psinix] Redis connected — signal collector ready');
         } catch (err: any) {
             console.error('[psinix] Redis connect failed:', err.message);
+        }
+
+        // Initialize OHLCV fetcher (Binance public API via ccxt)
+        try {
+            await this.ohlcv.initialize();
+            console.log('[psinix] OHLCV fetcher initialized (Binance ccxt)');
+        } catch (err: any) {
+            console.error('[psinix] OHLCV fetcher init failed:', err.message);
         }
 
         // Connect trade logger
@@ -232,7 +242,8 @@ export class PsinixAgent {
 
         // Compute Ψ
         const wr = this.wins + this.losses > 0 ? this.wins / (this.wins + this.losses) : 0.5;
-        const result = PsiEngine.compute(signals, entropy, wr, 1.5);
+        const betaScale = this.config.psi.beta_scale ?? 3.0;
+        const result = PsiEngine.compute(signals, entropy, wr, 1.5, betaScale);
 
         // Log significant Ψ values
         if (Math.abs(result.psi) > 0.01 || result.phaseTransition) {
@@ -403,52 +414,26 @@ export class PsinixAgent {
 
     private async updatePrices(): Promise<void> {
         try {
-            // Use CoinGecko free API for price data (no auth needed)
-            const ids: Record<string, string> = {
-                'BTC/USDC': 'bitcoin',
-                'ETH/USDC': 'ethereum',
-                'SOL/USDC': 'solana',
-                'BNB/USDC': 'binancecoin',
-            };
-
-            const geckoIds = this.config.trading.symbols
-                .map(s => ids[s])
-                .filter(Boolean)
-                .join(',');
-
-            if (!geckoIds) return;
-
-            const url = `https://api.coingecko.com/api/v3/simple/price?ids=${geckoIds}&vs_currencies=usd`;
-            const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
-            if (!res.ok) return;
-
-            const data = await res.json() as Record<string, { usd: number }>;
-
-            for (const [symbol, geckoId] of Object.entries(ids)) {
-                const price = data[geckoId]?.usd;
-                if (price && price > 0) {
-                    this.priceCache.set(symbol, price);
+            // Fetch latest close prices from Binance via ccxt
+            for (const symbol of this.config.trading.symbols) {
+                const closes = await this.ohlcv.getClosePrices(symbol, '15m', 1);
+                if (closes.length > 0 && closes[closes.length - 1] > 0) {
+                    this.priceCache.set(symbol, closes[closes.length - 1]);
                 }
             }
         } catch {
-            // Non-critical
+            // Non-critical — positions still use last known price
         }
     }
 
     private async getRecentPrices(symbol: string): Promise<number[]> {
-        // For entropy calculation — use cached price + small variations
-        // In production, this would pull OHLCV candles
-        const current = this.priceCache.get(symbol) ?? 0;
-        if (current <= 0) return [];
-
-        // Generate synthetic price series from current price for entropy estimate
-        // TODO: Replace with real OHLCV data from DexScreener/Binance
-        const prices: number[] = [];
-        for (let i = 0; i < 20; i++) {
-            const noise = (Math.random() - 0.5) * 0.02; // ±1% random walk
-            prices.push(current * (1 + noise));
+        // Real OHLCV close prices from Binance for entropy calculation
+        try {
+            return await this.ohlcv.getClosePrices(symbol, '15m', 50);
+        } catch {
+            // Fallback: return empty (will produce max entropy)
+            return [];
         }
-        return prices;
     }
 
     // ── State Publishing ─────────────────────────────────────────────
@@ -487,7 +472,7 @@ export class PsinixAgent {
         const defaults: PsinixConfig = {
             broker: { paper_trading: true, exchange: 'binance', initial_balance_usd: 1000 },
             signals: { sources: ['smartmoney', 'polymarket', 'fear_greed'], min_signals: 3 },
-            psi: { phase_transition_threshold: 0.6, kelly_fraction_cap: 0.25, entropy_bins: 10, entropy_floor: 0.1 },
+            psi: { phase_transition_threshold: 0.6, kelly_fraction_cap: 0.25, entropy_bins: 10, entropy_floor: 0.1, beta_scale: 3.0 },
             trading: { min_psi_magnitude: 0.05, max_position_size_usd: 200, max_positions: 3, symbols: ['BTC/USDC', 'ETH/USDC', 'SOL/USDC'] },
             exits: { take_profit_pct: 5, stop_loss_pct: 3, trailing_stop_pct: 2, trailing_activation_pct: 2.5 },
             timing: { poll_interval_ms: 60000, price_update_ms: 30000 },

@@ -25,6 +25,8 @@ kelly_fraction_cap = 0.25
 entropy_bins = 10
 # Entropy floor (prevents division by zero)
 entropy_floor = 0.1
+# Beta scale factor: β = beta_scale / H (research optimal = 3.0, most sensitive param)
+beta_scale = 3.0
 
 [trading]
 # Only trade when Ψ magnitude exceeds this threshold

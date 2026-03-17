@@ -6,6 +6,7 @@ WORKDIR /app
 # Install runtime dependencies
 RUN npm install --no-save \
     @iarna/toml@2 \
+    ccxt@4 \
     dotenv@16 \
     ioredis@5 \
     pg@8 \
@@ -25,6 +26,7 @@ COPY packages/agents/src/ ./packages/agents/src/
 # Copy runner + config
 COPY scripts/services/psinix-runner.ts ./scripts/services/
 COPY scripts/lib/ ./scripts/lib/
+COPY scripts/strategy-lab/psinix_backtest.ts ./scripts/strategy-lab/
 
 USER node
 CMD ["npx", "tsx", "scripts/services/psinix-runner.ts"]
