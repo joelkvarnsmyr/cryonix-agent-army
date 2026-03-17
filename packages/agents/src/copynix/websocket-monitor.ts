@@ -25,6 +25,7 @@ export class WebSocketMonitor {
     private subscriptionId: number | null = null;
     private reconnectAttempts = 0;
     private readonly MAX_RECONNECTS = 3;
+    private everConnected = false; // true only after successful open
 
     constructor(heliusKey: string, wallets: string[]) {
         this.heliusKey = heliusKey;
@@ -47,8 +48,10 @@ export class WebSocketMonitor {
                 this.ws = new WebSocket(wsUrl);
 
                 this.ws.on('open', () => {
-                    console.log('[WS-Monitor] Connected to Helius WebSocket');
+                    console.log('[WS-Monitor] Connected to Solana WebSocket');
                     this.connected = true;
+                    this.everConnected = true;
+                    this.reconnectAttempts = 0;
                     this.subscribe();
                     resolve(true);
                 });
@@ -61,12 +64,13 @@ export class WebSocketMonitor {
                 });
 
                 this.ws.on('close', () => {
-                    if (this.connected) {
+                    if (this.everConnected) {
+                        // Was connected before — try to reconnect
                         console.warn('[WS-Monitor] WebSocket disconnected — reconnecting in 30s');
                         this.connected = false;
                         this.scheduleReconnect();
                     }
-                    // If never connected (initial 403), don't reconnect — handled by error event
+                    // Never connected (initial 403) → don't reconnect, silently use polling
                 });
 
                 this.ws.on('error', (err: any) => {
