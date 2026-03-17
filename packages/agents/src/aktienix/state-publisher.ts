@@ -138,18 +138,6 @@ export class StatePublisher {
         }
     }
 
-    /**
-     * Write an arbitrary key to Redis.
-     */
-    async set(key: string, value: string): Promise<void> {
-        try {
-            await this.ensureConnected();
-            await this.client.send('SET', key, value);
-        } catch (err) {
-            console.error('[StatePublisher] set error:', err);
-        }
-    }
-
     async disconnect(): Promise<void> {
         try {
             await this.client.disconnect();
