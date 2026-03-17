@@ -57,9 +57,12 @@ export class WebSocketMonitor {
                 });
 
                 this.ws.on('close', () => {
-                    console.warn('[WS-Monitor] WebSocket disconnected — reconnecting in 10s');
-                    this.connected = false;
-                    this.scheduleReconnect();
+                    if (this.connected) {
+                        // Only reconnect if we were previously connected (not initial 403)
+                        console.warn('[WS-Monitor] WebSocket disconnected — reconnecting in 30s');
+                        this.connected = false;
+                        this.scheduleReconnect();
+                    }
                 });
 
                 this.ws.on('error', (err: any) => {
