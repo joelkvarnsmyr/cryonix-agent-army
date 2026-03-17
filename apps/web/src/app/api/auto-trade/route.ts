@@ -3547,6 +3547,54 @@ export async function POST() {
         } catch { /* smart money data unavailable — no adjustment */ }
       }
 
+      // Aktienix macro events (stock market → crypto cross-intelligence)
+      if (signal.action === 'BUY') {
+        try {
+          const macroEvents = await redis.hgetall('aktienix:macro:event_states');
+          if (macroEvents && Object.keys(macroEvents).length > 0) {
+            for (const [eventId, raw] of Object.entries(macroEvents)) {
+              try {
+                const event = JSON.parse(raw as string);
+                const phase = event.phase ?? '';
+                // Active geopolitical/macro crisis → risk-off penalty for crypto
+                if (phase === 'developing' || phase === 'escalating') {
+                  signal.confidence -= 0.03;
+                  signal.reason += ` | macro: ${eventId} (${phase}) -3%`;
+                  console.log(`[MACRO] ${signal.symbol}: -3% penalty (${eventId} ${phase})`);
+                  break; // One macro event penalty is enough
+                }
+              } catch { /* skip unparseable event */ }
+            }
+            signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
+          }
+        } catch { /* macro data unavailable — no adjustment */ }
+      }
+
+      // Solanix DEX sentiment (Solana DEX trading → crypto cross-intelligence)
+      if (signal.action === 'BUY' && signal.symbol.includes('SOL')) {
+        try {
+          const solanixPos = await redis.get('solanix:positions') as string | null;
+          if (solanixPos) {
+            const positions = JSON.parse(solanixPos);
+            const solPos = positions.find((p: any) => p.symbol === 'SOL');
+            if (solPos) {
+              // Solanix is actively holding SOL — check their P&L for sentiment
+              const solPnlPct = solPos.currentPrice && solPos.avgEntryPrice
+                ? ((solPos.currentPrice - solPos.avgEntryPrice) / solPos.avgEntryPrice) * 100
+                : 0;
+              if (solPnlPct > 2) {
+                signal.confidence += 0.03;
+                console.log(`[SOLANIX] ${signal.symbol}: +3% boost (Solanix SOL position +${solPnlPct.toFixed(1)}%)`);
+              } else if (solPnlPct < -3) {
+                signal.confidence -= 0.03;
+                console.log(`[SOLANIX] ${signal.symbol}: -3% penalty (Solanix SOL position ${solPnlPct.toFixed(1)}%)`);
+              }
+              signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
+            }
+          }
+        } catch { /* solanix data unavailable — no adjustment */ }
+      }
+
       // Dedup lock: prevent duplicate executions for the same symbol
       const dedupKey = `executing:${signal.symbol}`;
       const acquired = await redis.set(dedupKey, '1', 'EX', 30, 'NX');
