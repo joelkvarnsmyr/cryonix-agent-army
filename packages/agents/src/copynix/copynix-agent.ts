@@ -432,6 +432,15 @@ export class CopynixAgent extends BaseAgent {
             return;
         }
 
+        // Portfolio exposure limit: max X% of capital locked in positions
+        const acct = this.executor!.getAccountState();
+        const maxExposurePct = this.tomlConfig.capital.max_portfolio_exposure_pct ?? 0.20;
+        const currentExposure = acct.portfolioValue - acct.usdcBalance;
+        if (acct.portfolioValue > 0 && currentExposure / acct.portfolioValue >= maxExposurePct) {
+            this.log('info', `[SKIP] Portfolio exposure ${((currentExposure / acct.portfolioValue) * 100).toFixed(0)}% >= max ${(maxExposurePct * 100).toFixed(0)}%`);
+            return;
+        }
+
         // Polymarket sentiment adjustment
         let adjustedConfidence = signal.confidence;
         try {
@@ -531,14 +540,26 @@ export class CopynixAgent extends BaseAgent {
             const pnlPct = ((pos.currentPrice - pos.avgEntryPrice) / pos.avgEntryPrice) * 100;
             const holdHours = (Date.now() - pos.entryTime) / 3_600_000;
 
-            // Take profit
+            // Take profit — partial exit: sell 50% to secure gains, let rest ride with trailing
             if (pnlPct >= config.take_profit_pct) {
-                const result = this.executor!.executeSell(pos.tokenMint, pos.currentPrice, `TP hit (${pnlPct.toFixed(1)}%)`);
-                if (result.success) {
-                    this.log('info', `[TP] ${result.message}`);
-                    await this.logSell(pos, pos.currentPrice, 'take_profit', result.pnl);
+                if (!pos.partialTpTaken) {
+                    // First TP hit: sell 50%, mark as partial
+                    const halfQty = pos.qty / 2;
+                    const halfValue = halfQty * pos.currentPrice;
+                    const halfCost = halfQty * pos.avgEntryPrice;
+                    const halfPnl = halfValue - halfCost;
+                    this.executor!.reducePosition(pos.tokenMint, halfQty);
+                    pos.partialTpTaken = true;
+                    this.log('info', `[TP-PARTIAL] Sold 50% of ${pos.tokenSymbol} at +${pnlPct.toFixed(1)}% — letting rest ride with trailing`);
+                    await this.logSell(
+                        { ...pos, qty: halfQty },
+                        pos.currentPrice,
+                        'partial_take_profit',
+                        halfPnl,
+                    );
+                    continue;
                 }
-                continue;
+                // Second TP: already took partial, full exit handled by trailing stop
             }
 
             // Stop loss

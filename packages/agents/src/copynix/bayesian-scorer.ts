@@ -66,6 +66,11 @@ const MIN_TRADES_DEMOTE = 20; // Need 20+ trades to demote (avoid unlucky streak
 // PnL-weighted update: trades with large PnL move beliefs more
 const PNL_WEIGHT_THRESHOLD = 10; // $10 — trades above this get extra weight
 
+// Decay factor: older beliefs fade toward the prior over time.
+// Applied on each recordOutcome — multiplies existing alpha/beta by decay.
+// 0.995 = ~0.5% decay per trade = beliefs from 100 trades ago are ~60% as strong.
+const BELIEF_DECAY = 0.995;
+
 export interface RedisAdapter {
     get(key: string): Promise<string | null>;
     set(key: string, value: string): Promise<void>;
@@ -108,6 +113,11 @@ export class BayesianScorer {
             if (!belief) {
                 belief = this.newBelief(addr);
             }
+
+            // Decay: shrink existing evidence toward prior so recent trades matter more.
+            // α and β slowly regress toward PRIOR_ALPHA/PRIOR_BETA over many trades.
+            belief.alpha = PRIOR_ALPHA + (belief.alpha - PRIOR_ALPHA) * BELIEF_DECAY;
+            belief.beta = PRIOR_BETA + (belief.beta - PRIOR_BETA) * BELIEF_DECAY;
 
             // Bayesian update: Beta(α, β) → Beta(α + w, β + w)
             // where w is PnL-weighted (bigger trades = stronger evidence)

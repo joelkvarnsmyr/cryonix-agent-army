@@ -45,6 +45,7 @@ export interface CopyPosition {
     entryTime: number;
     highWatermark: number;
     trailingStopActive: boolean;
+    partialTpTaken: boolean;      // true after 50% sold at TP
     copiedFrom: string[];         // wallet addresses that triggered this copy
     consensusLevel: 'strong' | 'medium' | 'single';
 }

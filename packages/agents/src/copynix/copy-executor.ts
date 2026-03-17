@@ -68,12 +68,26 @@ export class CopyExecutor {
             entryTime: Date.now(),
             highWatermark: signal.avgPriceUsd,
             trailingStopActive: false,
+            partialTpTaken: false,
             copiedFrom: signal.wallets,
             consensusLevel: signal.consensusLevel,
         };
 
         this.positions.set(signal.tokenMint, position);
         return { success: true, message: `Bought $${orderSize.toFixed(2)} of ${signal.tokenSymbol} @ $${signal.avgPriceUsd.toFixed(6)} (${signal.consensusLevel} consensus)` };
+    }
+
+    /**
+     * Reduce position quantity (for partial take profits).
+     */
+    reducePosition(tokenMint: string, reduceQty: number): void {
+        const pos = this.positions.get(tokenMint);
+        if (!pos) return;
+        pos.qty = Math.max(0, pos.qty - reduceQty);
+        this.usdcBalance += reduceQty * pos.currentPrice;
+        if (pos.qty <= 0) {
+            this.positions.delete(tokenMint);
+        }
     }
 
     /**

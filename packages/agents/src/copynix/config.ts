@@ -6,7 +6,7 @@ export interface CopynixTomlConfig {
     broker: { paper_trading: boolean };
     wallets: { tracked: string[]; max_tracked: number; discovery_enabled: boolean; discovery_interval_hours: number; scores: Record<string, number> };
     consensus: { min_wallets_strong: number; min_wallets_medium: number; time_window_minutes: number; cooldown_hours: number };
-    capital: { max_position_size_usd: number; max_capital_per_trade_pct: number; min_order_value: number };
+    capital: { max_position_size_usd: number; max_capital_per_trade_pct: number; min_order_value: number; max_portfolio_exposure_pct: number; max_risk_per_trade_pct: number };
     limits: { max_open_positions: number; max_trades_per_day: number };
     risk: { min_confidence: number; max_daily_loss_pct: number; max_weekly_loss_pct: number; max_consecutive_losses: number };
     safety: { min_token_age_hours: number; min_liquidity_usd: number; min_holders: number; min_lp_burnt_pct: number; require_immutable_supply: boolean };
@@ -18,7 +18,7 @@ export const COPYNIX_DEFAULTS: CopynixTomlConfig = {
     broker: { paper_trading: true },
     wallets: { tracked: [], max_tracked: 10, discovery_enabled: true, discovery_interval_hours: 24, scores: {} },
     consensus: { min_wallets_strong: 3, min_wallets_medium: 2, time_window_minutes: 15, cooldown_hours: 4 },
-    capital: { max_position_size_usd: 50, max_capital_per_trade_pct: 0.20, min_order_value: 5.0 },
+    capital: { max_position_size_usd: 50, max_capital_per_trade_pct: 0.20, min_order_value: 5.0, max_portfolio_exposure_pct: 0.20, max_risk_per_trade_pct: 0.02 },
     limits: { max_open_positions: 5, max_trades_per_day: 10 },
     risk: { min_confidence: 0.50, max_daily_loss_pct: 0.10, max_weekly_loss_pct: 0.20, max_consecutive_losses: 4 },
     safety: { min_token_age_hours: 24, min_liquidity_usd: 50_000, min_holders: 50, min_lp_burnt_pct: 50, require_immutable_supply: true },

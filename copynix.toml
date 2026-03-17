@@ -111,6 +111,10 @@ cooldown_hours = 4
 max_position_size_usd = 50
 max_capital_per_trade_pct = 0.20
 min_order_value = 5.00
+# Max 20% of portfolio locked in open positions at any time
+max_portfolio_exposure_pct = 0.20
+# Max 2% of portfolio risked per trade (based on distance to SL)
+max_risk_per_trade_pct = 0.02
 
 [limits]
 max_open_positions = 5
@@ -147,11 +151,10 @@ stagnation_min_pnl_pct = 3.0
 [timing]
 # Main loop interval — controls exit checks, price updates, state publishing
 poll_interval_ms = 30000
-# Wallet scan interval — Helius API calls (40 wallets × 1 call each)
-# 900s = 15 min. At 15min intervals with 40 wallets:
-# 40 × 4/hour × 24h = 3,840 calls/day × 100 credits = 384K/day ≈ 11.5M/month.
-# Still over 1M free tier — backoff will auto-throttle when needed.
-# Consider upgrading Helius plan or reducing wallet count if 429s persist.
-wallet_scan_interval_ms = 900000
+# Wallet scan interval — Helius API calls (10 wallets per batch via rotation)
+# 300s = 5 min. With rotation (10/batch, 40 total): full rotation = 20 min.
+# 10 calls × 12/hour × 24h = 2,880/day × 100 credits = 288K/day ≈ 8.6M/month.
+# Backoff auto-throttles on 429. New Helius key has fresh 1M credits.
+wallet_scan_interval_ms = 300000
 # Discovery interval (7 days). Discovery uses ~10 extra Helius calls.
 discovery_interval_ms = 604800000
