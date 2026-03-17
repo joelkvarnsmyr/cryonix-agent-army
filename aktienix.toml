@@ -173,8 +173,9 @@ max_day_trades_per_5d = 5
 
 # Minimum combined score to act. Stock signals are generally weaker
 # than crypto (lower volatility = less extreme indicator readings).
-# 0.35 is appropriate — signals rarely exceed 0.60 on daily bars.
-min_signal_score = 0.35
+# 0.30 captures momentum plays that get macro-boosted later.
+# Combined with min_confidence (0.40), weak signals still get filtered.
+min_signal_score = 0.30
 
 # --- Factor Weights ---
 # Stocks are more momentum-driven and mean-reverting than crypto.
@@ -308,10 +309,9 @@ min_holding_minutes = 390
 poll_interval_ms = 60_000
 
 # How often to fully re-scan the watchlist for new signals.
-# Scanning 11 symbols × 100 bars each takes 2-3 seconds on Alpaca.
-# 900000 = 15 minutes. Daily bars only change once, so frequent
-# rescans are unnecessary — this just catches any late-day changes.
-signal_scan_interval_ms = 900_000
+# 300000 = 5 minutes. Faster scanning catches intraday momentum
+# shifts and allows macro boosts to trigger new positions sooner.
+signal_scan_interval_ms = 300_000
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
