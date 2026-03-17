@@ -242,8 +242,11 @@ export class PsinixAgent {
     private async evaluateSymbol(symbol: string): Promise<void> {
         if (!this.collector) return;
 
-        // Collect signals from all sources
-        const signals = await this.collector.collect(symbol);
+        // Get recent prices first — needed for both price signals and entropy
+        const prices = await this.getRecentPrices(symbol);
+
+        // Collect signals from all sources (pass prices for price-based signals)
+        const signals = await this.collector.collect(symbol, prices);
         if (signals.length < this.config.signals.min_signals) return;
 
         // Apply dynamic Bayesian weights before Ψ computation
@@ -251,9 +254,6 @@ export class PsinixAgent {
             const dynWeight = this.weights.getWeight(sig.sourceId);
             sig.weight = dynWeight;
         }
-
-        // Get recent prices for entropy calculation
-        const prices = await this.getRecentPrices(symbol);
         const entropy = PsiEngine.computeMarketEntropy(prices, this.config.psi.entropy_bins);
 
         // Compute Ψ

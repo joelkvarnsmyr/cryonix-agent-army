@@ -1,15 +1,23 @@
 /**
- * SignalCollector — Aggregates signals from all Cryonix subsystems into
- * PsiSignals for the Kuramoto phase convergence engine.
+ * SignalCollector — Aggregates independent signals for Kuramoto phase convergence.
  *
- * Sources:
- *   1. Smart Money (Copynix whale sentiment) → Redis smartmoney:*
- *   2. Polymarket prediction markets → Redis polymarket:*
- *   3. Fear & Greed Index → Redis cmc:fear_greed
- *   4. Cryonix TA signals → Redis trades:pending
+ * Signal independence is critical for Ψnix. Kuramoto coherence C measures
+ * synchronization of *independent* oscillators. Correlated signals inflate C
+ * artificially. Each signal source must measure a DIFFERENT property.
+ *
+ * Independent signal sources:
+ *   1. Price: Hurst (trend character) — from OHLCV
+ *   2. Price: OU z-score (mean reversion) — from OHLCV
+ *   3. Price: Bayesian momentum — from OHLCV
+ *   4. Polymarket: macro sentiment (ONE composite, not 4 separate)
+ *   5. Fear & Greed: crowd contrarian — from CMC
+ *   6. Smart Money: on-chain whale behavior — from Copynix
+ *   7. Cryonix TA: technical pattern signals — from engine
+ *   8. Market Regime: bull/bear/volatile — from engine
  */
 
 import type { PsiSignal } from './psi-engine';
+import { PriceSignals } from './price-signals';
 
 export interface RedisReader {
     get(key: string): Promise<string | null>;
@@ -25,133 +33,139 @@ export class SignalCollector {
     }
 
     /**
-     * Collect all available signals from Redis and convert to PsiSignals.
-     * Each source produces a directional signal σ ∈ [-1, +1].
+     * Collect all available independent signals.
+     * Price-based signals require close prices passed separately.
      */
-    async collect(symbol: string): Promise<PsiSignal[]> {
+    async collect(symbol: string, closePrices?: number[]): Promise<PsiSignal[]> {
         const signals: PsiSignal[] = [];
 
-        // ── 1. Smart Money — Copynix whale consensus ──
-        const smartMoney = await this.getSmartMoney(symbol);
-        if (smartMoney) signals.push(smartMoney);
+        // ── Price-based signals (mathematically independent) ──
+        if (closePrices && closePrices.length >= 20) {
+            const priceSignals = PriceSignals.all(closePrices);
+            signals.push(...priceSignals);
+        }
 
-        // ── 2. Polymarket — prediction market sentiment ──
-        const polySignals = await this.getPolymarketSignals();
-        signals.push(...polySignals);
+        // ── Polymarket — ONE composite signal (not 4 correlated ones) ──
+        const poly = await this.getPolymarketComposite();
+        if (poly) signals.push(poly);
 
-        // ── 3. Fear & Greed Index ──
+        // ── Fear & Greed — contrarian crowd sentiment ──
         const fng = await this.getFearAndGreed();
         if (fng) signals.push(fng);
 
-        // ── 4. Smart Money overall ──
-        const overall = await this.getSmartMoneyOverall();
-        if (overall) signals.push(overall);
+        // ── Smart Money — on-chain whale behavior (requires sufficient data) ──
+        const sm = await this.getSmartMoney(symbol);
+        if (sm) signals.push(sm);
 
-        // ── 5. Cryonix TA (trades:pending queue) ──
+        // ── Cryonix TA — technical pattern signals ──
         const ta = await this.getCryonixTA(symbol);
         if (ta) signals.push(ta);
 
-        // ── 6. Market Regime ──
+        // ── Market Regime — engine's regime classification ──
         const regime = await this.getMarketRegime();
         if (regime) signals.push(regime);
 
         return signals;
     }
 
-    /**
-     * Smart Money: per-asset whale sentiment from Copynix.
-     * Score -100 to +100 → σ = score/100
-     */
-    private async getSmartMoney(symbol: string): Promise<PsiSignal | null> {
-        try {
-            // Map Binance symbol to Copynix smart money key
-            const base = symbol.split('/')[0]; // "BTC/USDC" → "BTC"
-            const raw = await this.redis.get(`smartmoney:${base}`);
-            if (!raw) return null;
-
-            const data = JSON.parse(raw);
-            const age = Date.now() - (data.timestamp ?? 0);
-            if (age > 30 * 60_000) return null; // Stale after 30min
-
-            return {
-                sourceId: `smartmoney:${base}`,
-                direction: Math.max(-1, Math.min(1, (data.score ?? 0) / 100)),
-                weight: 0.8, // High weight — real on-chain activity
-                timestamp: data.timestamp ?? Date.now(),
-            };
-        } catch {
-            return null;
-        }
-    }
+    // ── Polymarket: ONE composite signal ──────────────────────────────
 
     /**
-     * Smart Money overall: aggregate whale mood across all assets.
+     * Collapse 4 Polymarket categories into 1 weighted-average signal.
+     * crypto=50%, fed=25%, geopolitik=15%, oil=10%
+     * This prevents 4 correlated signals from inflating Kuramoto coherence.
      */
-    private async getSmartMoneyOverall(): Promise<PsiSignal | null> {
-        try {
-            const raw = await this.redis.get('smartmoney:_overall');
-            if (!raw) return null;
+    private async getPolymarketComposite(): Promise<PsiSignal | null> {
+        const categoryWeights: Record<string, number> = {
+            crypto: 0.50,
+            fed: 0.25,
+            geopolitik: 0.15,
+            oil: 0.10,
+        };
 
-            const data = JSON.parse(raw);
-            const age = Date.now() - (data.timestamp ?? 0);
-            if (age > 30 * 60_000) return null;
+        let weightedSum = 0;
+        let totalWeight = 0;
 
-            return {
-                sourceId: 'smartmoney:overall',
-                direction: Math.max(-1, Math.min(1, (data.score ?? 0) / 100)),
-                weight: 0.6,
-                timestamp: data.timestamp ?? Date.now(),
-            };
-        } catch {
-            return null;
-        }
-    }
-
-    /**
-     * Polymarket: prediction market sentiment per category.
-     * Score 0-100 → σ = (score - 50) / 50 (above 50 = bullish)
-     */
-    private async getPolymarketSignals(): Promise<PsiSignal[]> {
-        const signals: PsiSignal[] = [];
-        const categories = ['crypto', 'fed', 'geopolitik', 'oil'];
-
-        for (const cat of categories) {
+        for (const [cat, w] of Object.entries(categoryWeights)) {
             try {
                 const raw = await this.redis.get(`polymarket:${cat}`);
                 if (!raw) continue;
 
                 const data = JSON.parse(raw);
                 const score = data.score ?? 50;
+                const direction = (score - 50) / 50; // 0-100 → [-1, +1]
 
-                // Map 0-100 → [-1, +1]: 0 = max bearish, 50 = neutral, 100 = max bullish
-                const direction = (score - 50) / 50;
-
-                // Different weights per category
-                const weights: Record<string, number> = {
-                    crypto: 0.7,  // Direct crypto sentiment
-                    fed: 0.5,     // Fed policy affects all markets
-                    geopolitik: 0.4, // Geopolitical risk
-                    oil: 0.3,     // Oil is indirect
-                };
-
-                signals.push({
-                    sourceId: `polymarket:${cat}`,
-                    direction: Math.max(-1, Math.min(1, direction)),
-                    weight: weights[cat] ?? 0.3,
-                    timestamp: Date.now(),
-                });
+                weightedSum += direction * w;
+                totalWeight += w;
             } catch {
                 continue;
             }
         }
 
-        return signals;
+        if (totalWeight < 0.3) return null; // Need at least some categories
+
+        const compositeDirection = weightedSum / totalWeight;
+        if (Math.abs(compositeDirection) < 0.05) return null; // Too weak
+
+        return {
+            sourceId: 'polymarket:composite',
+            direction: Math.max(-1, Math.min(1, compositeDirection)),
+            weight: 0.5,
+            timestamp: Date.now(),
+        };
     }
 
+    // ── Smart Money ───────────────────────────────────────────────────
+
     /**
-     * Fear & Greed Index (CoinMarketCap).
-     * 0 = Extreme Fear (bearish), 100 = Extreme Greed (bullish)
-     * Contrarian signal: extreme fear = buy opportunity
+     * Smart Money: per-asset whale sentiment from Copynix.
+     * Requires: score based on >= 3 trades, data < 30min old.
+     * Falls back to overall if per-asset unavailable.
+     */
+    private async getSmartMoney(symbol: string): Promise<PsiSignal | null> {
+        const base = symbol.split('/')[0];
+
+        // Try per-asset first
+        const perAsset = await this.readSmartMoney(`smartmoney:${base}`, `smartmoney:${base}`);
+        if (perAsset) return perAsset;
+
+        // Fall back to overall — but require sufficient data
+        return this.readSmartMoney('smartmoney:_overall', 'smartmoney:overall');
+    }
+
+    private async readSmartMoney(key: string, sourceId: string): Promise<PsiSignal | null> {
+        try {
+            const raw = await this.redis.get(key);
+            if (!raw) return null;
+
+            const data = JSON.parse(raw);
+            const age = Date.now() - (data.timestamp ?? 0);
+            if (age > 30 * 60_000) return null; // Stale
+
+            // Require sufficient trades for meaningful signal
+            const totalTrades = (data.buys ?? 0) + (data.sells ?? 0);
+            if (totalTrades < 3) return null; // Not enough data
+
+            const score = data.score ?? 0;
+            const direction = Math.max(-1, Math.min(1, score / 100));
+            if (Math.abs(direction) < 0.1) return null; // Too neutral
+
+            return {
+                sourceId,
+                direction,
+                weight: 0.7,
+                timestamp: data.timestamp ?? Date.now(),
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    // ── Fear & Greed ──────────────────────────────────────────────────
+
+    /**
+     * CoinMarketCap Fear & Greed — contrarian signal.
+     * Extreme fear → buy (+1), extreme greed → sell (-1).
      */
     private async getFearAndGreed(): Promise<PsiSignal | null> {
         try {
@@ -161,14 +175,14 @@ export class SignalCollector {
             const data = JSON.parse(raw);
             const value = data.value ?? data.score ?? 50;
 
-            // Contrarian: extreme fear (+1 buy), extreme greed (-1 sell)
-            // Neutral zone (40-60) → near 0
-            const contrarian = (50 - value) / 50; // Fear=+1, Greed=-1
+            // Contrarian mapping
+            const contrarian = (50 - value) / 50;
+            if (Math.abs(contrarian) < 0.1) return null; // Neutral zone
 
             return {
                 sourceId: 'fear_greed',
                 direction: Math.max(-1, Math.min(1, contrarian)),
-                weight: 0.4, // Moderate weight — lagging indicator
+                weight: 0.4,
                 timestamp: Date.now(),
             };
         } catch {
@@ -176,9 +190,10 @@ export class SignalCollector {
         }
     }
 
+    // ── Cryonix TA ────────────────────────────────────────────────────
+
     /**
-     * Cryonix TA: reads trades:pending LIST (rpush'd by Python engine).
-     * Scans from newest to oldest, returns first matching symbol signal.
+     * Reads trades:pending LIST from Python engine.
      */
     private async getCryonixTA(symbol: string): Promise<PsiSignal | null> {
         try {
@@ -186,7 +201,6 @@ export class SignalCollector {
             const entries = await this.redis.lrange('trades:pending', 0, -1);
             if (!entries || entries.length === 0) return null;
 
-            // Scan from newest (end of list) to oldest
             for (let i = entries.length - 1; i >= 0; i--) {
                 const signal = SignalCollector.parseTASignal(entries[i], base);
                 if (signal) return signal;
@@ -199,7 +213,6 @@ export class SignalCollector {
 
     /**
      * Parse a trades:pending JSON entry into a PsiSignal.
-     * Returns null if the signal doesn't match filterBase or is unparseable.
      */
     static parseTASignal(raw: string, filterBase: string): PsiSignal | null {
         try {
@@ -223,9 +236,10 @@ export class SignalCollector {
         }
     }
 
+    // ── Market Regime ─────────────────────────────────────────────────
+
     /**
-     * Market Regime: reads market:regime key written by Python engine.
-     * Maps regime string to directional bias.
+     * Market regime from Python engine.
      */
     private async getMarketRegime(): Promise<PsiSignal | null> {
         try {
