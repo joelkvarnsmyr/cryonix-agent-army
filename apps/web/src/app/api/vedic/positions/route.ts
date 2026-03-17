@@ -48,6 +48,27 @@ export async function GET() {
         }));
       }
     }
+
+    // Futures positions
+    const futuresRaw = await redis.get('vedic_futures:wallet');
+    if (futuresRaw) {
+      const wallet = JSON.parse(futuresRaw as string);
+      if (wallet.positions && typeof wallet.positions === 'object') {
+        const futuresPositions = Object.entries(wallet.positions).map(([sym, pos]: [string, any]) => ({
+          symbol: sym,
+          pair: pos.symbol ?? `${sym}/USDC`,
+          side: pos.side ?? 'LONG',
+          entryPrice: pos.entry_price ?? 0,
+          quantity: pos.quantity ?? 0,
+          entryTime: pos.entry_time ?? 0,
+          entryReason: pos.entry_reason ?? '',
+          peakPrice: pos.peak_price ?? pos.entry_price ?? 0,
+          trailingActive: pos.trailing_active ?? false,
+          source: 'futures',
+        }));
+        btdPositions.push(...futuresPositions); // reuse array for simplicity
+      }
+    }
   } catch (error) {
     console.error('[vedic/positions] Redis error:', error);
   }

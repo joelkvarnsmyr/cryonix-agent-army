@@ -73,16 +73,20 @@ class VedicScout:
             self._bayes_loaded = True
             print(f"[{self.name}] Bayes: {'loaded from Redis' if existed else 'initialized from research priors'}")
 
+        from src.vedic.ephemeris import get_angular_distance
+        p = sky.planets
         bayes_signals = {
-            "venus_rx": vedic_score.label == "venus_rx_block",
-            "mercury_rx": vedic_score.is_mercury_retrograde,
+            "venus_rx": p["Venus"].is_retrograde,
+            "mercury_rx": p["Mercury"].is_retrograde,
             "n_retrogrades": len(vedic_score.retrogrades),
-            "paksha": vedic_score.lunar_paksha,
-            "tithi_number": vedic_score.tithi_number,
-            "moon_speed": sky.planets["Moon"].speed,
-            "v3_score": vedic_score.overall_score,
-            "jupiter_rx": sky.planets["Jupiter"].is_retrograde,
-            "saturn_rx": sky.planets["Saturn"].is_retrograde,
+            "jup_sat_tight": get_angular_distance(p["Jupiter"].longitude, p["Saturn"].longitude) < 10,
+            "mars_rahu_tight": get_angular_distance(p["Mars"].longitude, p["Rahu"].longitude) < 10,
+            "merc_venus_tight": get_angular_distance(p["Mercury"].longitude, p["Venus"].longitude) < 10,
+            "merc_speed_fast": abs(p["Mercury"].speed) > 1.5,
+            "venus_speed_fast": abs(p["Venus"].speed) > 1.0,
+            "venus_near_sun": get_angular_distance(p["Sun"].longitude, p["Venus"].longitude) < 15,
+            "eclipse_near": get_angular_distance(p["Moon"].longitude, p["Rahu"].longitude) < 15,
+            "v4_score": vedic_score.overall_score,
         }
         bayes_prob, bayes_details = self.bayes.predict(bayes_signals)
 

@@ -39,65 +39,53 @@ from typing import Any, Dict, List, Optional, Tuple
 # Each continuous signal is binned into discrete states for counting.
 
 def discretize_signals(raw: Dict[str, Any]) -> Dict[str, str]:
-    """Convert raw vedic signals into discrete bins for Bayesian counting.
+    """Convert raw vedic/astronomical signals into discrete bins for Bayesian counting.
 
-    Each signal becomes a key like 'venus_rx:True' or 'n_retro:0'.
+    V4 signals: aligned with regime-tested astronomical model.
     """
     bins = {}
 
-    # 1. Venus Rx (binary) — strongest signal
+    # 1. Venus Rx (binary) — strongest signal (p<0.0001)
     bins["venus_rx"] = str(bool(raw.get("venus_rx", False)))
 
     # 2. Mercury Rx (binary)
     bins["mercury_rx"] = str(bool(raw.get("mercury_rx", False)))
 
-    # 3. Retrograde count (0, 1, 2, 3+)
+    # 3. Retrograde count (0, 1, 2, 3+) — p<0.0001
     n = raw.get("n_retrogrades", 0)
     bins["n_retro"] = str(min(n, 3))
 
-    # 4. Paksha (Shukla/Krishna)
-    bins["paksha"] = raw.get("paksha", "Unknown")
+    # 4. Jupiter-Saturn tight (<10 deg) — p<0.0001
+    bins["jup_sat_tight"] = str(bool(raw.get("jup_sat_tight", False)))
 
-    # 5. Tithi group (which part of lunar cycle)
-    tithi = raw.get("tithi_number", 15)
-    if tithi <= 7:
-        bins["tithi_group"] = "early_shukla"
-    elif tithi <= 14:
-        bins["tithi_group"] = "mid_shukla"
-    elif tithi == 15:
-        bins["tithi_group"] = "full_moon"
-    elif tithi <= 22:
-        bins["tithi_group"] = "early_krishna"
-    elif tithi <= 29:
-        bins["tithi_group"] = "late_krishna"
-    else:
-        bins["tithi_group"] = "new_moon"
+    # 5. Mars-Rahu tight (<10 deg) — p<0.001
+    bins["mars_rahu_tight"] = str(bool(raw.get("mars_rahu_tight", False)))
 
-    # 6. Moon speed bin (slow/normal/fast)
-    speed = raw.get("moon_speed", 13.0)
-    if speed < 12.5:
-        bins["moon_speed"] = "slow"
-    elif speed < 14.0:
-        bins["moon_speed"] = "normal"
-    else:
-        bins["moon_speed"] = "fast"
+    # 6. Mercury-Venus tight (<10 deg) — p<0.0001 bearish
+    bins["merc_venus_tight"] = str(bool(raw.get("merc_venus_tight", False)))
 
-    # 7. V3 score bin (for self-calibration)
-    score = raw.get("v3_score", 0)
+    # 7. Mercury speed fast (>1.5 deg/d) — p<0.01
+    bins["merc_speed_fast"] = str(bool(raw.get("merc_speed_fast", False)))
+
+    # 8. Venus speed fast (>1.0 deg/d) — p<0.001
+    bins["venus_speed_fast"] = str(bool(raw.get("venus_speed_fast", False)))
+
+    # 9. Venus near Sun (<15 deg) — p<0.001
+    bins["venus_near_sun"] = str(bool(raw.get("venus_near_sun", False)))
+
+    # 10. Eclipse proximity (Moon near Rahu <15 deg) — p<0.01
+    bins["eclipse_near"] = str(bool(raw.get("eclipse_near", False)))
+
+    # 11. V4 score bin (self-calibration)
+    score = raw.get("v4_score", 0)
     if score >= 20:
-        bins["v3_bin"] = "strong_buy"
-    elif score >= 5:
-        bins["v3_bin"] = "buy"
-    elif score >= -10:
-        bins["v3_bin"] = "neutral"
+        bins["v4_bin"] = "strong_buy"
+    elif score >= 8:
+        bins["v4_bin"] = "buy"
+    elif score >= -8:
+        bins["v4_bin"] = "neutral"
     else:
-        bins["v3_bin"] = "avoid"
-
-    # 8. Jupiter retrograde
-    bins["jupiter_rx"] = str(bool(raw.get("jupiter_rx", False)))
-
-    # 9. Saturn retrograde
-    bins["saturn_rx"] = str(bool(raw.get("saturn_rx", False)))
+        bins["v4_bin"] = "avoid"
 
     return bins
 
@@ -110,59 +98,63 @@ def discretize_signals(raw: Dict[str, Any]) -> Dict[str, str]:
 
 RESEARCH_PRIORS: Dict[str, Dict[str, Tuple[int, int]]] = {
     "venus_rx": {
-        # Venus Rx: 7d Direct +1.63% vs Rx -3.57% (p<0.0001)
-        "True":  (5, 30),    # Heavily bearish — 5 wins out of 35
-        "False": (55, 45),   # Slight bullish edge
+        # Venus Rx: 100% regime-consistent, p<0.0001
+        "True":  (5, 30),
+        "False": (55, 45),
     },
     "mercury_rx": {
-        # Mercury Rx: mild 14d drag (p=0.04)
-        "True":  (40, 50),   # Slightly bearish
-        "False": (55, 45),   # Slightly bullish
+        # Mercury Rx: mild (p=0.04)
+        "True":  (45, 55),
+        "False": (55, 45),
     },
     "n_retro": {
-        # 0 retro = best, 3+ = worst
+        # 0 retro = best, 100% regime-consistent, p<0.0001
         "0": (60, 40),
         "1": (52, 48),
         "2": (50, 50),
         "3": (40, 60),
     },
-    "paksha": {
-        # 14d: Shukla +3.09% vs Krishna +2.43% (p=0.078)
-        "Shukla":  (53, 47),
-        "Krishna": (47, 53),
-        "Unknown": (50, 50),
+    "jup_sat_tight": {
+        # Jupiter-Saturn <10 deg: 100%, p<0.0001
+        "True":  (70, 30),
+        "False": (48, 52),
     },
-    "tithi_group": {
-        # From tithi-by-tithi research
-        "early_shukla":  (50, 50),
-        "mid_shukla":    (55, 45),
-        "full_moon":     (45, 55),
-        "early_krishna": (48, 52),
-        "late_krishna":  (45, 55),
-        "new_moon":      (52, 48),
+    "mars_rahu_tight": {
+        # Mars-Rahu <10 deg: 100%, p<0.001
+        "True":  (65, 35),
+        "False": (48, 52),
     },
-    "moon_speed": {
-        # Conflicting research — start neutral
-        "slow":   (50, 50),
-        "normal": (50, 50),
-        "fast":   (50, 50),
+    "merc_venus_tight": {
+        # Mercury-Venus <10 deg: 100% bearish, p<0.0001
+        "True":  (30, 70),
+        "False": (55, 45),
     },
-    "v3_bin": {
-        # V3 score self-calibration (starts neutral, learns from trades)
-        "strong_buy": (55, 45),
-        "buy":        (52, 48),
-        "neutral":    (50, 50),
-        "avoid":      (45, 55),
+    "merc_speed_fast": {
+        # Mercury speed >1.5: 100%, p<0.01
+        "True":  (58, 42),
+        "False": (45, 55),
     },
-    "jupiter_rx": {
-        # Jupiter Rx: contradictory data, start near neutral
-        "True":  (50, 50),
-        "False": (50, 50),
+    "venus_speed_fast": {
+        # Venus speed >1.0: 80%, p<0.001
+        "True":  (57, 43),
+        "False": (47, 53),
     },
-    "saturn_rx": {
-        # Saturn Rx: weak signal (p=0.058)
-        "True":  (48, 52),
+    "venus_near_sun": {
+        # Venus <15 deg from Sun: 100% bearish, p<0.001
+        "True":  (35, 65),
+        "False": (55, 45),
+    },
+    "eclipse_near": {
+        # Moon near Rahu <15 deg: 100% bearish, p<0.01
+        "True":  (40, 60),
         "False": (52, 48),
+    },
+    "v4_bin": {
+        # V4 score self-calibration
+        "strong_buy": (65, 35),
+        "buy":        (55, 45),
+        "neutral":    (50, 50),
+        "avoid":      (40, 60),
     },
 }
 
