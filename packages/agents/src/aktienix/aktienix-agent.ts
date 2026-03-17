@@ -584,6 +584,45 @@ export class AktienixAgent extends BaseAgent {
             }
         }
 
+        // Sector exposure cap: prevent over-concentration in one sector
+        if (action === 'BUY') {
+            const SECTOR_MAP: Record<string, string> = {
+                AAPL: 'tech', MSFT: 'tech', GOOGL: 'tech', AMZN: 'tech', NVDA: 'tech', META: 'tech', TSLA: 'tech',
+                SPY: 'index', QQQ: 'index',
+                JPM: 'finance', JNJ: 'healthcare',
+                MSTR: 'crypto', COIN: 'crypto',
+                XOM: 'energy', CVX: 'energy', XLE: 'energy', USO: 'energy', COP: 'energy',
+                UAL: 'transport', DAL: 'transport', FDX: 'transport', UPS: 'transport',
+            };
+            const maxSectorPct = 0.50; // 50% max per sector
+            const sector = SECTOR_MAP[symbol] || 'other';
+            const portfolioValue = this.accountState?.portfolioValue ?? 0;
+
+            if (portfolioValue > 0 && sector !== 'index') {
+                const sectorExposure = this.positions
+                    .filter(p => (SECTOR_MAP[p.symbol] || 'other') === sector)
+                    .reduce((sum, p) => sum + (p.marketValue ?? p.qty * p.avgEntryPrice), 0);
+                const sectorPct = sectorExposure / portfolioValue;
+
+                if (sectorPct >= maxSectorPct) {
+                    this.log('info', `SECTOR CAP: ${sector} at ${(sectorPct * 100).toFixed(1)}% (max ${maxSectorPct * 100}%). Skipping ${symbol}.`);
+                    return;
+                }
+            }
+        }
+
+        // Signal cooldown: prevent re-buying same symbol within 4 hours
+        if (action === 'BUY' && this.statePublisher) {
+            try {
+                const cooldownKey = `aktienix:cooldown:${symbol}`;
+                const cooldownRaw = await this.statePublisher.get(cooldownKey);
+                if (cooldownRaw) {
+                    this.log('info', `COOLDOWN: ${symbol} was recently traded. Skipping.`);
+                    return;
+                }
+            } catch { /* non-critical */ }
+        }
+
         // Apply Macro Intelligence overlays
         const intelConfig = this.tradingConfig.intelligence;
         if (intelConfig?.enabled && this.activeMacroSignals.length > 0) {
@@ -752,6 +791,10 @@ export class AktienixAgent extends BaseAgent {
                 orderId: result.orderId,
                 metadata,
             });
+            // Set 4h cooldown to prevent re-buying same symbol too quickly
+            try {
+                await this.statePublisher?.set(`aktienix:cooldown:${symbol}`, Date.now().toString(), 4 * 3600);
+            } catch { /* non-critical */ }
         } else {
             this.log('error', `Order failed: ${result.message}`);
         }
