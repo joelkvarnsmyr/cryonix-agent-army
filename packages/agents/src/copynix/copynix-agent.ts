@@ -245,15 +245,15 @@ export class CopynixAgent extends BaseAgent {
             this.log('info', 'Wallet discovery enabled');
         }
 
-        // Phase 2: Try WebSocket for real-time swap detection (sub-second latency)
-        const heliusKey = process.env.HELIUS_API_KEY;
-        if (heliusKey) {
+        // Phase 2: WebSocket real-time detection (disabled until free WS endpoint available)
+        // Set SOLANA_WS_URL env var to enable. Code ready in websocket-monitor.ts.
+        if (process.env.SOLANA_WS_URL) {
+            const heliusKey = process.env.HELIUS_API_KEY ?? '';
             this.wsMonitor = new WebSocketMonitor(heliusKey, config.wallets.tracked);
             const wsOk = await this.wsMonitor.connect();
             if (wsOk) {
                 this.log('info', 'WebSocket monitor connected — real-time swap detection active');
             } else {
-                this.log('info', 'WebSocket unavailable — using polling mode (set SOLANA_WS_URL for real-time)');
                 await this.wsMonitor.disconnect();
                 this.wsMonitor = null;
             }
