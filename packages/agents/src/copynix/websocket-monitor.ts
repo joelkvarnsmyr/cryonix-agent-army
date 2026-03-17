@@ -23,6 +23,8 @@ export class WebSocketMonitor {
     private connected = false;
     private reconnectTimer: any = null;
     private subscriptionId: number | null = null;
+    private reconnectAttempts = 0;
+    private readonly MAX_RECONNECTS = 3;
 
     constructor(heliusKey: string, wallets: string[]) {
         this.heliusKey = heliusKey;
@@ -36,10 +38,10 @@ export class WebSocketMonitor {
         try {
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             const WebSocket = require('ws');
-            // Use free Solana public WebSocket — no API key needed.
-            // logsSubscribe with accountInclude filter detects when tracked
-            // wallets interact with any program (including Jupiter/Raydium swaps).
-            const wsUrl = 'wss://api.mainnet-beta.solana.com';
+            // Use Helius RPC WebSocket (free tier includes standard RPC WS)
+            // or fall back to env-configured SOLANA_WS_URL
+            const wsUrl = process.env.SOLANA_WS_URL
+                ?? `wss://mainnet.helius-rpc.com/?api-key=${this.heliusKey}`;
 
             return new Promise((resolve) => {
                 this.ws = new WebSocket(wsUrl);
@@ -226,11 +228,16 @@ export class WebSocketMonitor {
 
     private scheduleReconnect(): void {
         if (this.reconnectTimer) return;
+        this.reconnectAttempts++;
+        if (this.reconnectAttempts > this.MAX_RECONNECTS) {
+            console.warn(`[WS-Monitor] Max reconnects (${this.MAX_RECONNECTS}) reached — giving up, using polling`);
+            return;
+        }
         this.reconnectTimer = setTimeout(async () => {
             this.reconnectTimer = null;
-            console.log('[WS-Monitor] Attempting reconnect...');
+            console.log(`[WS-Monitor] Reconnect attempt ${this.reconnectAttempts}/${this.MAX_RECONNECTS}...`);
             await this.connect();
-        }, 30_000); // 30s between reconnects
+        }, 30_000);
     }
 
     async disconnect(): Promise<void> {
