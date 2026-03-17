@@ -67,7 +67,7 @@ REDIS_TTL = 86400 * 30            # Keep data for 30 days
 # BUY when composite score > this AND no blocking conditions
 # Lowered from 20 to 10: the reweighted muhurta (45% lunar phase) produces
 # more granular scores. Old threshold blocked too many trades (27% WR).
-BUY_SCORE_THRESHOLD = 10
+BUY_SCORE_THRESHOLD = 8  # V4: "buy" label starts at 8 (aligned with backtest)
 
 # SELL when composite score < this OR stop-loss/take-profit hit
 SELL_SCORE_THRESHOLD = -25
