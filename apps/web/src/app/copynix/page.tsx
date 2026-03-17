@@ -294,6 +294,69 @@ export default function CopynixPage() {
           )}
         </div>
 
+        {/* How it works */}
+        <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
+          <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest mb-3">HOW COPYNIX TRADES</div>
+          <div className="space-y-3 text-xs text-muted-foreground/70 leading-relaxed">
+
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-5 h-5 rounded-full bg-cyan-400/10 border border-cyan-400/20 flex items-center justify-center text-[9px] font-mono text-cyan-400">1</div>
+              <div>
+                <div className="text-foreground/80 font-medium mb-0.5">Wallet Discovery</div>
+                <div>40 top Solana traders tracked via Dune Analytics leaderboards (realized PnL $5K-$1.3M). New wallets discovered weekly via GeckoTerminal trending + Helius analysis.</div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-5 h-5 rounded-full bg-cyan-400/10 border border-cyan-400/20 flex items-center justify-center text-[9px] font-mono text-cyan-400">2</div>
+              <div>
+                <div className="text-foreground/80 font-medium mb-0.5">Swap Detection</div>
+                <div>Helius Enhanced API polls 10 wallets per cycle (rotating batch, 15 min interval). Parses Jupiter/Raydium swaps from on-chain transactions. DexScreener enriches prices.</div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center text-[9px] font-mono text-emerald-400">3</div>
+              <div>
+                <div className="text-foreground/80 font-medium mb-0.5">Consensus Engine</div>
+                <div>
+                  <span className="text-emerald-400">Strong</span> (3+ wallets buy same token within 15 min) &rarr; 100% position size.{' '}
+                  <span className="text-amber-400">Medium</span> (2 wallets) &rarr; 60%.{' '}
+                  <span className="text-muted-foreground/50">Single whale</span> (score {'\u2265'}80) &rarr; 40%.
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-5 h-5 rounded-full bg-violet-400/10 border border-violet-400/20 flex items-center justify-center text-[9px] font-mono text-violet-400">4</div>
+              <div>
+                <div className="text-foreground/80 font-medium mb-0.5">Safety Gate</div>
+                <div>Token must have &gt;1h age, &gt;$5K liquidity, &gt;10 holders, and FDV/liquidity ratio &lt;100x. Blocks honeypots and zero-liquidity rugs.</div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-[9px] font-mono text-amber-400">5</div>
+              <div>
+                <div className="text-foreground/80 font-medium mb-0.5">Bayesian Learning</div>
+                <div>Every closed trade updates wallet scores via Beta-Bernoulli inference (PnL-weighted). Wallets that prove themselves get promoted to single-whale. Consistently bad wallets get downgraded to consensus-only after 20+ trades.</div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-5 h-5 rounded-full bg-red-400/10 border border-red-400/20 flex items-center justify-center text-[9px] font-mono text-red-400">6</div>
+              <div>
+                <div className="text-foreground/80 font-medium mb-0.5">Exit Strategy</div>
+                <div>TP +25% | SL -15% | Trailing stop 8% (activates at +10%) | Leader exit (if copied wallet sells, we sell within 60s) | Stagnation (48h with &lt;2% move).</div>
+              </div>
+            </div>
+
+            <div className="mt-2 pt-2 border-t border-white/[0.04] text-[10px] text-muted-foreground/40 font-mono">
+              PHASE 1: Paper trading ($500 virtual USDC) &middot; PHASE 2: Jupiter swap execution (live)
+            </div>
+          </div>
+        </div>
+
       </div>
     </DashboardLayout>
   );
