@@ -18,7 +18,17 @@ export async function GET() {
     // 1. Try Redis cache first
     const raw = await redis.get('aktienix:account');
     if (raw) {
-      const data = JSON.parse(raw as string) as AktienixAccount;
+      const parsed = JSON.parse(raw as string);
+      // Ensure all expected fields exist (StatePublisher may omit dailyPnl)
+      const data: AktienixAccount = {
+        portfolioValue: parseFloat(parsed.portfolioValue) || 0,
+        buyingPower: parseFloat(parsed.buyingPower) || 0,
+        settledCash: parseFloat(parsed.settledCash) || 0,
+        isPatternDayTrader: parsed.isPatternDayTrader ?? false,
+        dailyPnl: parseFloat(parsed.dailyPnl) || 0,
+        dailyPnlPct: parseFloat(parsed.dailyPnlPct) || 0,
+        updatedAt: parsed.updatedAt ?? null,
+      };
       return NextResponse.json(data);
     }
   } catch { /* fall through */ }

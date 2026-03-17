@@ -62,7 +62,20 @@ export async function GET(req: Request) {
       `)
     );
 
-    const trades = Array.from(rows) as unknown as AktienixTrade[];
+    const trades: AktienixTrade[] = Array.from(rows as any).map((r: any) => ({
+      id: r.id,
+      symbol: r.symbol,
+      qty: parseFloat(r.qty) || 0,
+      fillPrice: parseFloat(r.fillPrice) || 0,
+      realizedPnl: r.realizedPnl != null ? parseFloat(r.realizedPnl) : null,
+      side: r.side,
+      reasoning: r.reasoning,
+      timestamp: r.timestamp?.toString?.() ?? '',
+      exitReason: r.exitReason,
+      broker: r.broker,
+      paperTrading: r.paperTrading,
+      orderId: r.orderId,
+    }));
 
     // Summary: SELL trades with realized P&L are "closed" trades
     const closedTrades = trades.filter(t => t.side === 'SELL' && t.realizedPnl !== null);

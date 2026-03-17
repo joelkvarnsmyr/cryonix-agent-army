@@ -84,6 +84,7 @@ export async function GET() {
     const stats = walletStats[w.address] ?? null;
     return {
       ...w,
+      score: stats?.score ?? null,
       winRate: stats?.winRate ?? null,
       pnl: stats?.pnl ?? null,
       lastActive: stats?.lastActive ?? null,
