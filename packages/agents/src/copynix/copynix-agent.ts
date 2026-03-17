@@ -100,6 +100,17 @@ class CopynixTradeLogger {
         }
     }
 
+    async hasRecentBuy(tokenMint: string, hoursBack: number): Promise<boolean> {
+        if (!this.pg) return false;
+        try {
+            const { rows } = await this.pg.query(
+                `SELECT 1 FROM copynix_trades WHERE token_mint = $1 AND side = 'BUY' AND timestamp > NOW() - INTERVAL '1 hour' * $2 LIMIT 1`,
+                [tokenMint, hoursBack],
+            );
+            return rows.length > 0;
+        } catch { return false; }
+    }
+
     async close(): Promise<void> {
         try { await this.pg?.end(); } catch { }
     }
@@ -403,6 +414,15 @@ export class CopynixAgent extends BaseAgent {
             this.log('info', `[BLOCKED] ${signal.tokenSymbol} failed safety: ${safety.reasons.join(', ')}`);
             return;
         }
+
+        // Dedup: check Postgres for recent BUY on same token (survives restarts)
+        try {
+            const recent = await this.tradeLogger.hasRecentBuy(signal.tokenMint, 4); // 4h cooldown
+            if (recent) {
+                this.log('info', `[DEDUP] Already bought ${signal.tokenSymbol} recently — skipping`);
+                return;
+            }
+        } catch { /* non-critical, proceed */ }
 
         // Execute the copy trade
         const result = this.executor!.executeBuy(signal);
