@@ -138,8 +138,11 @@ trailing_stop_pct = 8.0
 trailing_activation_pct = 10.0
 leader_exit_enabled = true
 leader_exit_timeout_s = 60
-stagnation_timeout_hours = 48
-stagnation_min_pnl_pct = 2.0
+# 24h stagnation — memecoins that don't move in 24h are likely dead.
+# Only exit if PnL is between 0% and 3% (flat/tiny profit = not worth holding).
+# If negative, SL handles it. If above 3%, let it ride.
+stagnation_timeout_hours = 24
+stagnation_min_pnl_pct = 3.0
 
 [timing]
 # Main loop interval — controls exit checks, price updates, state publishing

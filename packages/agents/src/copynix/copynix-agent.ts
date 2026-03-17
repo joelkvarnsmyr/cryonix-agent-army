@@ -505,8 +505,8 @@ export class CopynixAgent extends BaseAgent {
                 }
             }
 
-            // Stagnation
-            if (holdHours >= config.stagnation_timeout_hours && Math.abs(pnlPct) < config.stagnation_min_pnl_pct) {
+            // Stagnation — only exit if not losing (if losing, let SL handle it)
+            if (holdHours >= config.stagnation_timeout_hours && pnlPct >= 0 && pnlPct < config.stagnation_min_pnl_pct) {
                 const result = this.executor!.executeSell(pos.tokenMint, pos.currentPrice, `stagnation (${holdHours.toFixed(0)}h, ${pnlPct.toFixed(1)}%)`);
                 if (result.success) {
                     this.log('info', `[STAG] ${result.message}`);
