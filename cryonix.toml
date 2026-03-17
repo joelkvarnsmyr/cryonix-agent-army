@@ -580,7 +580,7 @@ trending_reserve_pct = 0.15
 # ── Smart Rotation ───────────────────────────────────────────────────────
 [rotation]
 enabled = true                    # Enable smart position rotation
-min_score_advantage = 15          # Signal must beat weakest position by this many points
+min_score_advantage = 10          # Signal must beat weakest position by this many points
 min_hold_minutes = 30             # Minimum hold time before position can be rotated out
 
 [boosting]

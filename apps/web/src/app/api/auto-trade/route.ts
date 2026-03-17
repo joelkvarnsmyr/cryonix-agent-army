@@ -2021,16 +2021,17 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
       return { pass: false, reason: `Max scalp positions (${CONFIG.MAX_SCALP_POSITIONS ?? 2})` };
     }
     if (budget.scalpRemaining < CONFIG.MIN_ORDER_VALUE) {
-      return { pass: false, reason: `Scalp budget exhausted ($${budget.scalpRemaining.toFixed(2)} remaining of $${budget.scalpBudget.toFixed(2)})` };
+      return { pass: false, reason: `Scalp budget exhausted ($${budget.scalpRemaining.toFixed(2)} remaining of $${budget.scalpBudget.toFixed(2)}) [rotation-eligible]` };
     }
   } else {
     // Signal strategy checks
     const signalPositions = openPositions.filter(p => !p.isGridPosition && p.pattern !== 'GRID_BUY' && !p.isScalpPosition);
     if (signalPositions.length >= CONFIG.MAX_SIGNAL_POSITIONS) {
-      return { pass: false, reason: `Max signal positions (${CONFIG.MAX_SIGNAL_POSITIONS})` };
+      return { pass: false, reason: `Max signal positions (${CONFIG.MAX_SIGNAL_POSITIONS}) [rotation-eligible]` };
     }
     if (budget.signalRemaining < CONFIG.MIN_ORDER_VALUE) {
-      return { pass: false, reason: `Signal budget exhausted ($${budget.signalRemaining.toFixed(2)} remaining of $${budget.signalBudget.toFixed(2)})` };
+      // Budget exhausted but rotation can free capital by closing a weak position
+      return { pass: false, reason: `Signal budget exhausted ($${budget.signalRemaining.toFixed(2)} remaining of $${budget.signalBudget.toFixed(2)}) [rotation-eligible]` };
     }
   }
 
