@@ -52,19 +52,24 @@ export class OHLCVFetcher {
             throw new Error('OHLCVFetcher not initialized — call initialize() first');
         }
 
-        const raw = await this.exchange.fetchOHLCV(symbol, timeframe, undefined, limit);
+        try {
+            const raw = await this.exchange.fetchOHLCV(symbol, timeframe, undefined, limit);
 
-        const candles: Candle[] = raw.map((c: any[]) => ({
-            timestamp: c[0],
-            open: c[1],
-            high: c[2],
-            low: c[3],
-            close: c[4],
-            volume: c[5],
-        }));
+            const candles: Candle[] = raw.map((c: any[]) => ({
+                timestamp: c[0],
+                open: c[1],
+                high: c[2],
+                low: c[3],
+                close: c[4],
+                volume: c[5],
+            }));
 
-        this.cache.set(cacheKey, { candles, fetchedAt: Date.now() });
-        return candles;
+            this.cache.set(cacheKey, { candles, fetchedAt: Date.now() });
+            return candles;
+        } catch (err: any) {
+            console.warn(`[ohlcv] Fetch ${symbol} ${timeframe} failed:`, err.message);
+            return cached?.candles ?? [];
+        }
     }
 
     /**

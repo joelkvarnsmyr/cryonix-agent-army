@@ -205,7 +205,7 @@ export class PsinixAgent {
             try {
                 const now = Date.now();
 
-                // Update prices
+                // Update prices (fetches 50 candles per symbol, cached 60s)
                 await this.updatePrices();
 
                 // Check exits first
@@ -213,7 +213,11 @@ export class PsinixAgent {
 
                 // Compute Ψ for each symbol
                 for (const symbol of this.config.trading.symbols) {
-                    await this.evaluateSymbol(symbol);
+                    try {
+                        await this.evaluateSymbol(symbol);
+                    } catch (symErr) {
+                        console.warn(`[psinix] evaluateSymbol(${symbol}) error:`, symErr instanceof Error ? symErr.message : String(symErr));
+                    }
                 }
 
                 // Heartbeat every 5 minutes
@@ -440,16 +444,16 @@ export class PsinixAgent {
     // ── Price Data ───────────────────────────────────────────────────
 
     private async updatePrices(): Promise<void> {
-        try {
-            // Fetch latest close prices from Binance via ccxt
-            for (const symbol of this.config.trading.symbols) {
-                const closes = await this.ohlcv.getClosePrices(symbol, '15m', 1);
+        // Fetch 50 candles (shared cache with getRecentPrices), use last for price
+        for (const symbol of this.config.trading.symbols) {
+            try {
+                const closes = await this.ohlcv.getClosePrices(symbol, '15m', 50);
                 if (closes.length > 0 && closes[closes.length - 1] > 0) {
                     this.priceCache.set(symbol, closes[closes.length - 1]);
                 }
+            } catch {
+                // Non-critical — positions still use last known price
             }
-        } catch {
-            // Non-critical — positions still use last known price
         }
     }
 
