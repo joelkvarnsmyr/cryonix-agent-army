@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import {
   useCopynixStatus,
   useCopynixPositions,
@@ -38,6 +39,7 @@ export default function CopynixPage() {
   const { positions }       = useCopynixPositions(10_000);
   const { wallets }         = useCopynixWallets(60_000);
   const { trades, summary, equityCurve } = useCopynixTrades(50, 30_000);
+  const [showAllWallets, setShowAllWallets] = useState(false);
 
   const isLoading      = status === null;
   const agentRunning   = status?.status === 'running';
@@ -104,37 +106,55 @@ export default function CopynixPage() {
           </div>
         </div>
 
-        {/* Tracked wallets */}
+        {/* Tracked wallets — collapsed by default */}
         <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
-          <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest mb-2.5">
-            TRACKED WALLETS {wallets.length > 0 && `(${wallets.length})`}
+          <div className="flex items-center justify-between mb-2.5">
+            <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest">
+              TRACKED WALLETS {wallets.length > 0 && `(${wallets.length})`}
+            </div>
+            {wallets.length > 5 && (
+              <button
+                onClick={() => setShowAllWallets(!showAllWallets)}
+                className="text-[10px] font-mono text-cyan-400/70 hover:text-cyan-400 cursor-pointer"
+              >
+                {showAllWallets ? 'Collapse' : `Show all ${wallets.length}`}
+              </button>
+            )}
           </div>
           {wallets.length === 0 ? (
             <div className="text-sm text-muted-foreground/40">No wallet data available</div>
           ) : (
-            <div className="space-y-1.5">
-              {wallets.map((w) => (
+            <div className="space-y-1">
+              {(showAllWallets ? wallets : wallets.slice(0, 5)).map((w, i) => (
                 <div key={w.address} className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-muted-foreground/30 w-4">{i + 1}</span>
                     <span className="font-mono text-xs text-foreground/80">{truncateAddress(w.address)}</span>
-                    {w.label && (
-                      <span className="text-[10px] font-mono text-cyan-400/70">{w.label}</span>
+                    {w.score != null && w.score >= 80 && (
+                      <span className="text-[9px] font-mono px-1 py-0.5 rounded border border-emerald-400/30 bg-emerald-400/5 text-emerald-400">
+                        WHALE
+                      </span>
                     )}
                   </div>
                   <div className="flex items-center gap-3">
-                    {w.winRate != null && (
-                      <span className={`text-xs font-mono ${w.winRate >= 60 ? 'text-emerald-400' : 'text-muted-foreground/60'}`}>
-                        {w.winRate.toFixed(1)}% WR
+                    {w.score != null && (
+                      <span className={`text-[10px] font-mono ${w.score >= 80 ? 'text-emerald-400' : w.score >= 60 ? 'text-muted-foreground/60' : 'text-red-400/60'}`}>
+                        S:{w.score}
                       </span>
                     )}
-                    {w.lastActive && (
-                      <span className="text-[10px] font-mono text-muted-foreground/40 w-14 text-right">
-                        {timeAgo(w.lastActive)}
+                    {w.winRate != null && (
+                      <span className={`text-xs font-mono ${w.winRate >= 60 ? 'text-emerald-400' : 'text-muted-foreground/60'}`}>
+                        {w.winRate.toFixed(0)}%
                       </span>
                     )}
                   </div>
                 </div>
               ))}
+              {!showAllWallets && wallets.length > 5 && (
+                <div className="text-[10px] font-mono text-muted-foreground/30 text-center pt-1">
+                  +{wallets.length - 5} more wallets
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -333,7 +353,7 @@ export default function CopynixPage() {
               <div className="flex-shrink-0 w-5 h-5 rounded-full bg-violet-400/10 border border-violet-400/20 flex items-center justify-center text-[9px] font-mono text-violet-400">4</div>
               <div>
                 <div className="text-foreground/80 font-medium mb-0.5">Safety Gate</div>
-                <div>Token must have &gt;1h age, &gt;$5K liquidity, &gt;10 holders, and FDV/liquidity ratio &lt;100x. Blocks honeypots and zero-liquidity rugs.</div>
+                <div>Paper mode: wide open for data collection. FDV/liquidity ratio &lt;100x check active. Phase 2 will add age, liquidity, and holder filters.</div>
               </div>
             </div>
 
@@ -349,7 +369,7 @@ export default function CopynixPage() {
               <div className="flex-shrink-0 w-5 h-5 rounded-full bg-red-400/10 border border-red-400/20 flex items-center justify-center text-[9px] font-mono text-red-400">6</div>
               <div>
                 <div className="text-foreground/80 font-medium mb-0.5">Exit Strategy</div>
-                <div>TP +25% | SL -15% | Trailing stop 8% (activates at +10%) | Leader exit (if copied wallet sells, we sell within 60s) | Stagnation (48h with &lt;2% move).</div>
+                <div>TP +25% | SL -15% | Trailing stop 8% (activates at +10%) | Leader exit (if copied wallet sells, we sell within 60s) | Stagnation (24h flat at 0-3% &mdash; only sells if not losing).</div>
               </div>
             </div>
 
