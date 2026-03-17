@@ -125,18 +125,18 @@ export class PolynixDbLogger {
                 pnl: 0,
             }));
 
-            // Load account stats from settled trades
+            // Load account stats from SETTLED trades only (exclude open)
             const statsRes = await this.pg.query(
                 `SELECT
                     COUNT(*) AS total,
-                    COUNT(*) FILTER (WHERE pnl >= 0) AS wins,
-                    COUNT(*) FILTER (WHERE pnl < 0) AS losses,
-                    COALESCE(SUM(pnl), 0) AS total_pnl,
-                    COALESCE(SUM(cost_basis) FILTER (WHERE status = 'open'), 0) AS open_exposure
-                 FROM ${TABLE}`
+                    COUNT(*) FILTER (WHERE pnl > 0) AS wins,
+                    COUNT(*) FILTER (WHERE pnl <= 0) AS losses,
+                    COALESCE(SUM(pnl), 0) AS total_pnl
+                 FROM ${TABLE}
+                 WHERE status != 'open'`
             );
             const stats = statsRes.rows[0];
-            const settled = parseInt(stats.total) - openPositions.length;
+            const settled = parseInt(stats.total);
 
             return {
                 openPositions,

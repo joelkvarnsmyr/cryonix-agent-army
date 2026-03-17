@@ -384,7 +384,7 @@ export class PolynixAgent extends BaseAgent {
                 direction,
                 executed,
             });
-            await this.statePublisher.set('polynix:last_signal', signal);
+            await this.statePublisher.set('polynix:last_signal', signal, 3600);
         } catch {
             // Non-critical
         }
