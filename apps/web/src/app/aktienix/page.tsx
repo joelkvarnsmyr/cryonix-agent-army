@@ -254,6 +254,117 @@ export default function AktienixPage() {
           )}
         </div>
 
+        {/* How It Works */}
+        <details className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm">
+          <summary className="p-4 cursor-pointer select-none flex items-center justify-between">
+            <span className="text-[10px] font-mono text-muted-foreground/60 tracking-widest">HOW AKTIENIX WORKS</span>
+            <span className="text-[10px] font-mono text-muted-foreground/30">[click to expand]</span>
+          </summary>
+          <div className="px-4 pb-4 space-y-3 text-xs text-muted-foreground leading-relaxed">
+
+            {/* Signal Pipeline */}
+            <div>
+              <div className="text-[10px] font-mono text-cyan-400/70 tracking-wider mb-1">SIGNAL PIPELINE</div>
+              <p>Every 15 min, the agent scans {positions.length > 0 ? '21' : '21'} stocks using 5 technical factors weighted for equities:</p>
+              <div className="grid grid-cols-5 gap-1 mt-1.5 text-center">
+                {[
+                  { label: 'RSI', w: '25%', color: 'text-violet-400' },
+                  { label: 'MACD', w: '25%', color: 'text-blue-400' },
+                  { label: 'Bollinger', w: '20%', color: 'text-amber-400' },
+                  { label: 'Trend', w: '20%', color: 'text-emerald-400' },
+                  { label: 'Volume', w: '10%', color: 'text-orange-400' },
+                ].map(f => (
+                  <div key={f.label} className="rounded bg-white/[0.03] py-1">
+                    <div className={`text-[10px] font-mono ${f.color}`}>{f.label}</div>
+                    <div className="text-[9px] text-muted-foreground/40">{f.w}</div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-1.5">Signals must score above <span className="font-mono text-foreground/80">45%</span> confidence to pass. Counter-trend signals are penalized 50%.</p>
+            </div>
+
+            {/* Intelligence Layer */}
+            <div>
+              <div className="text-[10px] font-mono text-cyan-400/70 tracking-wider mb-1">INTELLIGENCE LAYER</div>
+              <div className="space-y-1">
+                <div className="flex items-start gap-2">
+                  <span className="text-[10px] font-mono text-amber-400 w-20 shrink-0">Grok AI</span>
+                  <span>Scans X/Twitter every 15min for breaking macro events (oil shocks, conflicts, Fed decisions). Bullish alignment: +15% confidence. Bearish: block sector.</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-[10px] font-mono text-violet-400 w-20 shrink-0">Polymarket</span>
+                  <span>Prediction market sentiment overlays. Crypto-correlated stocks (MSTR, COIN) get +/-8% based on crypto sentiment. Oil tickers react to geopolitical events.</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-[10px] font-mono text-emerald-400 w-20 shrink-0">Bayesian</span>
+                  <span>Self-learning system. Every closed trade updates win probability per pattern, symbol, and time-of-day. After 10 trades, confidence auto-adjusts +/-15%.</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Risk Management */}
+            <div>
+              <div className="text-[10px] font-mono text-cyan-400/70 tracking-wider mb-1">RISK MANAGEMENT</div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                {[
+                  ['Max position', '$5,000 (5%)'],
+                  ['Max positions', '8 simultaneous'],
+                  ['Daily loss limit', '-2% portfolio'],
+                  ['Weekly loss limit', '-5% portfolio'],
+                  ['Max trades/day', '8'],
+                  ['PDT guard', '≤5 day-trades/5d'],
+                  ['Account type', 'Cash (T+1)'],
+                  ['Stop-loss', '-3% fixed'],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex justify-between">
+                    <span className="text-muted-foreground/50">{label}</span>
+                    <span className="font-mono text-foreground/70">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Exit Strategy */}
+            <div>
+              <div className="text-[10px] font-mono text-cyan-400/70 tracking-wider mb-1">EXIT STRATEGY (5-STAGE)</div>
+              <div className="space-y-0.5">
+                {[
+                  { stage: 'SL', desc: 'Stop-loss at -3%', color: 'text-red-400' },
+                  { stage: 'TP', desc: 'Take-profit at +8% (R:R = 2.67)', color: 'text-emerald-400' },
+                  { stage: 'TRAIL', desc: 'Trailing stop -2% from HWM (activates at +3%)', color: 'text-blue-400' },
+                  { stage: 'STALE', desc: 'Stagnation exit after 10 trading days if < 0.5% movement', color: 'text-amber-400' },
+                  { stage: 'EOD', desc: 'Optional end-of-day close (currently disabled for swing trading)', color: 'text-muted-foreground/60' },
+                ].map(s => (
+                  <div key={s.stage} className="flex items-start gap-2">
+                    <span className={`text-[10px] font-mono w-12 shrink-0 ${s.color}`}>{s.stage}</span>
+                    <span>{s.desc}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Data Flow */}
+            <div>
+              <div className="text-[10px] font-mono text-cyan-400/70 tracking-wider mb-1">DATA FLOW</div>
+              <div className="font-mono text-[10px] text-muted-foreground/60 leading-5">
+                <span className="text-foreground/50">Alpaca 1D bars</span> → TA signals → Grok + Polymarket overlay → Bayesian adjustment → Risk checks → <span className="text-emerald-400">BUY</span> on Alpaca<br/>
+                <span className="text-foreground/50">Exit monitor (60s)</span> → SL/TP/trailing/stagnation check → <span className="text-violet-400">SELL</span> → Bayesian posterior update → Postgres log
+              </div>
+            </div>
+
+            {/* Watchlist */}
+            <div>
+              <div className="text-[10px] font-mono text-cyan-400/70 tracking-wider mb-1">WATCHLIST (21 SYMBOLS)</div>
+              <div className="flex flex-wrap gap-1">
+                {['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','SPY','QQQ','JPM','JNJ','MSTR','COIN','XOM','CVX','XLE','USO','UAL','DAL','FDX','UPS'].map(s => (
+                  <span key={s} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.03] text-foreground/60">{s}</span>
+                ))}
+              </div>
+            </div>
+
+          </div>
+        </details>
+
         {/* Market sessions footer */}
         <div className="flex items-center justify-center gap-5 py-1 text-[10px] font-mono text-muted-foreground/40">
           {[
