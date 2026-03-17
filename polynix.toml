@@ -14,7 +14,7 @@ arb_threshold = 0.96
 min_edge_pct = 2.0
 momentum_lookback_seconds = 60
 min_time_to_expiry_s = 3600        # 1 hour minimum (skip nearly-expired)
-max_time_to_expiry_s = 7776000     # 90 days max
+max_time_to_expiry_s = 1209600     # 14 days max (faster settlement = more data)
 scan_all_for_arb = true            # Scan all high-liquidity markets for YES+NO arb
 min_liquidity_usd = 500            # Min $500 liquidity to consider
 max_markets_per_scan = 80          # Max markets per arb scan cycle

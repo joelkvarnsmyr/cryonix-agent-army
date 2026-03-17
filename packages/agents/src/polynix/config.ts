@@ -20,7 +20,7 @@ export const POLYNIX_DEFAULTS: PolynixConfig = {
         min_edge_pct: 2.0,
         momentum_lookback_seconds: 60,
         min_time_to_expiry_s: 3600,         // 1 hour minimum (avoid nearly-expired)
-        max_time_to_expiry_s: 90 * 86400,   // 90 days max
+        max_time_to_expiry_s: 14 * 86400,   // 14 days max (faster settlement)
         scan_all_for_arb: true,             // Scan all markets for spread arb
         min_liquidity_usd: 500,             // Min $500 liquidity
         max_markets_per_scan: 80,           // Max markets per cycle
