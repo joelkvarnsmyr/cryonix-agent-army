@@ -3298,41 +3298,9 @@ export async function POST() {
       }
     } catch { /* Polymarket data unavailable — skip */ }
 
-    // STEP 3f: Vedic V3 — Venus Rx gate + retrograde count (research-validated, p<0.0001)
-    // V3 replaces V2's muhurta/nakshatra/transit adjustments (all noise).
-    // Only statistically validated signals: Venus Rx, Mercury Rx (mild), retro count.
-    try {
-      const vedicScoreRaw = await redis.get('vedic:score');
-
-      if (vedicScoreRaw) {
-        const vedic = JSON.parse(vedicScoreRaw);
-
-        for (const p of parsed) {
-          // Venus Retrograde: ABSOLUTE BLOCK (strongest signal, p<0.0001 all regimes)
-          // 7d: Direct +1.63% vs Rx -3.57%. Works in bull, sideways, AND bear markets.
-          if (vedic.venus_rx) {
-            const penalty = TOML?.vedic?.venus_rx_penalty ?? 0.30;
-            p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
-            p.signal.reason += ` | Venus Rx BLOCK -${(penalty * 100).toFixed(0)}%`;
-          }
-
-          // Mercury Retrograde: mild long-term drag (14d: p=0.04, 30d: p<0.001)
-          if (vedic.mercury_rx) {
-            const penalty = TOML?.vedic?.mercury_rx_penalty ?? 0.05;
-            p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
-            p.signal.reason += ` | Mercury Rx -${(penalty * 100).toFixed(0)}%`;
-          }
-
-          // Retrograde count: 0 retros = best, 3+ = worst
-          const nRetro = vedic.n_retrogrades ?? 0;
-          if (nRetro >= 3) {
-            const penalty = TOML?.vedic?.high_retro_penalty ?? 0.04;
-            p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
-            p.signal.reason += ` | ${nRetro} retrogrades -${(penalty * 100).toFixed(0)}%`;
-          }
-        }
-      }
-    } catch { /* Vedic data unavailable — skip */ }
+    // STEP 3f: Vedic V3 — DISABLED (letting Vedic instance stabilize independently)
+    // Re-enable when Vedic has proven edge with sufficient sample size.
+    // See ADR-028 and cross-instance-intelligence.md for context.
 
     parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
     const topSignals = parsed.slice(0, 15);
