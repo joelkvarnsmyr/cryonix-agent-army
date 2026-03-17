@@ -17,6 +17,7 @@ import { loadSolanixConfig } from './config';
 import { PolymarketIntelligence } from '../shared/polymarket-intelligence';
 import { SolanixPersistence } from './persistence';
 import { BayesianLearner } from './bayesian-learner';
+import { ShadowStrategy } from './shadow-strategy';
 import type { SolanaPosition, SolanaAccountState } from './types';
 
 export class SolanaAgent extends BaseAgent {
@@ -35,6 +36,7 @@ export class SolanaAgent extends BaseAgent {
     private riskManager = new RiskManager();
     private persistence = new SolanixPersistence();
     private bayesian = new BayesianLearner();
+    private shadows: ShadowStrategy[] = [];
     /** Maps symbol -> DB position ID for open positions */
     private positionDbIds = new Map<string, number>();
 
@@ -147,6 +149,32 @@ export class SolanaAgent extends BaseAgent {
                 this.log('info', 'Bayesian learner initialized — no closed trades yet, using priors');
             } else {
                 this.log('info', `Bayesian learner initialized:\n${summary}`);
+            }
+        }
+
+        // Shadow strategies for A/B testing exit parameters
+        const shadowConfigs = [
+            {
+                name: 'wide-trail',
+                capitalUsd: 250, maxPositions: 5, positionSizeUsd: 50,
+                takeProfitPct: 12, stopLossPct: 2.5,
+                trailingStopPct: 8, trailingActivationPct: 5,
+                stagnationDays: 3,
+            },
+            {
+                name: 'tight-scalp',
+                capitalUsd: 250, maxPositions: 5, positionSizeUsd: 50,
+                takeProfitPct: 4, stopLossPct: 2,
+                trailingStopPct: 3, trailingActivationPct: 2,
+                stagnationDays: 1,
+            },
+        ];
+        for (const sc of shadowConfigs) {
+            const shadow = new ShadowStrategy(sc);
+            const ok = await shadow.connect();
+            if (ok) {
+                this.shadows.push(shadow);
+                this.log('info', `Shadow strategy "${sc.name}" initialized (TP ${sc.takeProfitPct}% / SL ${sc.stopLossPct}% / Trail ${sc.trailingStopPct}%)`);
             }
         }
 
@@ -671,6 +699,11 @@ export class SolanaAgent extends BaseAgent {
                 paperTrading: this.tomlConfig.broker.paper_trading,
             });
 
+            // Mirror BUY to shadow strategies
+            for (const shadow of this.shadows) {
+                await shadow.onPrimaryBuy(symbol, mint, result.filledAvgPrice ?? 0, confidence);
+            }
+
             await this.statePublisher?.addSignal({
                 symbol,
                 action: 'BUY',
@@ -723,6 +756,20 @@ export class SolanaAgent extends BaseAgent {
             }));
         if (priceUpdates.length > 0) {
             await this.persistence.syncPrices(priceUpdates);
+        }
+
+        // Tick shadow strategies with current prices
+        if (this.shadows.length > 0 && this.positions.length > 0) {
+            const priceMap = new Map(this.positions.map(p => [p.symbol, p.currentPrice]));
+            for (const shadow of this.shadows) {
+                const exits = await shadow.tick(priceMap);
+                for (const msg of exits) {
+                    this.log('info', msg);
+                }
+            }
+            // Publish shadow stats to Redis for dashboard comparison
+            const shadowStats = this.shadows.map(s => s.getStats());
+            await this.statePublisher?.set('solanix:shadows', JSON.stringify(shadowStats));
         }
     }
 
