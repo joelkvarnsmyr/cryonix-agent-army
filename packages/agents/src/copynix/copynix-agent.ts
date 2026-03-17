@@ -10,6 +10,7 @@ import { loadCopynixConfig } from './config';
 import { PolymarketIntelligence } from '../shared/polymarket-intelligence';
 import { WalletDiscovery } from './wallet-discovery';
 import { BayesianScorer } from './bayesian-scorer';
+import { WebSocketMonitor } from './websocket-monitor';
 import type { CopyPosition, CopySignal, WalletTrade } from './types';
 
 // ── Telegram Alert Helper ─────────────────────────────────────────────
@@ -167,6 +168,7 @@ export class CopynixAgent extends BaseAgent {
     private polymarket = new PolymarketIntelligence(300_000);
     private tradeLogger = new CopynixTradeLogger();
     private bayesian = new BayesianScorer();
+    private wsMonitor: WebSocketMonitor | null = null;
 
     private walletDiscovery: WalletDiscovery | null = null;
     // Delay first discovery by 10 minutes after startup (avoid Helius burst),
@@ -243,6 +245,19 @@ export class CopynixAgent extends BaseAgent {
             this.log('info', 'Wallet discovery enabled');
         }
 
+        // Phase 2: Try WebSocket for real-time swap detection (sub-second latency)
+        const heliusKey = process.env.HELIUS_API_KEY;
+        if (heliusKey) {
+            this.wsMonitor = new WebSocketMonitor(heliusKey, config.wallets.tracked);
+            const wsOk = await this.wsMonitor.connect();
+            if (wsOk) {
+                this.log('info', 'WebSocket monitor connected — real-time swap detection active');
+            } else {
+                this.log('warn', 'WebSocket connection failed — falling back to polling');
+                this.wsMonitor = null;
+            }
+        }
+
         // Connect trade logger to Postgres
         await this.tradeLogger.connect();
 
@@ -305,13 +320,22 @@ export class CopynixAgent extends BaseAgent {
                     this.log('info', '[DAILY RESET] Trade counter and risk state cleared');
                 }
 
-                // 1. Poll tracked wallets for new trades (time-gated to avoid Helius rate limits)
+                // 1. Get new trades — WebSocket (real-time) or polling (fallback)
                 this.pollCount++;
                 const now = Date.now();
-                const walletScanInterval = this.tomlConfig.timing.wallet_scan_interval_ms * this.walletScanBackoff;
                 let newTrades: WalletTrade[] = [];
 
-                if (now - this.lastWalletScanTime >= walletScanInterval) {
+                // Phase 2: drain WebSocket buffer if connected (sub-second latency)
+                if (this.wsMonitor?.isConnected) {
+                    newTrades = this.wsMonitor.drainTrades();
+                    if (newTrades.length > 0) {
+                        this.log('info', `[WS] ${newTrades.length} real-time trade(s) from WebSocket`);
+                    }
+                }
+
+                // Fallback: poll if WebSocket is down OR as supplementary scan
+                const walletScanInterval = this.tomlConfig.timing.wallet_scan_interval_ms * this.walletScanBackoff;
+                if (!this.wsMonitor?.isConnected && now - this.lastWalletScanTime >= walletScanInterval) {
                     const errorsBefore = this.walletMonitor!.getStats().rateLimited;
                     const pollStart = Date.now();
                     newTrades = await this.walletMonitor!.pollNewTrades();
@@ -345,7 +369,8 @@ export class CopynixAgent extends BaseAgent {
                     const stats = this.walletMonitor!.getStats();
                     const beliefs = this.bayesian.getAllBeliefs();
                     const avgScore = beliefs.length > 0 ? beliefs.reduce((s, b) => s + b.score, 0) / beliefs.length : 0;
-                    this.log('info', `[HEARTBEAT] poll #${this.pollCount} | ${acct.totalPositions} pos | $${acct.portfolioValue.toFixed(0)} value | ${pending} pending | ${this.tradesToday} trades | API: ${stats.calls}/${stats.errors}err/${stats.swapsFound}swaps | Bayes: ${beliefs.length}w avg=${avgScore.toFixed(0)}`);
+                    const wsStatus = this.wsMonitor?.isConnected ? 'WS:live' : 'WS:off';
+                    this.log('info', `[HEARTBEAT] poll #${this.pollCount} | ${acct.totalPositions} pos | $${acct.portfolioValue.toFixed(0)} value | ${pending} pending | ${this.tradesToday} trades | ${wsStatus} | API: ${stats.calls}/${stats.errors}err/${stats.swapsFound}swaps | Bayes: ${beliefs.length}w avg=${avgScore.toFixed(0)}`);
                     this.lastHeartbeat = now;
                 }
 
@@ -572,14 +597,19 @@ export class CopynixAgent extends BaseAgent {
                 continue;
             }
 
-            // Trailing stop
+            // Trailing stop — dynamic: tighter for strong consensus, wider for single whale
             if (pnlPct >= config.trailing_activation_pct) {
                 pos.trailingStopActive = true;
             }
             if (pos.trailingStopActive) {
+                // Dynamic trailing: strong consensus = tighter (lock gains), single = wider (let it run)
+                let trailPct = config.trailing_stop_pct;
+                if (pos.consensusLevel === 'strong') trailPct = Math.max(3, trailPct * 0.6); // Tighter
+                if (pos.consensusLevel === 'single') trailPct = trailPct * 1.3; // Wider for high-conviction whale plays
+
                 const drawdownFromHwm = ((pos.highWatermark - pos.currentPrice) / pos.highWatermark) * 100;
-                if (drawdownFromHwm >= config.trailing_stop_pct) {
-                    const result = this.executor!.executeSell(pos.tokenMint, pos.currentPrice, `trailing stop (${drawdownFromHwm.toFixed(1)}% from HWM)`);
+                if (drawdownFromHwm >= trailPct) {
+                    const result = this.executor!.executeSell(pos.tokenMint, pos.currentPrice, `trailing stop (${drawdownFromHwm.toFixed(1)}% from HWM, trail=${trailPct.toFixed(1)}%)`);
                     if (result.success) {
                         this.log('info', `[TRAIL] ${result.message}`);
                         await this.logSell(pos, pos.currentPrice, 'trailing_stop', result.pnl);

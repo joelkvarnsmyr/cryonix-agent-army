@@ -2,7 +2,9 @@ import type { TokenSafetyCheck, CopySignal } from './types';
 
 /**
  * Risk Gate — validates tokens before allowing copy trades.
- * Anti-rug checks using DexScreener pair data.
+ *
+ * Phase 1: DexScreener pair data (age, liquidity, holders, FDV)
+ * Phase 2: Solana RPC on-chain checks (mint authority, freeze authority)
  */
 export class CopyRiskGate {
     private minTokenAgeHours: number;
@@ -25,33 +27,29 @@ export class CopyRiskGate {
         this.requireImmutableSupply = config.require_immutable_supply;
     }
 
-    /**
-     * Run safety checks on a token before allowing a copy trade.
-     * Returns a detailed safety report.
-     */
     async checkToken(tokenMint: string): Promise<TokenSafetyCheck> {
         const reasons: string[] = [];
         let safe = true;
 
         try {
+            // ── DexScreener data ──
             const url = `https://api.dexscreener.com/tokens/v1/solana/${tokenMint}`;
             const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
             if (!res.ok) {
-                return { tokenMint, tokenSymbol: 'UNKNOWN', ageHours: 0, liquidityUsd: 0, holderCount: 0, lpBurntPct: 0, immutableSupply: false, safe: false, reasons: ['Failed to fetch token data'] };
+                return this.failResult(tokenMint, ['Failed to fetch token data']);
             }
 
             const pairs = (await res.json()) as DexPairResponse[];
             if (!Array.isArray(pairs) || pairs.length === 0) {
-                return { tokenMint, tokenSymbol: 'UNKNOWN', ageHours: 0, liquidityUsd: 0, holderCount: 0, lpBurntPct: 0, immutableSupply: false, safe: false, reasons: ['No pairs found on DexScreener'] };
+                return this.failResult(tokenMint, ['No pairs found on DexScreener']);
             }
 
-            // Pick highest-liquidity Solana pair
             const pair = pairs
                 .filter(p => p.chainId === 'solana')
                 .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
 
             if (!pair) {
-                return { tokenMint, tokenSymbol: 'UNKNOWN', ageHours: 0, liquidityUsd: 0, holderCount: 0, lpBurntPct: 0, immutableSupply: false, safe: false, reasons: ['No Solana pairs found'] };
+                return this.failResult(tokenMint, ['No Solana pairs found']);
             }
 
             const symbol = pair.baseToken?.symbol ?? 'UNKNOWN';
@@ -59,28 +57,22 @@ export class CopyRiskGate {
             const ageHours = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / 3_600_000 : 0;
 
             // Check token age
-            if (ageHours < this.minTokenAgeHours) {
+            if (this.minTokenAgeHours > 0 && ageHours < this.minTokenAgeHours) {
                 safe = false;
                 reasons.push(`Token too new: ${ageHours.toFixed(1)}h (min ${this.minTokenAgeHours}h)`);
-            } else {
-                reasons.push(`Age: ${ageHours.toFixed(0)}h OK`);
             }
 
             // Check liquidity
-            if (liquidityUsd < this.minLiquidityUsd) {
+            if (this.minLiquidityUsd > 0 && liquidityUsd < this.minLiquidityUsd) {
                 safe = false;
                 reasons.push(`Low liquidity: $${liquidityUsd.toFixed(0)} (min $${this.minLiquidityUsd})`);
-            } else {
-                reasons.push(`Liquidity: $${liquidityUsd.toFixed(0)} OK`);
             }
 
-            // Holder count (from DexScreener info if available, otherwise estimate from txns)
+            // Holder count estimate
             const holderEstimate = this.estimateHolders(pair);
-            if (holderEstimate < this.minHolders) {
+            if (this.minHolders > 0 && holderEstimate < this.minHolders) {
                 safe = false;
                 reasons.push(`Low holders: ~${holderEstimate} (min ${this.minHolders})`);
-            } else {
-                reasons.push(`Holders: ~${holderEstimate} OK`);
             }
 
             // FDV/liquidity ratio — high ratio = potential rug
@@ -93,39 +85,106 @@ export class CopyRiskGate {
                 }
             }
 
+            // ── Phase 2: On-chain mint/freeze authority check ──
+            const onChain = await this.checkMintAuthority(tokenMint);
+            if (onChain.mintAuthorityActive) {
+                reasons.push('WARN: Mint authority active (dev can inflate supply)');
+                // Don't block — just warn. Many legit tokens have active mint.
+            }
+            if (onChain.freezeAuthorityActive) {
+                safe = false;
+                reasons.push('BLOCKED: Freeze authority active (dev can freeze your tokens)');
+            }
+
             return {
                 tokenMint,
                 tokenSymbol: symbol,
                 ageHours,
                 liquidityUsd,
                 holderCount: holderEstimate,
-                lpBurntPct: 0, // DexScreener doesn't expose this directly, Phase 2: use Solscan API
-                immutableSupply: false, // Phase 2: check via Solana RPC
+                lpBurntPct: 0,
+                immutableSupply: !onChain.mintAuthorityActive,
                 safe,
                 reasons,
             };
         } catch {
-            return { tokenMint, tokenSymbol: 'UNKNOWN', ageHours: 0, liquidityUsd: 0, holderCount: 0, lpBurntPct: 0, immutableSupply: false, safe: false, reasons: ['Error during safety check'] };
+            return this.failResult(tokenMint, ['Error during safety check']);
         }
     }
 
-    /**
-     * Quick check: is this signal safe to copy?
-     */
     async validateSignal(signal: CopySignal): Promise<{ allowed: boolean; reasons: string[] }> {
         const check = await this.checkToken(signal.tokenMint);
         return { allowed: check.safe, reasons: check.reasons };
     }
 
+    // ── Phase 2: Solana RPC on-chain checks ──────────────────────────
+
     /**
-     * Estimate holder count from 24h transaction data.
-     * Rough proxy: unique buy transactions in 24h ≈ active holders.
+     * Check if a token's mint or freeze authority is still active.
+     * Uses Solana public RPC (free, no API key needed).
+     *
+     * If mint authority is active → dev can create infinite tokens (rug risk).
+     * If freeze authority is active → dev can freeze your tokens (instant rug).
      */
+    private async checkMintAuthority(tokenMint: string): Promise<{
+        mintAuthorityActive: boolean;
+        freezeAuthorityActive: boolean;
+    }> {
+        try {
+            const rpcUrl = 'https://api.mainnet-beta.solana.com';
+            const res = await fetch(rpcUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'getAccountInfo',
+                    params: [
+                        tokenMint,
+                        { encoding: 'jsonParsed' },
+                    ],
+                }),
+                signal: AbortSignal.timeout(5_000),
+            });
+
+            if (!res.ok) return { mintAuthorityActive: false, freezeAuthorityActive: false };
+
+            const data = await res.json() as {
+                result?: {
+                    value?: {
+                        data?: {
+                            parsed?: {
+                                info?: {
+                                    mintAuthority?: string | null;
+                                    freezeAuthority?: string | null;
+                                };
+                            };
+                        };
+                    };
+                };
+            };
+
+            const info = data.result?.value?.data?.parsed?.info;
+            if (!info) return { mintAuthorityActive: false, freezeAuthorityActive: false };
+
+            return {
+                mintAuthorityActive: !!info.mintAuthority && info.mintAuthority !== null,
+                freezeAuthorityActive: !!info.freezeAuthority && info.freezeAuthority !== null,
+            };
+        } catch {
+            // Non-critical — if RPC fails, don't block
+            return { mintAuthorityActive: false, freezeAuthorityActive: false };
+        }
+    }
+
     private estimateHolders(pair: DexPairResponse): number {
         const buys24h = pair.txns?.h24?.buys ?? 0;
         const sells24h = pair.txns?.h24?.sells ?? 0;
-        // Rough estimate: unique buyers likely ~60-70% of total buy txns
         return Math.round((buys24h + sells24h) * 0.65);
+    }
+
+    private failResult(tokenMint: string, reasons: string[]): TokenSafetyCheck {
+        return { tokenMint, tokenSymbol: 'UNKNOWN', ageHours: 0, liquidityUsd: 0, holderCount: 0, lpBurntPct: 0, immutableSupply: false, safe: false, reasons };
     }
 }
 
