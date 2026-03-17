@@ -8,9 +8,9 @@ import { PolymarketSpreadScanner } from '../../packages/agents/src/shared/polyma
 
 const GAMMA_API = 'https://gamma-api.polymarket.com';
 const REDIS_URL = process.env.KV_URL ?? 'redis://localhost:6379';
-const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
-const REDIS_TTL = 1800; // 30 minutes (2x poll interval)
-const DELTA_THRESHOLD = 20; // Score shift >= 20 = significant macro event
+const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes (was 15 — faster for geopolitical events)
+const REDIS_TTL = 900; // 15 minutes (3x poll interval)
+const DELTA_THRESHOLD = 15; // Score shift >= 15 = significant macro event (was 20)
 
 // Telegram alert config
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? '';

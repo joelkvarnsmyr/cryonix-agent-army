@@ -377,6 +377,68 @@ export class AktienixAgent extends BaseAgent {
                     }
                 }
 
+                // 6a. Macro delta exit: if oil sentiment shifts bearish rapidly,
+                // tighten trailing stops on energy positions immediately
+                if (this.statePublisher) {
+                    try {
+                        const ENERGY_TICKERS = ['XLE', 'XOM', 'CVX', 'USO', 'COP'];
+                        const oilDeltaRaw = await this.statePublisher.get('polymarket:oil:delta');
+                        const geoDeltaRaw = await this.statePublisher.get('polymarket:geopolitik:delta');
+
+                        let bearishShift = false;
+                        let shiftSource = '';
+
+                        if (oilDeltaRaw) {
+                            const delta = JSON.parse(oilDeltaRaw);
+                            if (delta.direction === 'bearish' && Math.abs(delta.delta) >= 15) {
+                                bearishShift = true;
+                                shiftSource = `oil Δ${delta.delta} (${delta.from}→${delta.to})`;
+                            }
+                        }
+                        if (geoDeltaRaw) {
+                            const delta = JSON.parse(geoDeltaRaw);
+                            // Geopolitik going bullish = ceasefire = bearish for energy
+                            if (delta.direction === 'bullish' && Math.abs(delta.delta) >= 15) {
+                                bearishShift = true;
+                                shiftSource = `ceasefire Δ+${delta.delta} (${delta.from}→${delta.to})`;
+                            }
+                        }
+
+                        if (bearishShift && this.brokerClient) {
+                            this.log('warn', `🚨 MACRO DELTA: ${shiftSource} — selling energy positions with profit`);
+                            for (const pos of this.positions) {
+                                if (!ENERGY_TICKERS.includes(pos.symbol)) continue;
+                                const pnlPct = pos.avgEntryPrice > 0
+                                    ? ((pos.currentPrice - pos.avgEntryPrice) / pos.avgEntryPrice) * 100 : 0;
+                                // Only sell energy positions that are in profit (protect gains)
+                                if (pnlPct <= 0.5) continue;
+
+                                this.log('warn', `MACRO EXIT: Selling ${pos.symbol} (+${pnlPct.toFixed(2)}%) due to ${shiftSource}`);
+                                const result = await this.brokerClient.submitOrder({
+                                    symbol: pos.symbol, action: 'SELL', qty: pos.qty, orderType: 'MARKET',
+                                });
+                                if (result.success) {
+                                    this.riskManager.recordExit(pos.unrealizedPl);
+                                    this.exitMonitor.clearPosition(pos.symbol);
+                                    await this.tradeLogger.logTrade({
+                                        symbol: pos.symbol, side: 'SELL', qty: pos.qty,
+                                        fillPrice: pos.currentPrice, dollarAmount: pos.qty * pos.currentPrice,
+                                        realizedPnl: pos.unrealizedPl,
+                                        exitReason: `macro_delta: ${shiftSource}`,
+                                        orderId: result.orderId,
+                                    });
+                                    await this.bayesianUpdater.updatePosterior({
+                                        pattern: 'macro_delta', symbol: pos.symbol, pnlPct,
+                                        exitReason: 'macro_delta',
+                                    });
+                                }
+                            }
+                            // Refresh positions after macro exits
+                            this.positions = await this.brokerClient.getPositions();
+                        }
+                    } catch { /* non-critical */ }
+                }
+
                 // 6b. EOD close: close all positions before market close if configured
                 if (marketResult.shouldClosePositions && this.brokerClient) {
                     for (const pos of this.positions) {
