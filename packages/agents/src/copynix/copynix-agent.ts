@@ -100,6 +100,45 @@ class CopynixTradeLogger {
         }
     }
 
+    /**
+     * Find open positions: BUY trades without a matching SELL for the same token.
+     * Uses the most recent BUY per token_mint where no SELL exists after it.
+     */
+    async getOpenPositions(): Promise<Array<{
+        tokenMint: string;
+        tokenSymbol: string;
+        entryPrice: number;
+        dollarAmount: number;
+        consensusLevel: string | null;
+        timestamp: number;
+    }>> {
+        if (!this.pg) return [];
+        try {
+            const { rows } = await this.pg.query(`
+                SELECT DISTINCT ON (token_mint)
+                    token_mint, token_symbol, entry_price, dollar_amount,
+                    consensus_level, EXTRACT(EPOCH FROM timestamp) * 1000 as ts
+                FROM copynix_trades
+                WHERE side = 'BUY'
+                  AND token_mint NOT IN (
+                      SELECT token_mint FROM copynix_trades WHERE side = 'SELL'
+                  )
+                ORDER BY token_mint, timestamp DESC
+            `);
+            return rows.map((r: any) => ({
+                tokenMint: r.token_mint,
+                tokenSymbol: r.token_symbol,
+                entryPrice: parseFloat(r.entry_price) || 0,
+                dollarAmount: parseFloat(r.dollar_amount) || 0,
+                consensusLevel: r.consensus_level,
+                timestamp: parseFloat(r.ts) || Date.now(),
+            }));
+        } catch (err: any) {
+            console.warn('[CopynixTradeLogger] getOpenPositions failed:', err.message);
+            return [];
+        }
+    }
+
     async hasRecentBuy(tokenMint: string, hoursBack: number): Promise<boolean> {
         if (!this.pg) return false;
         try {
@@ -206,6 +245,9 @@ export class CopynixAgent extends BaseAgent {
 
         // Connect trade logger to Postgres
         await this.tradeLogger.connect();
+
+        // Restore open positions from Postgres (survives restarts)
+        await this.restorePositionsFromDb();
 
         // Initialize Bayesian scorer with Redis persistence
         if (this.statePublisher) {
@@ -535,6 +577,39 @@ export class CopynixAgent extends BaseAgent {
                 continue;
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Position Restoration (from Postgres, survives restarts)
+    // -------------------------------------------------------------------------
+
+    private async restorePositionsFromDb(): Promise<void> {
+        const openPositions = await this.tradeLogger.getOpenPositions();
+        if (openPositions.length === 0) return;
+
+        for (const pos of openPositions) {
+            // Re-create position in executor
+            const signal: CopySignal = {
+                tokenMint: pos.tokenMint,
+                tokenSymbol: pos.tokenSymbol,
+                action: 'BUY',
+                consensusLevel: (pos.consensusLevel as 'strong' | 'medium' | 'single') ?? 'single',
+                walletCount: 1,
+                wallets: [],
+                avgPriceUsd: pos.entryPrice,
+                totalVolumeUsd: pos.dollarAmount,
+                confidence: 50,
+                reasoning: ['Restored from Postgres after restart'],
+                timestamp: pos.timestamp,
+            };
+
+            const result = this.executor!.executeBuy(signal);
+            if (result.success) {
+                this.log('info', `[RESTORE] Restored position: ${pos.tokenSymbol} @ $${pos.entryPrice.toFixed(8)} ($${pos.dollarAmount.toFixed(2)})`);
+            }
+        }
+
+        this.log('info', `[RESTORE] Restored ${openPositions.length} position(s) from Postgres`);
     }
 
     // -------------------------------------------------------------------------
