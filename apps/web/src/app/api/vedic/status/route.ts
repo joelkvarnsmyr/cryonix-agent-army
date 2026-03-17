@@ -12,9 +12,10 @@ export async function GET() {
   let btdStats: any = null;
   let btdState: any = null;
   let bayesData: any = null;
+  let futuresStats: any = null;
 
   try {
-    const [scoreRaw, moonRaw, planetsRaw, aspectsRaw, traderRaw, btdStatsRaw, btdStateRaw, bayesRaw] =
+    const [scoreRaw, moonRaw, planetsRaw, aspectsRaw, traderRaw, btdStatsRaw, btdStateRaw, bayesRaw, futuresRaw] =
       await Promise.all([
         redis.get('vedic:score'),
         redis.get('vedic:moon'),
@@ -24,6 +25,7 @@ export async function GET() {
         redis.get('vedic_btd:stats'),
         redis.get('vedic_btd:state'),
         redis.get('vedic:bayes'),
+        redis.get('vedic_futures:stats'),
       ]);
 
     if (scoreRaw) try { vedicScore = JSON.parse(scoreRaw as string); } catch {}
@@ -34,6 +36,7 @@ export async function GET() {
     if (btdStatsRaw) try { btdStats = JSON.parse(btdStatsRaw as string); } catch {}
     if (btdStateRaw) try { btdState = JSON.parse(btdStateRaw as string); } catch {}
     if (bayesRaw) try { bayesData = JSON.parse(bayesRaw as string); } catch {}
+    if (futuresRaw) try { futuresStats = JSON.parse(futuresRaw as string); } catch {}
   } catch (error) {
     console.error('[vedic/status] Redis error:', error);
   }
@@ -93,6 +96,20 @@ export async function GET() {
       openPositions: btdStats.open_positions ?? 0,
       entriesThisCycle: btdStats.entries_this_cycle ?? 0,
     } : { running: false, phase: 'OFFLINE' },
+    futures: futuresStats ? {
+      running: true,
+      balance: futuresStats.balance ?? 0,
+      totalPnl: futuresStats.total_pnl ?? 0,
+      returnPct: futuresStats.return_pct ?? 0,
+      trades: futuresStats.total_trades ?? 0,
+      wins: futuresStats.wins ?? 0,
+      winRate: futuresStats.win_rate ?? 0,
+      longTrades: futuresStats.long_trades ?? 0,
+      longWr: futuresStats.long_wr ?? 0,
+      shortTrades: futuresStats.short_trades ?? 0,
+      shortWr: futuresStats.short_wr ?? 0,
+      openPositions: futuresStats.open_positions ?? 0,
+    } : { running: false },
     bayes: bayesData ? {
       probability: bayesData.probability ?? 0.5,
       score: bayesData.score ?? 0,

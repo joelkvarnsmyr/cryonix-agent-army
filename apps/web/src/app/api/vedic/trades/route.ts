@@ -6,11 +6,13 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   let traderTrades: any[] = [];
   let btdTrades: any[] = [];
+  let futuresTrades: any[] = [];
 
   try {
-    const [traderRaw, btdRaw] = await Promise.all([
+    const [traderRaw, btdRaw, futuresRaw] = await Promise.all([
       redis.lrange('vedic_trader:trades', 0, 99),
       redis.lrange('vedic_btd:trades', 0, 99),
+      redis.lrange('vedic_futures:trades', 0, 99),
     ]);
 
     if (traderRaw) {
@@ -30,12 +32,20 @@ export async function GET() {
         } catch { return null; }
       }).filter(Boolean);
     }
+    if (futuresRaw) {
+      futuresTrades = (futuresRaw as string[]).map((r: string) => {
+        try {
+          const t = JSON.parse(r);
+          return { ...t, source: 'futures' };
+        } catch { return null; }
+      }).filter(Boolean);
+    }
   } catch (error) {
     console.error('[vedic/trades] Redis error:', error);
   }
 
   // Merge and sort by timestamp (newest first)
-  const allTrades = [...traderTrades, ...btdTrades]
+  const allTrades = [...traderTrades, ...btdTrades, ...futuresTrades]
     .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0))
     .slice(0, 100);
 

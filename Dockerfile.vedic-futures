@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y gcc g++ python3-dev && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir pyswisseph>=2.10 redis>=5.0 ccxt>=4.2 httpx>=0.26
+
+COPY packages/engine/src/vedic ./packages/engine/src/vedic
+RUN touch ./packages/engine/src/__init__.py
+
+COPY scripts/services/vedic-futures-paper.py ./scripts/services/vedic-futures-paper.py
+
+ENV PYTHONPATH=/app/packages/engine
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "scripts/services/vedic-futures-paper.py"]

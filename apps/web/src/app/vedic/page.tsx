@@ -306,6 +306,45 @@ export default function VedicPage() {
           </div>
         </div>
 
+        {/* ── Futures Wallet ── */}
+        {(status as any)?.futures?.running && (
+          <div className="bg-zinc-900 border border-purple-500/30 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+                <span className="text-sm font-bold text-zinc-200">Futures Paper</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300">BAYES-DRIVEN</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">LONG+SHORT</span>
+              </div>
+              <span className="text-xs text-zinc-500">{(status as any).futures.openPositions} pos</span>
+            </div>
+            <div className="grid grid-cols-5 gap-2 text-center">
+              <div>
+                <div className="text-lg font-mono text-zinc-200">${(status as any).futures.balance?.toFixed(0)}</div>
+                <div className="text-[10px] text-zinc-500">Balance</div>
+              </div>
+              <div>
+                <div className={`text-lg font-mono ${(status as any).futures.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  ${(status as any).futures.totalPnl?.toFixed(2)}
+                </div>
+                <div className="text-[10px] text-zinc-500">P&L</div>
+              </div>
+              <div>
+                <div className="text-lg font-mono text-zinc-200">{(status as any).futures.winRate?.toFixed(0)}%</div>
+                <div className="text-[10px] text-zinc-500">WR ({(status as any).futures.trades}T)</div>
+              </div>
+              <div>
+                <div className="text-sm font-mono text-green-400">{(status as any).futures.longTrades}L {(status as any).futures.longWr}%</div>
+                <div className="text-[10px] text-zinc-500">Longs</div>
+              </div>
+              <div>
+                <div className="text-sm font-mono text-red-400">{(status as any).futures.shortTrades}S {(status as any).futures.shortWr}%</div>
+                <div className="text-[10px] text-zinc-500">Shorts</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Bayesian Score ── */}
         {(status as any)?.bayes && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">

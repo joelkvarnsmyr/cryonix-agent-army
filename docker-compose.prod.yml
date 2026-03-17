@@ -329,6 +329,24 @@ services:
         condition: service_healthy
 
   # ============================================================
+  # Vedic Futures — Bayesian-driven LONG+SHORT paper trading
+  # Uses Bayes posterior for entries, shorter timeframe
+  # ============================================================
+
+  vedic-futures:
+    build:
+      context: .
+      dockerfile: Dockerfile.vedic-futures
+    restart: always
+    environment:
+      - KV_URL=redis://redis:6379
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ============================================================
   # Vedic BTD — Venus Rx Buy-The-Dip dedicated trader
   # Separate wallet ($500), only trades post-Venus-Rx recovery
   # ============================================================
