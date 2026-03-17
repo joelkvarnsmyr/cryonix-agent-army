@@ -6,14 +6,14 @@ gamma_api_url = "https://gamma-api.polymarket.com"
 [capital]
 starting_balance_usd = 500
 max_bet_size_usd = 25
-max_concurrent_positions = 20
-max_exposure_pct = 80
+max_concurrent_positions = 40
+max_exposure_pct = 85
 
 [strategy]
 arb_threshold = 0.96
 min_edge_pct = 2.0
 momentum_lookback_seconds = 60
-min_time_to_expiry_s = 3600        # 1 hour minimum (skip nearly-expired)
+min_time_to_expiry_s = 300         # 5 min minimum (allow short-duration bets)
 max_time_to_expiry_s = 1209600     # 14 days max (faster settlement = more data)
 scan_all_for_arb = true            # Scan all high-liquidity markets for YES+NO arb
 min_liquidity_usd = 500            # Min $500 liquidity to consider
