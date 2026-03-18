@@ -1,4 +1,5 @@
 import type { PolynixPosition, CryptoMicroMarket } from './types';
+import type { SpreadDetector } from './spread-detector';
 import { randomUUID } from 'crypto';
 
 export class PositionTracker {
@@ -100,6 +101,41 @@ export class PositionTracker {
         }
 
         return settled;
+    }
+
+    /**
+     * Fetch live midpoint prices for all open positions and compute unrealized P&L.
+     * Rate-limited: max 10 concurrent fetches.
+     */
+    async refreshPrices(spreadDetector: SpreadDetector): Promise<void> {
+        const open = this.getOpen();
+        if (open.length === 0) return;
+
+        const batchSize = 10;
+        for (let i = 0; i < open.length; i += batchSize) {
+            const batch = open.slice(i, i + batchSize);
+            await Promise.allSettled(batch.map(async (pos) => {
+                try {
+                    if (pos.type === 'arb') {
+                        // Arb: guaranteed profit at expiry, show as costBasis vs payout
+                        pos.currentPrice = pos.entryPrice; // combined cost stays same
+                        pos.unrealizedPnl = pos.size - pos.costBasis; // guaranteed edge
+                    } else {
+                        // Directional: fetch YES midpoint, derive our token's value
+                        const yesMid = await spreadDetector.getYesMidpoint(pos.market);
+                        if (yesMid !== null) {
+                            // Our token value: YES holder gets yesMid, NO holder gets (1-yesMid)
+                            const ourTokenPrice = pos.side === 'YES' ? yesMid : (1 - yesMid);
+                            pos.currentPrice = ourTokenPrice;
+                            const currentValue = ourTokenPrice * pos.size;
+                            pos.unrealizedPnl = currentValue - pos.costBasis;
+                        }
+                    }
+                } catch {
+                    // Non-critical — keep stale price
+                }
+            }));
+        }
     }
 
     getOpen(): PolynixPosition[] {

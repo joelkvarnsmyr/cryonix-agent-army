@@ -52,6 +52,8 @@ export interface PolynixPosition {
     expiresAt: number;
     status: 'open' | 'won' | 'lost' | 'settled';
     pnl: number;
+    currentPrice?: number;      // Live midpoint price of our token
+    unrealizedPnl?: number;     // (currentPrice * size) - costBasis (for directional) or guaranteed edge (for arb)
 }
 
 export interface PolynixAccountState {

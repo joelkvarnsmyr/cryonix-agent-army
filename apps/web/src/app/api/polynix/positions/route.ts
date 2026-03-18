@@ -21,6 +21,8 @@ export interface PolynixPositionApi {
   expiresAt: number;
   status: string;
   pnl: number;
+  currentPrice?: number;
+  unrealizedPnl?: number;
 }
 
 export async function GET() {

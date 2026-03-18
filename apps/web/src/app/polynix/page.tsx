@@ -74,6 +74,13 @@ export default function PolynixPage() {
   const startingBalance = 500;
   const deployed = startingBalance - balance + totalPnl;
 
+  // Unrealized P&L from live prices
+  const totalUnrealizedPnl = positions.reduce((sum, p) => sum + (p.unrealizedPnl ?? 0), 0);
+  const arbPositions = positions.filter(p => p.type === 'arb');
+  const dirPositions = positions.filter(p => p.type === 'directional');
+  const arbUrPnl = arbPositions.reduce((sum, p) => sum + (p.unrealizedPnl ?? 0), 0);
+  const dirUrPnl = dirPositions.reduce((sum, p) => sum + (p.unrealizedPnl ?? 0), 0);
+
   return (
     <DashboardLayout>
       <div className="max-w-2xl mx-auto space-y-4">
@@ -111,10 +118,25 @@ export default function PolynixPage() {
             <span className={totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
               {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} realized
             </span>
+            {totalUnrealizedPnl !== 0 && (
+              <span className={totalUnrealizedPnl >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}>
+                {totalUnrealizedPnl >= 0 ? '+' : ''}${totalUnrealizedPnl.toFixed(2)} unrealized
+              </span>
+            )}
             <span className="text-muted-foreground/60">
               ${deployed.toFixed(2)} deployed
             </span>
           </div>
+          {(arbPositions.length > 0 || dirPositions.length > 0) && (
+            <div className="mt-2 flex items-center justify-center gap-4 text-[10px] font-mono text-muted-foreground/50">
+              {arbPositions.length > 0 && (
+                <span>ARB: {arbPositions.length} bets, <span className="text-emerald-400/60">+${arbUrPnl.toFixed(2)}</span> locked</span>
+              )}
+              {dirPositions.length > 0 && (
+                <span>DIR: {dirPositions.length} bets, <span className={dirUrPnl >= 0 ? 'text-emerald-400/60' : 'text-red-400/60'}>{dirUrPnl >= 0 ? '+' : ''}${dirUrPnl.toFixed(2)}</span></span>
+              )}
+            </div>
+          )}
           <div className="mt-3 grid grid-cols-5 gap-2 text-xs text-muted-foreground">
             <div className="rounded-lg bg-white/[0.03] p-2">
               <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">OPEN</div>
@@ -199,12 +221,22 @@ export default function PolynixPage() {
                         <span className={`font-mono text-sm font-semibold shrink-0 ${sideColor}`}>
                           {pos.side}
                         </span>
+                        {pos.currentPrice != null && (
+                          <span className="font-mono text-xs text-foreground/70 shrink-0">
+                            {(pos.currentPrice * 100).toFixed(0)}¢
+                          </span>
+                        )}
                         <span className="text-xs text-muted-foreground/50 truncate">
                           {pos.market?.title}
                         </span>
                       </div>
-                      <div className="flex items-center gap-3 shrink-0 ml-2">
-                        <span className="font-mono text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        {pos.unrealizedPnl != null && (
+                          <span className={`font-mono text-xs font-semibold ${pos.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
+                          </span>
+                        )}
+                        <span className="font-mono text-xs text-muted-foreground/40">
                           ${pos.costBasis.toFixed(2)}
                         </span>
                         <span className="font-mono text-xs text-amber-400 w-10 text-right">
@@ -242,14 +274,28 @@ export default function PolynixPage() {
                             <span className="text-muted-foreground/50">Cost basis</span>
                             <span className="text-foreground">${pos.costBasis.toFixed(2)}</span>
                           </div>
+                          {pos.currentPrice != null && (
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground/50">Current odds</span>
+                              <span className="text-foreground">{(pos.currentPrice * 100).toFixed(1)}%</span>
+                            </div>
+                          )}
+                          {pos.unrealizedPnl != null && (
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground/50">Unrealized P&L</span>
+                              <span className={pos.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                                {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
+                              </span>
+                            </div>
+                          )}
                           <div className="flex justify-between">
                             <span className="text-muted-foreground/50">Max payout</span>
-                            <span className="text-emerald-400">${(pos.type === 'arb' ? pos.size : pos.size).toFixed(2)}</span>
+                            <span className="text-emerald-400">${pos.size.toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground/50">Max profit</span>
                             <span className="text-emerald-400">
-                              +${(pos.type === 'arb' ? pos.size - pos.costBasis : pos.size - pos.costBasis).toFixed(2)}
+                              +${(pos.size - pos.costBasis).toFixed(2)}
                             </span>
                           </div>
                           <div className="flex justify-between">

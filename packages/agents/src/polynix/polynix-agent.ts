@@ -318,7 +318,8 @@ export class PolynixAgent extends BaseAgent {
             }
         }
 
-        // 5. Update account state
+        // 5. Refresh current prices on open positions + compute unrealized P&L
+        await this.positionTracker.refreshPrices(this.spreadDetector);
         this.accountState.openPositions = this.positionTracker.getOpenCount();
 
         // 6. Publish state to Redis
