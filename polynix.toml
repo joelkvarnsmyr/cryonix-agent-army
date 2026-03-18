@@ -29,6 +29,12 @@ fee_rate = 0.0156
 scan_interval_ms = 30000           # 30s between scans (was 60s — faster discovery)
 settlement_check_ms = 300000       # 5 min settlement checks
 
+[micro_markets]
+enabled = true
+min_time_to_expiry_s = 30          # 30s minimum (need time to execute)
+max_time_to_expiry_s = 300         # 5 minutes max
+max_bet_size_usd = 9               # $9 per micro-bet (small, high frequency)
+
 [data_sources]
 binance_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 use_polymarket_intelligence = true

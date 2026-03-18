@@ -10,6 +10,7 @@ import { OrderManager } from './order-manager';
 import { loadPolynixConfig } from './config';
 import { PolynixDbLogger } from './db-logger';
 import { BayesianLearner } from './bayesian-learner';
+import { MicroMarketScanner } from './micro-market-scanner';
 import type { PolynixConfig, PolynixAccountState, CryptoMicroMarket } from './types';
 
 export class PolynixAgent extends BaseAgent {
@@ -25,6 +26,7 @@ export class PolynixAgent extends BaseAgent {
     private statePublisher: StatePublisher | null = null;
     private dbLogger: PolynixDbLogger;
     private bayesian: BayesianLearner;
+    private microScanner: MicroMarketScanner;
 
     private accountState: PolynixAccountState;
     private lastHeartbeatLog = 0;
@@ -42,6 +44,7 @@ export class PolynixAgent extends BaseAgent {
         this.orderManager = new OrderManager(this.tomlConfig);
         this.dbLogger = new PolynixDbLogger();
         this.bayesian = new BayesianLearner();
+        this.microScanner = new MicroMarketScanner();
 
         this.accountState = {
             balance: this.tomlConfig.capital.starting_balance_usd,
@@ -179,6 +182,49 @@ export class PolynixAgent extends BaseAgent {
 
         // 2. Fetch latest CEX prices
         await this.directionalEngine.fetchPrices(this.tomlConfig);
+
+        // 2b. Scan 5-minute micro-markets (BTC/ETH/SOL up-or-down)
+        const microConfig = this.tomlConfig.micro_markets ?? { enabled: false, min_time_to_expiry_s: 30, max_time_to_expiry_s: 300, max_bet_size_usd: 9 };
+        if (microConfig.enabled) {
+            try {
+                const microMarkets = await this.microScanner.scan(microConfig);
+                for (const market of microMarkets) {
+                    // Check arb on micro markets
+                    const arbResult = await this.checkArb(market);
+                    if (arbResult === 'executed') arbsExecuted++;
+                    if (arbResult) arbsFound++;
+
+                    // Check directional on micro markets
+                    const signal = await this.directionalEngine.evaluate(market, this.spreadDetector, this.tomlConfig);
+                    if (signal && signal.edge > this.tomlConfig.strategy.min_edge_pct / 100) {
+                        signalsFound++;
+                        const risk = this.riskManager.check(signal.edge, signal.confidence / 100, this.tomlConfig, this.positionTracker.getOpenCount(), this.positionTracker.getExposure());
+                        if (risk.canTrade) {
+                            const bayesAdj = this.bayesian.evaluate('directional', market.asset, signal.direction, signal.edge, market.timeToExpiry);
+                            if (!bayesAdj.veto) {
+                                const size = risk.suggestedSize * bayesAdj.factor;
+                                const tokenId = signal.direction === 'YES' ? market.yesTokenId : market.noTokenId;
+                                const price = signal.direction === 'YES' ? signal.polymarketProb : (1 - signal.polymarketProb);
+                                const order = await this.orderManager.placeOrder(tokenId, 'BUY', price, size);
+                                if (order.status === 'filled') {
+                                    const costBasis = price * size;
+                                    this.positionTracker.addPosition(market, 'directional', signal.direction, price, size, costBasis);
+                                    this.accountState.balance -= costBasis;
+                                    await this.dbLogger.logOpen(this.positionTracker.getLastAdded()!);
+                                    signalsExecuted++;
+                                    this.log('info', `MICRO ${signal.direction}: ${market.title} | edge=${(signal.edge * 100).toFixed(1)}% | ${market.timeToExpiry.toFixed(0)}s left`);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (microMarkets.length > 0) {
+                    this.log('info', `Micro-scan: ${microMarkets.length} 5-min markets found`);
+                }
+            } catch (err: any) {
+                this.log('warn', `Micro-market scan error: ${err.message}`);
+            }
+        }
 
         // 3. Scan for markets (crypto + arb)
         const { cryptoMarkets, arbMarkets } = await this.scanner.scan(this.tomlConfig);

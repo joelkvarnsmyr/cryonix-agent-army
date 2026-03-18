@@ -39,6 +39,12 @@ export const POLYNIX_DEFAULTS: PolynixConfig = {
         binance_symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],
         use_polymarket_intelligence: true,
     },
+    micro_markets: {
+        enabled: true,
+        min_time_to_expiry_s: 30,
+        max_time_to_expiry_s: 300,
+        max_bet_size_usd: 9,
+    },
 };
 
 export function loadPolynixConfig(filePath?: string): PolynixConfig {
@@ -54,6 +60,7 @@ export function loadPolynixConfig(filePath?: string): PolynixConfig {
             risk: { ...POLYNIX_DEFAULTS.risk, ...parsed.risk },
             timing: { ...POLYNIX_DEFAULTS.timing, ...parsed.timing },
             data_sources: { ...POLYNIX_DEFAULTS.data_sources, ...parsed.data_sources },
+            micro_markets: { ...POLYNIX_DEFAULTS.micro_markets, ...parsed.micro_markets },
         };
     } catch {
         console.warn('[polynix] Failed to parse polynix.toml, using defaults');

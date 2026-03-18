@@ -8,6 +8,7 @@ export { PositionTracker } from './position-tracker';
 export { OrderManager } from './order-manager';
 export { PolynixDbLogger } from './db-logger';
 export { BayesianLearner } from './bayesian-learner';
+export { MicroMarketScanner } from './micro-market-scanner';
 export type {
     CryptoMicroMarket,
     ArbOpportunity,
