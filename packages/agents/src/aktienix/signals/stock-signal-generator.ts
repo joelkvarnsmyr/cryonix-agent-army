@@ -139,16 +139,25 @@ export class StockSignalGenerator {
         const reasoning: string[] = [];
 
         // --- Factor 1: RSI (weight: 25%) ---
-        if (indicators.rsi14 < 30) {
+        // Trend-aware zones: shift thresholds based on trend direction + strength
+        // In uptrend: raise overbought zone (momentum is strength, not weakness)
+        // In downtrend: lower oversold zone (falling knife, not value)
+        const trendShift = Math.round(structure.trendStrength * 10); // 0-10 RSI points
+        const oversold = structure.trend === 'downtrend' ? 30 - trendShift : 30;
+        const approachingOversold = structure.trend === 'downtrend' ? 40 - trendShift : 40;
+        const overbought = structure.trend === 'uptrend' ? 70 + trendShift : 70;
+        const approachingOverbought = structure.trend === 'uptrend' ? 60 + trendShift : 60;
+
+        if (indicators.rsi14 < oversold) {
             buyScore += 0.25;
-            reasoning.push(`RSI oversold (${indicators.rsi14.toFixed(1)})`);
-        } else if (indicators.rsi14 < 40) {
+            reasoning.push(`RSI oversold (${indicators.rsi14.toFixed(1)}, threshold ${oversold})`);
+        } else if (indicators.rsi14 < approachingOversold) {
             buyScore += 0.10;
             reasoning.push(`RSI approaching oversold (${indicators.rsi14.toFixed(1)})`);
-        } else if (indicators.rsi14 > 70) {
+        } else if (indicators.rsi14 > overbought) {
             sellScore += 0.25;
-            reasoning.push(`RSI overbought (${indicators.rsi14.toFixed(1)})`);
-        } else if (indicators.rsi14 > 60) {
+            reasoning.push(`RSI overbought (${indicators.rsi14.toFixed(1)}, threshold ${overbought})`);
+        } else if (indicators.rsi14 > approachingOverbought) {
             sellScore += 0.10;
             reasoning.push(`RSI approaching overbought (${indicators.rsi14.toFixed(1)})`);
         }
@@ -211,10 +220,21 @@ export class StockSignalGenerator {
         let action: 'BUY' | 'SELL' | 'WAIT';
         let confidence: number;
 
-        if (buyScore > sellScore && buyScore >= 0.35) {
+        // Net-score filter: require clear directional conviction
+        // Prevents ambiguous signals where both BUY and SELL score similarly
+        const netScore = Math.abs(buyScore - sellScore);
+        const minNetScore = 0.15;
+
+        if (netScore < minNetScore) {
+            // Too uncertain — conflicting signals cancel out
+            action = 'WAIT';
+            confidence = 0;
+        } else if (buyScore > sellScore && buyScore >= 0.10) {
+            // Low floor (0.10 instead of 0.35): let macro boost in evaluateSignal()
+            // push borderline signals over min_confidence threshold (0.40)
             action = 'BUY';
             confidence = Math.min(buyScore, 0.95);
-        } else if (sellScore > buyScore && sellScore >= 0.35) {
+        } else if (sellScore > buyScore && sellScore >= 0.10) {
             action = 'SELL';
             confidence = Math.min(sellScore, 0.95);
         } else {
