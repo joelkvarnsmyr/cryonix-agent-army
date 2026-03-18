@@ -171,11 +171,12 @@ max_day_trades_per_5d = 5
 
 [signals]
 
-# Minimum combined score to act. Stock signals are generally weaker
-# than crypto (lower volatility = less extreme indicator readings).
-# 0.30 captures momentum plays that get macro-boosted later.
-# Combined with min_confidence (0.40), weak signals still get filtered.
-min_signal_score = 0.30
+# Minimum combined score to generate a signal. Lowered to 0.10 (was 0.30)
+# so that macro intelligence boost (+15%) can reach borderline signals.
+# The real gate is min_confidence (0.40) in evaluateSignal(), applied
+# AFTER Grok and Polymarket overlays. Net-score filter (|buy-sell| >= 0.15)
+# eliminates ambiguous signals where both directions score similarly.
+min_signal_score = 0.10
 
 # --- Factor Weights ---
 # Stocks are more momentum-driven and mean-reverting than crypto.
