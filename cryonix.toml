@@ -715,7 +715,7 @@ ai_weight = 0.40
 # 30000 = 30 seconds. Faster = more responsive but more Binance API calls.
 # When to change: lower to 15000 in fast markets, raise to 60000 to
 # reduce API load.
-auto_trader_poll_ms = 30_000
+auto_trader_poll_ms = 15_000
 
 # Health check interval for the dashboard status endpoint.
 health_check_interval_ms = 300_000

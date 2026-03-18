@@ -3515,7 +3515,22 @@ export async function POST() {
       }
 
       // STEP 3b: AI Validation (Information Edge)
-      const aiResult = await getAIValidation(signal);
+      // Fast-track: skip AI for very strong signals (≥80% confidence + multi-pattern)
+      const skipAiThreshold = (TOML as any)?.ai?.skip_threshold ?? 0.80;
+      const canSkipAi = signal.confidence >= skipAiThreshold
+        && (signal.patterns?.length ?? 0) >= 2;
+
+      let aiResult: AIValidation;
+      if (canSkipAi) {
+        console.log(`[FAST-TRACK] ${signal.symbol}: skipping AI (conf=${(signal.confidence * 100).toFixed(0)}%, ${signal.patterns?.length} patterns)`);
+        aiResult = {
+          approved: true,
+          aiConfidence: signal.confidence,
+          reasoning: `Fast-tracked: ${(signal.confidence * 100).toFixed(0)}% confidence with ${signal.patterns?.join('+')}`,
+        };
+      } else {
+        aiResult = await getAIValidation(signal);
+      }
 
       // Calculate consensus from confidence delta
       const confDelta = Math.abs(aiResult.aiConfidence - signal.confidence);
