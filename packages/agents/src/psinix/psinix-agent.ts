@@ -25,6 +25,17 @@ interface PsinixConfig {
     psi: { phase_transition_threshold: number; kelly_fraction_cap: number; entropy_bins: number; entropy_floor: number; beta_scale: number };
     trading: { min_psi_magnitude: number; max_position_size_usd: number; max_positions: number; symbols: string[] };
     exits: { take_profit_pct: number; stop_loss_pct: number; trailing_stop_pct: number; trailing_activation_pct: number };
+    risk: {
+        fee_pct: number;                 // Binance fee per side (0.1% default)
+        min_edge_after_fees: number;     // Min expected edge after round-trip fees to trade
+        circuit_breaker_losses: number;  // Consecutive losses before halt
+        circuit_breaker_cooldown_ms: number; // Cooldown after circuit breaker
+        drawdown_halflife_pct: number;   // Halve position size at this drawdown %
+        max_drawdown_halt_pct: number;   // Stop trading entirely at this drawdown %
+        min_hold_bars: number;           // Minimum bars to hold a position (anti-churn)
+        profit_factor_gate: number;      // If rolling PF < this, halve positions
+        rolling_window: number;          // Number of recent trades for dynamic Kelly + PF
+    };
     timing: { poll_interval_ms: number; price_update_ms: number };
 }
 
@@ -133,8 +144,15 @@ export class PsinixAgent {
     private pollCount = 0;
     private lastHeartbeat = 0;
     private totalPnl = 0;
+    private totalFees = 0;
     private wins = 0;
     private losses = 0;
+
+    // Risk state
+    private consecutiveLosses = 0;
+    private circuitBreakerUntil = 0;       // Timestamp when CB lifts
+    private peakEquity: number = 0;
+    private recentTradePnls: number[] = []; // Rolling window for dynamic Kelly + PF
 
     constructor() {
         this.config = this.loadConfig();
@@ -225,7 +243,8 @@ export class PsinixAgent {
                     const posCount = this.positions.size;
                     const portfolioValue = this.getPortfolioValue();
                     const wr = this.wins + this.losses > 0 ? ((this.wins / (this.wins + this.losses)) * 100).toFixed(0) : '?';
-                    console.log(`[psinix] [HEARTBEAT] poll #${this.pollCount} | ${posCount} pos | $${portfolioValue.toFixed(0)} value | ${this.wins}W/${this.losses}L (${wr}% WR) | PnL: $${this.totalPnl.toFixed(2)}`);
+                    const dd = this.peakEquity > 0 ? ((this.peakEquity - portfolioValue) / this.peakEquity * 100).toFixed(1) : '0.0';
+                    console.log(`[psinix] [HEARTBEAT] poll #${this.pollCount} | ${posCount} pos | $${portfolioValue.toFixed(0)} value | ${this.wins}W/${this.losses}L (${wr}% WR) | PnL: $${this.totalPnl.toFixed(2)} | Fees: $${this.totalFees.toFixed(2)} | DD: ${dd}%`);
                     this.lastHeartbeat = now;
 
                     // Publish state to Redis
@@ -295,16 +314,73 @@ export class PsinixAgent {
         const currentPrice = this.priceCache.get(symbol);
         if (!currentPrice || currentPrice <= 0) return;
 
-        // Position size from Ψ — |Ψ| × max_position_size
-        const dollarSize = Math.abs(psi.psi) * this.config.trading.max_position_size_usd;
-        if (dollarSize < 5) return; // Minimum $5
+        const risk = this.config.risk;
 
-        const cappedSize = Math.min(dollarSize, this.balance * 0.2); // Max 20% of balance
+        // ── Circuit breaker ──
+        if (Date.now() < this.circuitBreakerUntil) return;
+
+        // ── Drawdown guard ──
+        const equity = this.getPortfolioValue();
+        if (this.peakEquity === 0) this.peakEquity = this.config.broker.initial_balance_usd;
+        if (equity > this.peakEquity) this.peakEquity = equity;
+        const drawdownPct = this.peakEquity > 0 ? ((this.peakEquity - equity) / this.peakEquity) * 100 : 0;
+
+        if (drawdownPct >= risk.max_drawdown_halt_pct) {
+            console.log(`[psinix] HALTED — drawdown ${drawdownPct.toFixed(1)}% >= max ${risk.max_drawdown_halt_pct}%`);
+            return;
+        }
+
+        // ── Fee-aware edge check ──
+        const roundTripFee = risk.fee_pct * 2; // Buy + sell
+        const expectedEdge = Math.abs(psi.psi) * psi.coherence * 100; // Rough expected move %
+        if (expectedEdge < roundTripFee + risk.min_edge_after_fees) {
+            return; // Not enough expected edge to overcome fees
+        }
+
+        // ── Dynamic Kelly ──
+        let kellyFraction = this.config.psi.kelly_fraction_cap;
+        if (this.recentTradePnls.length >= 10) {
+            const recentWins = this.recentTradePnls.filter(p => p > 0);
+            const recentLosses = this.recentTradePnls.filter(p => p < 0);
+            const wr = recentWins.length / this.recentTradePnls.length;
+            const avgWin = recentWins.length > 0 ? recentWins.reduce((a, b) => a + b, 0) / recentWins.length : 0;
+            const avgLoss = recentLosses.length > 0 ? Math.abs(recentLosses.reduce((a, b) => a + b, 0) / recentLosses.length) : 1;
+            const rr = avgLoss > 0 ? avgWin / avgLoss : 1;
+
+            // Kelly: f* = (W × R - (1-W)) / R
+            const kellyRaw = rr > 0 ? (wr * rr - (1 - wr)) / rr : 0;
+            kellyFraction = Math.max(0.05, Math.min(this.config.psi.kelly_fraction_cap, kellyRaw));
+        }
+
+        // ── Profit factor gate ──
+        if (this.recentTradePnls.length >= 10) {
+            const grossProfit = this.recentTradePnls.filter(p => p > 0).reduce((a, b) => a + b, 0);
+            const grossLoss = Math.abs(this.recentTradePnls.filter(p => p < 0).reduce((a, b) => a + b, 0));
+            const pf = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 10 : 0;
+            if (pf < risk.profit_factor_gate) {
+                kellyFraction *= 0.5; // Halve position when losing
+            }
+        }
+
+        // ── Drawdown position scaling ──
+        let drawdownScale = 1.0;
+        if (drawdownPct >= risk.drawdown_halflife_pct) {
+            drawdownScale = risk.drawdown_halflife_pct / drawdownPct; // Linear reduction
+        }
+
+        // ── Position size: |Ψ| × maxPos × kelly × drawdownScale ──
+        const baseDollarSize = Math.abs(psi.psi) * this.config.trading.max_position_size_usd;
+        const scaledSize = baseDollarSize * (kellyFraction / this.config.psi.kelly_fraction_cap) * drawdownScale;
+        if (scaledSize < 5) return;
+
+        const cappedSize = Math.min(scaledSize, this.balance * 0.25);
+        const fee = cappedSize * risk.fee_pct / 100;
         const qty = cappedSize / currentPrice;
         const side: 'LONG' | 'SHORT' = psi.psi > 0 ? 'LONG' : 'SHORT';
 
-        // Execute paper trade
-        this.balance -= cappedSize;
+        // Execute paper trade (deduct fee)
+        this.balance -= (cappedSize + fee);
+        this.totalFees += fee;
         this.positions.set(symbol, {
             symbol,
             side,
@@ -399,14 +475,43 @@ export class PsinixAgent {
         const pos = this.positions.get(symbol);
         if (!pos) return;
 
+        const risk = this.config.risk;
+
+        // ── Minimum hold time (anti-churn) ──
+        const barsHeld = Math.floor((Date.now() - pos.entryTime) / this.config.timing.poll_interval_ms);
+        if (barsHeld < risk.min_hold_bars && reason !== 'SL hit' && !reason.startsWith('SL')) {
+            return; // Don't exit early unless it's a stop loss
+        }
+
         const direction = pos.side === 'LONG' ? 1 : -1;
-        const pnl = (price - pos.entryPrice) * pos.qty * direction;
-        const proceeds = pos.qty * price;
+        const grossPnl = (price - pos.entryPrice) * pos.qty * direction;
+        const exitFee = (pos.qty * price) * risk.fee_pct / 100;
+        const pnl = grossPnl - exitFee; // Net of exit fee (entry fee already deducted)
+        const proceeds = pos.qty * price - exitFee;
 
         this.balance += proceeds;
         this.totalPnl += pnl;
-        if (pnl > 0) this.wins++;
-        else this.losses++;
+        this.totalFees += exitFee;
+
+        if (pnl > 0) {
+            this.wins++;
+            this.consecutiveLosses = 0;
+        } else {
+            this.losses++;
+            this.consecutiveLosses++;
+
+            // ── Circuit breaker ──
+            if (this.consecutiveLosses >= risk.circuit_breaker_losses) {
+                this.circuitBreakerUntil = Date.now() + risk.circuit_breaker_cooldown_ms;
+                console.log(`[psinix] ⚠️ CIRCUIT BREAKER — ${this.consecutiveLosses} consecutive losses, cooling down ${risk.circuit_breaker_cooldown_ms / 60_000}min`);
+            }
+        }
+
+        // ── Rolling PnL tracking ──
+        this.recentTradePnls.push(pnl);
+        if (this.recentTradePnls.length > risk.rolling_window) {
+            this.recentTradePnls.shift();
+        }
 
         // Update Bayesian weights for contributing signal sources
         const profitable = pnl > 0;
@@ -507,6 +612,17 @@ export class PsinixAgent {
             psi: { phase_transition_threshold: 0.6, kelly_fraction_cap: 0.25, entropy_bins: 10, entropy_floor: 0.1, beta_scale: 3.0 },
             trading: { min_psi_magnitude: 0.05, max_position_size_usd: 200, max_positions: 3, symbols: ['BTC/USDC', 'ETH/USDC', 'SOL/USDC'] },
             exits: { take_profit_pct: 5, stop_loss_pct: 3, trailing_stop_pct: 2, trailing_activation_pct: 2.5 },
+            risk: {
+                fee_pct: 0.1,
+                min_edge_after_fees: 0.1,
+                circuit_breaker_losses: 4,
+                circuit_breaker_cooldown_ms: 60 * 60 * 1000, // 1 hour
+                drawdown_halflife_pct: 5,
+                max_drawdown_halt_pct: 15,
+                min_hold_bars: 3,
+                profit_factor_gate: 0.8,
+                rolling_window: 30,
+            },
             timing: { poll_interval_ms: 60000, price_update_ms: 30000 },
         };
 
@@ -522,6 +638,7 @@ export class PsinixAgent {
                 psi: { ...defaults.psi, ...parsed.psi },
                 trading: { ...defaults.trading, ...parsed.trading },
                 exits: { ...defaults.exits, ...parsed.exits },
+                risk: { ...defaults.risk, ...(parsed as any).risk },
                 timing: { ...defaults.timing, ...parsed.timing },
             };
         } catch {

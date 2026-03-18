@@ -44,6 +44,26 @@ stop_loss_pct = 3.0
 trailing_stop_pct = 2.0
 trailing_activation_pct = 2.5
 
+[risk]
+# Binance fee per side (0.1% standard, 0.075% with BNB discount)
+fee_pct = 0.1
+# Minimum expected edge after round-trip fees to enter a trade (%)
+min_edge_after_fees = 0.1
+# Consecutive losses before circuit breaker halts trading
+circuit_breaker_losses = 4
+# Cooldown after circuit breaker (ms) — 1 hour
+circuit_breaker_cooldown_ms = 3600000
+# Halve position size when drawdown exceeds this %
+drawdown_halflife_pct = 5.0
+# Stop trading entirely at this drawdown %
+max_drawdown_halt_pct = 15.0
+# Minimum bars to hold a position (anti-churn, prevents fee-burning)
+min_hold_bars = 3
+# If rolling profit factor drops below this, halve positions
+profit_factor_gate = 0.8
+# Number of recent trades for dynamic Kelly + profit factor calculation
+rolling_window = 30
+
 [timing]
 # Main loop interval (how often to compute Ψ)
 poll_interval_ms = 60000
