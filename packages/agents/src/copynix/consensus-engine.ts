@@ -69,27 +69,21 @@ export class ConsensusEngine {
         const uniqueWallets = new Set(entry.trades.map(t => t.walletAddress));
         const walletCount = uniqueWallets.size;
 
+        // Check if consensus reached — only strong (3+) fires
+        // Medium consensus DISABLED — data shows 25% WR vs 100% for single whale.
+        // Waiting for 2nd wallet adds latency without improving signal quality.
         let consensusLevel: CopySignal['consensusLevel'] | null = null;
         if (walletCount >= this.minWalletsStrong) {
             consensusLevel = 'strong';
-        } else if (walletCount >= this.minWalletsMedium) {
-            consensusLevel = 'medium';
         }
 
         if (!consensusLevel) return null;
 
-        // For medium consensus, keep the pending entry so a 3rd wallet can upgrade to strong
-        if (consensusLevel === 'medium') {
-            // Only fire medium signal once (check if we already fired for this entry)
-            if ((entry as any)._mediumFired) return null;
-            (entry as any)._mediumFired = true;
-        }
-
-        // Consensus reached — fire signal
+        // Strong consensus reached — fire signal
         const wallets = Array.from(uniqueWallets);
         const avgPrice = entry.trades.reduce((s, t) => s + t.priceUsd, 0) / entry.trades.length;
         const totalVolume = entry.trades.reduce((s, t) => s + t.amountUsd, 0);
-        const confidence = consensusLevel === 'strong' ? 85 : 65;
+        const confidence = 85;
 
         const signal: CopySignal = {
             tokenMint: trade.tokenMint,
@@ -109,12 +103,9 @@ export class ConsensusEngine {
             timestamp: now,
         };
 
-        // Strong: set cooldown + clean up. Medium: keep pending for possible upgrade to strong.
-        if (consensusLevel === 'strong') {
-            this.cooldowns.set(trade.tokenMint, now + this.cooldownMs);
-            this.pending.delete(trade.tokenMint);
-        }
-        // Medium does NOT set cooldown — allows 3rd wallet to upgrade to strong
+        // Set cooldown and clean up pending
+        this.cooldowns.set(trade.tokenMint, now + this.cooldownMs);
+        this.pending.delete(trade.tokenMint);
 
         return signal;
     }

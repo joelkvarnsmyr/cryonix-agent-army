@@ -447,7 +447,8 @@ export class CopynixAgent extends BaseAgent {
         if (signal) {
             await this.executeSignal(signal);
         } else {
-            // Single-whale mode: high-score wallets can trigger alone
+            // Single-whale mode: high-score wallets can trigger alone.
+        // Medium consensus disabled — only strong (3+) or single whale trades.
             const walletScore = this.tomlConfig.wallets.scores[trade.walletAddress] ?? 0;
             if (walletScore >= 80) {
                 const whaleSignal = this.consensusEngine!.createSingleWhaleSignal(trade, walletScore);
