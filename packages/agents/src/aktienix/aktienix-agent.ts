@@ -269,8 +269,31 @@ export class AktienixAgent extends BaseAgent {
                 // 1. Check market hours
                 const marketResult = await MarketHours.check(this.alpacaInstance, config.market_hours);
                 if (!marketResult.isOpen) {
-                    this.log('info', 'Market hours guard: market is closed');
+                    // Market closed — but still gather intelligence + update dashboard
                     await this.statePublisher?.publishStatus('paused');
+
+                    // Refresh portfolio for dashboard (every cycle)
+                    try {
+                        if (this.brokerClient) {
+                            this.accountState = await this.brokerClient.getAccountState();
+                            this.positions = await this.brokerClient.getPositions();
+                            await this.statePublisher?.publishPositions(this.positions);
+                            if (this.accountState) await this.statePublisher?.publishAccount(this.accountState);
+                        }
+                    } catch { /* non-critical */ }
+
+                    // Run MacroIntelligence even when market is closed (news is 24/7)
+                    try {
+                        if (this.macroIntelligence && Date.now() - this.lastNewsScanTime > config.intelligence.news_scan_interval_ms) {
+                            this.log('info', '[PRE-MARKET] Running MacroIntelligence scan...');
+                            this.activeMacroSignals = await this.macroIntelligence.scan();
+                            this.lastNewsScanTime = Date.now();
+                            if (this.activeMacroSignals.length > 0) {
+                                this.log('info', `[PRE-MARKET] ${this.activeMacroSignals.length} macro signals active`);
+                            }
+                        }
+                    } catch { /* non-critical */ }
+
                     const _pms = config.timing.poll_interval_ms;
                     const _tick = 250;
                     for (let _e = 0; _e < _pms && this.isTrading; _e += _tick) {
