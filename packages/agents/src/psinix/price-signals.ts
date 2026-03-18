@@ -55,17 +55,17 @@ export class PriceSignals {
         const recentMean = recent.reduce((a, b) => a + b, 0) / recent.length;
 
         let direction: number;
-        if (H > 0.58) {
+        if (H > 0.55) {
             // Trending → follow
-            direction = clamp(Math.sign(recentMean) * (H - 0.5) * 5, -1, 1);
-        } else if (H < 0.42) {
+            direction = clamp(Math.sign(recentMean) * (H - 0.5) * 6, -1, 1);
+        } else if (H < 0.45) {
             // Mean-reverting → fade
-            direction = clamp(-Math.sign(recentMean) * (0.5 - H) * 5, -1, 1);
+            direction = clamp(-Math.sign(recentMean) * (0.5 - H) * 6, -1, 1);
         } else {
             return null; // Random walk zone
         }
 
-        if (Math.abs(direction) < 0.05) return null;
+        if (Math.abs(direction) < 0.03) return null;
 
         return {
             sourceId: 'price:hurst',
@@ -117,7 +117,7 @@ export class PriceSignals {
         const halfLife = Math.log(2) / theta;
 
         // Only trade if half-life is reasonable
-        if (halfLife < 2 || halfLife > 50) return null;
+        if (halfLife < 1 || halfLife > 100) return null;
 
         // Compute z-score
         const residuals = deltaY.map((dy, i) => dy - alpha - beta * yLag[i]);
@@ -130,7 +130,7 @@ export class PriceSignals {
         const speedMult = Math.min(2.0, 10.0 / halfLife);
         const direction = clamp(-z * speedMult * 0.3, -1, 1);
 
-        if (Math.abs(direction) < 0.05) return null;
+        if (Math.abs(direction) < 0.03) return null;
 
         return {
             sourceId: 'price:ou',
@@ -176,7 +176,7 @@ export class PriceSignals {
             -1, 1,
         );
 
-        if (Math.abs(direction) < 0.05) return null;
+        if (Math.abs(direction) < 0.03) return null;
 
         return {
             sourceId: 'price:momentum',

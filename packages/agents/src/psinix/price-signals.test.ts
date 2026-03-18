@@ -7,6 +7,17 @@
 
 import { PriceSignals } from './price-signals';
 
+// Deterministic PRNG (mulberry32) so tests never flake
+function mulberry32(seed: number) {
+    return () => {
+        seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+}
+const rng = mulberry32(42);
+
 function assert(condition: boolean, msg: string): void {
     if (!condition) throw new Error(`FAIL: ${msg}`);
     console.log(`  ✓ ${msg}`);
@@ -28,25 +39,25 @@ async function runTests(): Promise<void> {
     // Generate test data
     // ═══════════════════════════════════════════════════════════════
 
-    // Strong uptrend
+    // Strong uptrend (drift >> noise so Hurst reliably detects trend)
     const trendUp: number[] = [100];
-    for (let i = 1; i < 100; i++) trendUp.push(trendUp[i - 1] * (1 + 0.003 + (Math.random() - 0.5) * 0.005));
+    for (let i = 1; i < 100; i++) trendUp.push(trendUp[i - 1] * (1 + 0.008 + (rng() - 0.5) * 0.002));
 
     // Strong downtrend
     const trendDown: number[] = [100];
-    for (let i = 1; i < 100; i++) trendDown.push(trendDown[i - 1] * (1 - 0.003 + (Math.random() - 0.5) * 0.005));
+    for (let i = 1; i < 100; i++) trendDown.push(trendDown[i - 1] * (1 - 0.003 + (rng() - 0.5) * 0.005));
 
     // Mean-reverting (oscillating around 100)
     const meanRev: number[] = [];
     let mr = Math.log(100);
     for (let i = 0; i < 100; i++) {
-        mr += 0.1 * (Math.log(100) - mr) + (Math.random() - 0.5) * 0.02;
+        mr += 0.1 * (Math.log(100) - mr) + (rng() - 0.5) * 0.02;
         meanRev.push(Math.exp(mr));
     }
 
     // Random walk (no signal expected)
     const random: number[] = [100];
-    for (let i = 1; i < 100; i++) random.push(random[i - 1] * (1 + (Math.random() - 0.5) * 0.04));
+    for (let i = 1; i < 100; i++) random.push(random[i - 1] * (1 + (rng() - 0.5) * 0.04));
 
     // Too short
     const tooShort = [100, 101, 102];
