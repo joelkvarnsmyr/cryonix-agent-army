@@ -845,6 +845,33 @@ export class AktienixAgent extends BaseAgent {
             return;
         }
 
+        // Bayesian tiered position sizing:
+        // Adjust max position size based on historical win rate for this symbol
+        // Tier: <50% → 0.5x, 50-65% → 1.0x, >65% → 1.5x
+        let bayesSizeMultiplier = 1.0;
+        if (this.statePublisher) {
+            try {
+                const bayesRaw = await this.statePublisher.get(`bayes:aktienix:symbol:${symbol}`);
+                if (bayesRaw) {
+                    const prior = JSON.parse(bayesRaw);
+                    if (prior.n >= 10) {
+                        const winRate = prior.alpha / (prior.alpha + prior.beta);
+                        if (winRate > 0.65) {
+                            bayesSizeMultiplier = 1.5;
+                            this.log('info', `BAYES SIZE: ${symbol} win rate ${(winRate * 100).toFixed(0)}% (n=${prior.n}) → 1.5x position`);
+                        } else if (winRate < 0.50) {
+                            bayesSizeMultiplier = 0.5;
+                            this.log('info', `BAYES SIZE: ${symbol} win rate ${(winRate * 100).toFixed(0)}% (n=${prior.n}) → 0.5x position`);
+                        }
+                    }
+                }
+            } catch { /* non-critical — use default 1.0x */ }
+        }
+
+        // Apply Bayesian multiplier to config for this trade only
+        const originalMaxSize = config.capital.max_position_size_usd;
+        config.capital.max_position_size_usd = originalMaxSize * bayesSizeMultiplier;
+
         // Calculate fractional qty via the position-sizer module
         const qty = PositionSizer.calc(
             currentPrice ?? 0,
@@ -852,6 +879,9 @@ export class AktienixAgent extends BaseAgent {
             config.capital,
             this.accountState.portfolioValue,
         );
+
+        // Restore original config (don't let Bayesian multiplier leak to next signal)
+        config.capital.max_position_size_usd = originalMaxSize;
 
         if (qty <= 0) {
             this.log('warn', `Position sizer returned 0 for ${symbol} (insufficient cash or price invalid)`);
