@@ -10,7 +10,20 @@ export interface CopynixTomlConfig {
     limits: { max_open_positions: number; max_trades_per_day: number };
     risk: { min_confidence: number; max_daily_loss_pct: number; max_weekly_loss_pct: number; max_consecutive_losses: number };
     safety: { min_token_age_hours: number; min_liquidity_usd: number; min_holders: number; min_lp_burnt_pct: number; require_immutable_supply: boolean };
-    exits: { take_profit_pct: number; stop_loss_pct: number; trailing_stop_pct: number; trailing_activation_pct: number; leader_exit_enabled: boolean; leader_exit_timeout_s: number; stagnation_timeout_hours: number; stagnation_min_pnl_pct: number };
+    exits: {
+        take_profit_pct: number;
+        rug_sl_pct: number;
+        rug_window_minutes: number;
+        standard_sl_pct: number;
+        wide_sl_pct: number;
+        wide_sl_after_minutes: number;
+        trailing_stop_pct: number;
+        trailing_activation_pct: number;
+        leader_exit_enabled: boolean;
+        leader_exit_timeout_s: number;
+        stagnation_timeout_hours: number;
+        stagnation_min_pnl_pct: number;
+    };
     timing: { poll_interval_ms: number; wallet_scan_interval_ms: number; discovery_interval_ms: number };
 }
 
@@ -22,7 +35,13 @@ export const COPYNIX_DEFAULTS: CopynixTomlConfig = {
     limits: { max_open_positions: 5, max_trades_per_day: 10 },
     risk: { min_confidence: 0.50, max_daily_loss_pct: 0.10, max_weekly_loss_pct: 0.20, max_consecutive_losses: 4 },
     safety: { min_token_age_hours: 24, min_liquidity_usd: 50_000, min_holders: 50, min_lp_burnt_pct: 50, require_immutable_supply: true },
-    exits: { take_profit_pct: 25.0, stop_loss_pct: 15.0, trailing_stop_pct: 8.0, trailing_activation_pct: 10.0, leader_exit_enabled: true, leader_exit_timeout_s: 60, stagnation_timeout_hours: 48, stagnation_min_pnl_pct: 2.0 },
+    exits: {
+        take_profit_pct: 25.0, rug_sl_pct: 15.0, rug_window_minutes: 2,
+        standard_sl_pct: 25.0, wide_sl_pct: 35.0, wide_sl_after_minutes: 30,
+        trailing_stop_pct: 12.0, trailing_activation_pct: 15.0,
+        leader_exit_enabled: true, leader_exit_timeout_s: 60,
+        stagnation_timeout_hours: 24, stagnation_min_pnl_pct: 3.0,
+    },
     timing: { poll_interval_ms: 30_000, wallet_scan_interval_ms: 30_000, discovery_interval_ms: 604_800_000 },
 };
 

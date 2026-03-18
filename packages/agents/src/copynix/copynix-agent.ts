@@ -633,12 +633,26 @@ export class CopynixAgent extends BaseAgent {
                 // Second TP: already took partial, full exit handled by trailing stop
             }
 
-            // Stop loss
-            if (pnlPct <= -config.stop_loss_pct) {
-                const result = this.executor!.executeSell(pos.tokenMint, pos.currentPrice, `SL hit (${pnlPct.toFixed(1)}%)`);
+            // Stop loss — time-aware: fast dump = rug, slow decline = wider tolerance
+            const holdMinutes = (Date.now() - pos.entryTime) / 60_000;
+            let effectiveSL = config.standard_sl_pct; // Default: 25%
+
+            if (holdMinutes <= config.rug_window_minutes) {
+                effectiveSL = config.rug_sl_pct; // 15% — rug detection
+            } else if (holdMinutes >= config.wide_sl_after_minutes) {
+                effectiveSL = config.wide_sl_pct; // 35% — memecoins need room
+            }
+
+            if (pnlPct <= -effectiveSL) {
+                const phase = holdMinutes <= config.rug_window_minutes ? 'stop_loss_rug' :
+                              holdMinutes >= config.wide_sl_after_minutes ? 'stop_loss_wide' : 'stop_loss';
+                const label = phase === 'stop_loss_rug' ? 'RUG' :
+                              phase === 'stop_loss_wide' ? 'WIDE-SL' : 'SL';
+                const result = this.executor!.executeSell(pos.tokenMint, pos.currentPrice,
+                    `${label} hit (${pnlPct.toFixed(1)}% in ${holdMinutes.toFixed(0)}min)`);
                 if (result.success) {
-                    this.log('info', `[SL] ${result.message}`);
-                    await this.logSell(pos, pos.currentPrice, 'stop_loss', result.pnl);
+                    this.log('info', `[${label}] ${result.message}`);
+                    await this.logSell(pos, pos.currentPrice, phase, result.pnl);
                 }
                 continue;
             }

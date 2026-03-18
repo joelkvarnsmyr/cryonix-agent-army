@@ -32,7 +32,7 @@ const CONSENSUS_COLOR: Record<string, string> = {
 
 // copynix.toml defaults
 const TP_PCT = 25;
-const SL_PCT = 15;
+const SL_PCT = 25;
 
 export default function CopynixPage() {
   const { data: status }    = useCopynixStatus(10_000);

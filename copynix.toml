@@ -102,6 +102,7 @@ discovery_interval_hours = 24
 
 [consensus]
 min_wallets_strong = 3
+# DEPRECATED: medium consensus disabled (25% WR, -$46 PnL). Kept for config compat.
 min_wallets_medium = 2
 # Reduced from 15min to 5min — if wallets don't agree within 5min,
 # the opportunity has likely passed. Tighter window = fresher consensus.
@@ -138,16 +139,19 @@ require_immutable_supply = false
 
 [exits]
 take_profit_pct = 25.0
-# SL widened from 15% to 25% — memecoins routinely dip 20-30% before pumping.
-# Gany hit -15% SL then bounced +155%. Wider SL reduces false exits.
-stop_loss_pct = 25.0
-trailing_stop_pct = 8.0
-trailing_activation_pct = 10.0
+# Time-aware stop loss: fast dumps = rug detection, slow declines = wider tolerance
+# Phase 1 (0-2 min): rug detection — exit if loss > 15%
+rug_sl_pct = 15.0
+rug_window_minutes = 2
+# Phase 2 (2-30 min): standard SL
+standard_sl_pct = 25.0
+# Phase 3 (>30 min): wide SL — memecoins need room to breathe
+wide_sl_pct = 35.0
+wide_sl_after_minutes = 30
+trailing_stop_pct = 12.0
+trailing_activation_pct = 15.0
 leader_exit_enabled = true
 leader_exit_timeout_s = 60
-# 24h stagnation — memecoins that don't move in 24h are likely dead.
-# Only exit if PnL is between 0% and 3% (flat/tiny profit = not worth holding).
-# If negative, SL handles it. If above 3%, let it ride.
 stagnation_timeout_hours = 24
 stagnation_min_pnl_pct = 3.0
 
