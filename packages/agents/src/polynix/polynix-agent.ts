@@ -218,6 +218,11 @@ export class PolynixAgent extends BaseAgent {
 
         // 4b. Check crypto markets for directional opportunities
         for (const market of cryptoMarkets) {
+            // Dedup: skip markets we already hold
+            const alreadyHolding = this.positionTracker.getOpen()
+                .some(p => p.market.conditionId === market.conditionId);
+            if (alreadyHolding) continue;
+
             try {
                 const signal = await this.directionalEngine.evaluate(market, this.spreadDetector, this.tomlConfig);
                 if (signal && signal.edge > this.tomlConfig.strategy.min_edge_pct / 100) {
@@ -298,6 +303,11 @@ export class PolynixAgent extends BaseAgent {
      */
     private async checkArb(market: CryptoMicroMarket): Promise<'executed' | 'found' | null> {
         try {
+            // Dedup: don't re-enter a market we already hold
+            const alreadyHolding = this.positionTracker.getOpen()
+                .some(p => p.market.conditionId === market.conditionId);
+            if (alreadyHolding) return null;
+
             const arb = await this.spreadDetector.check(market, this.tomlConfig);
             if (!arb || arb.netEdge <= 0) return null;
 

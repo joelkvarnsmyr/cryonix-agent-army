@@ -10,14 +10,14 @@ max_concurrent_positions = 40
 max_exposure_pct = 85
 
 [strategy]
-arb_threshold = 0.96
+arb_threshold = 0.93            # Require 7% gross edge (was 0.96 = 4%) → ~3% net after fees
 min_edge_pct = 2.0
 momentum_lookback_seconds = 60
 min_time_to_expiry_s = 300         # 5 min minimum (allow short-duration bets)
 max_time_to_expiry_s = 1209600     # 14 days max (faster settlement = more data)
 scan_all_for_arb = true            # Scan all high-liquidity markets for YES+NO arb
-min_liquidity_usd = 500            # Min $500 liquidity to consider
-max_markets_per_scan = 80          # Max markets per arb scan cycle
+min_liquidity_usd = 200            # Min $200 liquidity (was 500 — include more markets)
+max_markets_per_scan = 150         # Max markets per arb scan cycle (was 80)
 
 [risk]
 kelly_fraction = 0.25
@@ -26,7 +26,7 @@ max_consecutive_losses = 5
 fee_rate = 0.0156
 
 [timing]
-scan_interval_ms = 60000           # 60s between scans (long-duration markets)
+scan_interval_ms = 30000           # 30s between scans (was 60s — faster discovery)
 settlement_check_ms = 300000       # 5 min settlement checks
 
 [data_sources]
