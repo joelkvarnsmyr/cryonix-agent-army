@@ -48,7 +48,8 @@ trailing_activation_pct = 2.5
 # Binance fee per side (0.1% standard, 0.075% with BNB discount)
 fee_pct = 0.1
 # Minimum expected edge after round-trip fees to enter a trade (%)
-min_edge_after_fees = 0.1
+# Lowered: fee formula now uses coherence C (realistic) not |Ψ| (underestimate)
+min_edge_after_fees = 0.05
 # Consecutive losses before circuit breaker halts trading
 circuit_breaker_losses = 4
 # Cooldown after circuit breaker (ms) — 1 hour
