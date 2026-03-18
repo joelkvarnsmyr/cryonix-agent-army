@@ -7,7 +7,7 @@ gamma_api_url = "https://gamma-api.polymarket.com"
 starting_balance_usd = 500
 max_bet_size_usd = 25
 max_concurrent_positions = 40
-max_exposure_pct = 85
+max_exposure_pct = 95
 
 [strategy]
 arb_threshold = 0.93            # Require 7% gross edge (was 0.96 = 4%) → ~3% net after fees
