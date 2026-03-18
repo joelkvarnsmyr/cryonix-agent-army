@@ -125,9 +125,11 @@ const V4_SIGNALS: V4Signal[] = [
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-function formatHoldTime(entryTimeMs: number): string {
+function formatHoldTime(entryTimeSec: number): string {
   const now = Date.now();
-  const diffMs = now - entryTimeMs;
+  // entryTime from Python is in SECONDS, Date.now() is in MILLISECONDS
+  const entryMs = entryTimeSec < 1e12 ? entryTimeSec * 1000 : entryTimeSec;
+  const diffMs = now - entryMs;
   if (diffMs < 0) return '0m';
   const totalMin = Math.floor(diffMs / 60_000);
   if (totalMin < 60) return `${totalMin}m`;
@@ -508,10 +510,14 @@ export default function VedicPage() {
               let points = 0;
 
               if (bayesSig) {
-                isActive = bayesSig.state !== 'inactive' && bayesSig.state !== 'off';
-                isBullish = bayesSig.direction === 'bullish';
-                isBearish = bayesSig.direction === 'bearish';
-                points = isBullish ? sig.bullishPts : isBearish ? sig.bearishPts : 0;
+                // For binary signals: "True" = signal is firing, "False" = inactive
+                const stateTrue = bayesSig.state === 'True';
+                // Venus Rx, Merc-Ven tight, Venus near Sun, Eclipse = bearish when True
+                const isBearishSignal = ['venus_rx', 'merc_venus_tight', 'venus_near_sun', 'eclipse_near'].includes(sig.key);
+                isActive = stateTrue;
+                isBullish = stateTrue && !isBearishSignal;
+                isBearish = stateTrue && isBearishSignal;
+                points = isActive ? (isBearish ? sig.bearishPts : sig.bullishPts) : 0;
               } else {
                 // Fallback: infer from known scout data
                 if (sig.key === 'venus_rx') {
