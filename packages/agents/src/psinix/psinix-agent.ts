@@ -330,26 +330,29 @@ export class PsinixAgent {
             return;
         }
 
-        // ── Fee-aware edge check (ATR-based) ──
-        // Expected profit = |Ψ| × avg_bar_return × estimated_hold_bars
-        // Must exceed round-trip fees + min_edge
-        const roundTripFeePct = risk.fee_pct * 2 / 100; // e.g. 0.002 (0.2%)
+        // ── Fee-aware edge check ──
+        // Edge = C × avgAbsReturn × holdBars (coherence = signal quality)
+        // Must exceed round-trip fees to justify the trade
+        const roundTripFeePct = risk.fee_pct * 2 / 100; // 0.002 for 0.1% per side
         let expectedEdgePct = 0;
         if (recentPrices.length >= 10) {
-            // Compute average absolute return per bar from recent prices
             let sumAbsRet = 0;
             for (let i = 1; i < recentPrices.length; i++) {
                 sumAbsRet += Math.abs(recentPrices[i] - recentPrices[i - 1]) / recentPrices[i - 1];
             }
             const avgAbsRetPerBar = sumAbsRet / (recentPrices.length - 1);
-            const estimatedHoldBars = Math.max(risk.min_hold_bars, 10); // Assume ~10 bar hold
-            expectedEdgePct = Math.abs(psi.psi) * avgAbsRetPerBar * estimatedHoldBars;
+            const estimatedHoldBars = Math.max(risk.min_hold_bars, 10);
+            // Use COHERENCE as edge multiplier, not Ψ (which includes sizing)
+            expectedEdgePct = psi.coherence * avgAbsRetPerBar * estimatedHoldBars;
         } else {
-            // Fallback: assume 0.13% per 15m bar (BTC avg)
-            expectedEdgePct = Math.abs(psi.psi) * 0.0013 * 10;
+            expectedEdgePct = psi.coherence * 0.0013 * 10;
         }
-        if (expectedEdgePct < roundTripFeePct + risk.min_edge_after_fees / 100) {
-            return; // Not enough expected edge to overcome fees
+        const minRequiredEdge = roundTripFeePct + risk.min_edge_after_fees / 100;
+        if (expectedEdgePct < minRequiredEdge) {
+            if (Math.abs(psi.psi) > 0.05) {
+                console.log(`[psinix] REJECTED ${symbol} — edge ${(expectedEdgePct * 100).toFixed(3)}% < required ${(minRequiredEdge * 100).toFixed(3)}%`);
+            }
+            return;
         }
 
         // ── Dynamic Kelly ──
