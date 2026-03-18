@@ -159,6 +159,10 @@ class QuantGuild:
                 float(atr.iloc[latest_idx]) if not pd.isna(atr.iloc[latest_idx]) else 0,
                 atr, bb_width
             ),
+            # 4h price change for momentum gate (16 × 15m candles = 4h)
+            "price_change_4h": round(
+                ((close.iloc[-1] - close.iloc[-17]) / close.iloc[-17]) * 100, 2
+            ) if len(close) >= 17 else 0,
         }
 
     def _detect_patterns(self, df: pd.DataFrame, indicators: Dict, htf_indicators: Optional[Dict] = None) -> List[Dict]:

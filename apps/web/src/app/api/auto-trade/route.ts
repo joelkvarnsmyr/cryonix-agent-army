@@ -2141,6 +2141,33 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     return { pass: false, reason: `R/R ${(reward / risk).toFixed(2)} < ${minRR}` };
   }
 
+  // === MOMENTUM GATE: don't chase rallies ===
+  // If price already rallied >3% in last 4h, we're late — wait for pullback.
+  // Data: BTC bought at $73,260 after +4% rally → hit SL on reversal (-1.06%).
+  // Mean-reversion (BOLLINGER_SQUEEZE) works when buying dips, not chasing pumps.
+  if (signal.action === 'BUY') {
+    try {
+      const maxChase = TOML?.momentum?.max_chase_pct ?? 3.0;
+      const atrPct = Number(signal.indicators?.atr_pct ?? 0);
+      const priceChange4h = Number(signal.indicators?.price_change_4h ?? 0);
+
+      // Use 4h price change if available from engine, else estimate from entry vs recent high
+      if (priceChange4h > maxChase) {
+        return { pass: false, reason: `Chase protection: +${priceChange4h.toFixed(1)}% in 4h (max ${maxChase}%, wait for pullback)` };
+      }
+
+      // Fallback: if price is near the 4h high (within 0.5%), it's chasing
+      const bb_upper = Number(signal.indicators?.bb_upper ?? 0);
+      const price = Number(signal.indicators?.price ?? signal.entry_price);
+      if (bb_upper > 0 && price > 0) {
+        const distFromUpper = ((bb_upper - price) / price) * 100;
+        if (distFromUpper < 0.2) {
+          return { pass: false, reason: `Chase protection: price at upper Bollinger (${distFromUpper.toFixed(2)}% from top)` };
+        }
+      }
+    } catch { /* momentum data unavailable — skip gate */ }
+  }
+
   // === WEAK PATTERN FILTER: reject single-pattern signals with known poor performance ===
   // These patterns consistently lose money when they fire alone (no confirming pattern).
   // Data: RSI_OVERSOLD solo → 33% WR, -$0.48 total | EMA_BULLISH_CROSS solo → 0% WR, -$0.05

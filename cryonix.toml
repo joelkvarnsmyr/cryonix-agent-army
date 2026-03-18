@@ -786,7 +786,7 @@ candle_limit = 100
 # Signal cooldown per symbol (seconds). Prevents duplicate signals.
 # 300 = 5 min. Shorter than default 15min to catch fast dips.
 # When to change: raise to 900 (15min) if getting too many signals.
-signal_cooldown_seconds = 300
+signal_cooldown_seconds = 60
 
 # How often NewsScout runs sentiment analysis (seconds).
 # 900 = 15 minutes. News doesn't change fast enough to justify more.
