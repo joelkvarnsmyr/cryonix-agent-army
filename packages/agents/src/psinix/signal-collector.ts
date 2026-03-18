@@ -252,15 +252,23 @@ export class SignalCollector {
             const raw = await this.redis.get('market:regime');
             if (!raw) return null;
 
-            const data = JSON.parse(raw);
+            let data: any;
+            try { data = JSON.parse(raw); } catch {
+                // market:regime might be a plain string like "ranging"
+                data = { regime: raw };
+            }
+
             const regimeMap: Record<string, number> = {
-                'bullish': 0.5, 'trending_up': 0.5,
-                'bearish': -0.5, 'trending_down': -0.5,
-                'volatile': 0, 'choppy': -0.2,
-                'ranging': 0, 'neutral': 0,
+                'bullish': 0.6, 'trending_up': 0.5,
+                'bearish': -0.6, 'trending_down': -0.5,
+                'volatile': -0.3,
+                'choppy': -0.2,
+                'ranging': -0.1,
+                'neutral': 0,
             };
 
-            const direction = regimeMap[data.regime ?? data.state ?? ''] ?? 0;
+            const regimeStr = (data.regime ?? data.state ?? data ?? '').toString().toLowerCase().trim();
+            const direction = regimeMap[regimeStr] ?? 0;
             if (direction === 0) return null;
 
             return {
