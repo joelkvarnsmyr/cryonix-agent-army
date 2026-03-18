@@ -945,8 +945,61 @@ export class CopynixAgent extends BaseAgent {
                 }));
             }
 
-            if (published > 0) {
-                this.log('info', `[SMART-MONEY] Published sentiment for ${published} asset(s) (${totalBuys}B/${totalSells}S)`);
+            // Publish granular whale flow per Binance-tradeable asset (for Cryonix)
+            // Maps Solana token symbols to CEX symbols where possible
+            const SOLANA_TO_CEX: Record<string, string> = {
+                'SOL': 'SOL', 'WSOL': 'SOL', 'BONK': 'BONK', 'JUP': 'JUP',
+                'RAY': 'RAY', 'ORCA': 'ORCA', 'PYTH': 'PYTH', 'JTO': 'JTO',
+                'WIF': 'WIF', 'RENDER': 'RENDER', 'HNT': 'HNT', 'W': 'W',
+            };
+
+            // Aggregate flow for CEX-tradeable assets
+            const cexFlow = new Map<string, {
+                buys: number; sells: number; buyVolume: number; sellVolume: number;
+                wallets: string[]; lastTrade: number;
+            }>();
+
+            for (const trade of trades) {
+                if (trade.tokenSymbol === 'UNKNOWN') continue;
+                const cexSymbol = SOLANA_TO_CEX[trade.tokenSymbol.toUpperCase()];
+                if (!cexSymbol) continue; // Not tradeable on CEX
+
+                let flow = cexFlow.get(cexSymbol);
+                if (!flow) {
+                    flow = { buys: 0, sells: 0, buyVolume: 0, sellVolume: 0, wallets: [], lastTrade: 0 };
+                    cexFlow.set(cexSymbol, flow);
+                }
+                if (trade.action === 'BUY') {
+                    flow.buys++;
+                    flow.buyVolume += trade.amountUsd;
+                } else {
+                    flow.sells++;
+                    flow.sellVolume += trade.amountUsd;
+                }
+                if (!flow.wallets.includes(trade.walletAddress.slice(0, 8))) {
+                    flow.wallets.push(trade.walletAddress.slice(0, 8));
+                }
+                flow.lastTrade = Math.max(flow.lastTrade, trade.timestamp);
+            }
+
+            for (const [symbol, flow] of cexFlow) {
+                const netFlow = flow.buyVolume - flow.sellVolume;
+                await this.statePublisher.set(`smartmoney:flow:${symbol}`, JSON.stringify({
+                    symbol,
+                    buys: flow.buys,
+                    sells: flow.sells,
+                    buyVolume: flow.buyVolume,
+                    sellVolume: flow.sellVolume,
+                    netFlowUsd: netFlow,
+                    uniqueWallets: flow.wallets.length,
+                    walletLabels: flow.wallets,
+                    lastTrade: flow.lastTrade,
+                    timestamp: Date.now(),
+                }));
+            }
+
+            if (published > 0 || cexFlow.size > 0) {
+                this.log('info', `[SMART-MONEY] Published: ${published} sentiment + ${cexFlow.size} CEX flow (${totalBuys}B/${totalSells}S)`);
             }
         } catch (err) {
             this.log('warn', `[SMART-MONEY] Publish failed: ${err instanceof Error ? err.message : String(err)}`);

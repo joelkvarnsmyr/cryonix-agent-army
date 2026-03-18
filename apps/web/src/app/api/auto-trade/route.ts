@@ -3630,8 +3630,9 @@ export async function POST() {
           else if (xScore <= -2) groupA.push(-bearishPenalty);
         } catch { /* sentiment unavailable */ }
 
-        // Smart Money
+        // Smart Money — sentiment score + granular whale flow
         try {
+          // 1. Aggregated sentiment (existing)
           const smRaw = await redis.get(`smartmoney:${baseAsset}`) as string | null;
           if (smRaw) {
             const sm = JSON.parse(smRaw);
@@ -3639,6 +3640,32 @@ export async function POST() {
             const smWallets = sm.uniqueWallets ?? 0;
             if (smScore >= 50 && smWallets >= 2) groupA.push(0.05);
             else if (smScore <= -50 && smWallets >= 2) groupA.push(-0.05);
+          }
+
+          // 2. Granular whale flow (CEX-tradeable assets from Copynix)
+          const flowRaw = await redis.get(`smartmoney:flow:${baseAsset}`) as string | null;
+          if (flowRaw) {
+            const flow = JSON.parse(flowRaw);
+            const netFlow = flow.netFlowUsd ?? 0;
+            const wallets = flow.uniqueWallets ?? 0;
+            const age = Date.now() - (flow.timestamp ?? 0);
+
+            // Only use fresh data (< 10 min) with 2+ wallets
+            if (age < 600_000 && wallets >= 2) {
+              if (netFlow > 1000) {
+                // Strong whale inflow → bullish
+                groupA.push(0.08);
+                console.log(`[WHALE-FLOW] ${signal.symbol}: +8% (net inflow $${netFlow.toFixed(0)}, ${wallets} whales)`);
+              } else if (netFlow < -1000) {
+                // Strong whale outflow → bearish
+                groupA.push(-0.08);
+                console.log(`[WHALE-FLOW] ${signal.symbol}: -8% (net outflow $${Math.abs(netFlow).toFixed(0)}, ${wallets} whales)`);
+              } else if (flow.buys >= 3 && flow.sells === 0) {
+                // Pure buy consensus (no sells) → moderate bullish
+                groupA.push(0.06);
+                console.log(`[WHALE-FLOW] ${signal.symbol}: +6% (${flow.buys} buys, 0 sells, pure consensus)`);
+              }
+            }
           }
         } catch { /* smart money unavailable */ }
 

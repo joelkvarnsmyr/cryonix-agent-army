@@ -408,7 +408,8 @@ export class WalletMonitor {
 
     private async fetchViaRpc(walletAddress: string): Promise<WalletTrade[]> {
         try {
-            const rpcUrl = 'https://api.mainnet-beta.solana.com';
+            // Use QuickNode if available, else public RPC
+            const rpcUrl = process.env.QUICKNODE_SOLANA_URL || 'https://api.mainnet-beta.solana.com';
             const sigRes = await fetch(rpcUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
