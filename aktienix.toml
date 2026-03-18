@@ -360,3 +360,32 @@ crypto_penalty = 0.08
 # triggers a Telegram alert + Redis delta key for Aktienix to consume.
 # 20 = significant macro shift (e.g. surprise Fed statement, geopolitical event).
 delta_threshold = 20
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  MARKET SENTIMENT                                                       ║
+# ║  Alternative data overlays: Fear & Greed, Put/Call ratio, Insider buys. ║
+# ║  Combined with Grok + Polymarket, total overlay capped at ±20%.        ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[sentiment]
+
+enabled = true
+
+# CNN Fear & Greed Index (no API key needed)
+# Extreme fear (<25) = contrarian buy signal, extreme greed (>75) = caution
+fear_greed_boost = 0.08
+fear_greed_penalty = 0.08
+
+# CBOE Put/Call Ratio (no API key needed)
+# High P/C (>1.2) = heavy hedging = contrarian buy, Low P/C (<0.7) = complacency
+putcall_boost = 0.06
+putcall_penalty = 0.06
+
+# Finnhub Insider Trading (requires FINNHUB_API_KEY in .env, free tier)
+# 2+ insider buys in 30 days = strong buy signal
+insider_boost = 0.10
+insider_penalty = 0.05
+
+# Maximum total intelligence overlay (Grok + Polymarket + Sentiment combined)
+max_total_overlay = 0.20

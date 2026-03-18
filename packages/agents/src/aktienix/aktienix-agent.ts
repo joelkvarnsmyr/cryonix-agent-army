@@ -7,6 +7,7 @@ import { AlpacaClient } from './brokers/alpaca/alpaca-client';
 import { StockSignalGenerator } from './signals/stock-signal-generator';
 import { StockNewsScanner, type MacroSignal } from './intelligence/news-scanner';
 import { MacroIntelligence } from './intelligence/macro-intelligence';
+import { MarketSentimentScanner } from './intelligence/market-sentiment';
 import { loadAktienixConfig } from './config';
 import { MarketHours } from './market-hours';
 import { PositionSizer } from './position-sizer';
@@ -150,6 +151,7 @@ export class AktienixAgent extends BaseAgent {
     private loggerAdapter: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void; debug: (msg: string) => void } | null = null;
     private newsScanner: StockNewsScanner | null = null;
     private macroIntelligence: MacroIntelligence | null = null;
+    private sentimentScanner: MarketSentimentScanner | null = null;
     private activeMacroSignals: MacroSignal[] = [];
     private lastNewsScanTime = 0;
     private lastSignalScanTime = 0;
@@ -241,6 +243,11 @@ export class AktienixAgent extends BaseAgent {
         if (kvUrl) {
             this.statePublisher = new StatePublisher(kvUrl);
             this.log('info', 'StatePublisher initialized.');
+
+            // Initialize Market Sentiment Scanner
+            const finnhubKey = process.env.FINNHUB_API_KEY || undefined;
+            this.sentimentScanner = new MarketSentimentScanner(this.statePublisher, finnhubKey);
+            this.log('info', `MarketSentimentScanner initialized${finnhubKey ? ' (Finnhub enabled)' : ' (no Finnhub key)'}.`);
         } else {
             this.log('warn', 'KV_URL not set \u2014 state will not be published to Redis.');
         }
@@ -292,6 +299,14 @@ export class AktienixAgent extends BaseAgent {
                             if (this.activeMacroSignals.length > 0) {
                                 this.log('info', `[PRE-MARKET] ${this.activeMacroSignals.length} macro signals active`);
                             }
+                        }
+                    } catch { /* non-critical */ }
+
+                    // Fetch market sentiment data (Fear & Greed + Put/Call)
+                    try {
+                        if (this.sentimentScanner) {
+                            await this.sentimentScanner.fetchFearGreed();
+                            await this.sentimentScanner.fetchPutCallRatio();
                         }
                     } catch { /* non-critical */ }
 
@@ -566,6 +581,13 @@ export class AktienixAgent extends BaseAgent {
                     }
                 }
 
+                // 7c. Fetch insider activity during signal scan
+                if (this.sentimentScanner) {
+                    try {
+                        await this.sentimentScanner.fetchInsiderActivity(config.watchlist.symbols);
+                    } catch { /* non-critical */ }
+                }
+
                 // 8. Scan for TA signals
                 // Time-gate: only scan for signals every signal_scan_interval_ms
                 if (marketResult.canOpenNew && this.signalGenerator &&
@@ -823,6 +845,28 @@ export class AktienixAgent extends BaseAgent {
                 }
             }
         } catch { /* Polymarket data unavailable — skip */ }
+
+        // Market Sentiment overlay (Fear & Greed, Put/Call, Insider)
+        let sentimentAdjustment = 0;
+        if (this.sentimentScanner && action === 'BUY') {
+            try {
+                const sentiment = await this.sentimentScanner.getConfidenceAdjustment(symbol);
+                sentimentAdjustment = sentiment.adjustment;
+                if (sentiment.reasons.length > 0) {
+                    this.log('info', `SENTIMENT: ${symbol} → ${sentiment.reasons.join(', ')}`);
+                }
+            } catch { /* non-critical */ }
+        }
+
+        // Cap total intelligence overlay at ±20%
+        // Sum: Grok boost (already applied) + Polymarket (already applied) + Sentiment
+        const currentOverlay = confidence - baseConfidence;
+        const remainingCap = 0.20 - Math.abs(currentOverlay);
+        if (remainingCap > 0) {
+            const cappedSentiment = Math.max(-remainingCap, Math.min(remainingCap, sentimentAdjustment));
+            confidence += cappedSentiment;
+            confidence = Math.max(0, Math.min(0.95, confidence));
+        }
 
         // Minimum confidence threshold (from TOML risk config)
         const minConfidence = config.risk.min_confidence;
