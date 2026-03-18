@@ -183,6 +183,11 @@ export class PolynixAgent extends BaseAgent {
         // 2. Fetch latest CEX prices
         await this.directionalEngine.fetchPrices(this.tomlConfig);
 
+        let arbsFound = 0;
+        let arbsExecuted = 0;
+        let signalsFound = 0;
+        let signalsExecuted = 0;
+
         // 2b. Scan 5-minute micro-markets (BTC/ETH/SOL up-or-down)
         const microConfig = this.tomlConfig.micro_markets ?? { enabled: false, min_time_to_expiry_s: 30, max_time_to_expiry_s: 300, max_bet_size_usd: 9 };
         if (microConfig.enabled) {
@@ -235,11 +240,6 @@ export class PolynixAgent extends BaseAgent {
 
         // Combine all unique markets for arb scanning
         const allMarketsForArb = [...cryptoMarkets, ...arbOnlyMarkets];
-
-        let arbsFound = 0;
-        let arbsExecuted = 0;
-        let signalsFound = 0;
-        let signalsExecuted = 0;
 
         // 4a. Check ALL markets for arb opportunities
         const arbBatchSize = 10;
