@@ -184,9 +184,14 @@ export class DexScreenerSignalGenerator {
             score += 0.10;
             reasoning.push(`h6 +${h6Change.toFixed(1)}% rising`);
         } else if (h6Change <= -5) {
-            // Deep dip — potential dip buy
-            score += 0.15;
-            reasoning.push(`h6 ${h6Change.toFixed(1)}% dip buy opportunity`);
+            // Deep dip — only a dip buy if h1 shows reversal (positive)
+            if (h1Change > 0) {
+                score += 0.15;
+                reasoning.push(`h6 ${h6Change.toFixed(1)}% dip buy (h1 +${h1Change.toFixed(1)}% reversal)`);
+            } else {
+                score -= 0.10;
+                reasoning.push(`h6 ${h6Change.toFixed(1)}% freefall (h1 ${h1Change.toFixed(1)}% no reversal)`);
+            }
         } else if (h6Change <= -2) {
             score -= 0.20;
             reasoning.push(`h6 ${h6Change.toFixed(1)}% downtrend`);

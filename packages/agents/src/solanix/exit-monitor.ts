@@ -57,7 +57,7 @@ export class SolanaExitMonitor {
 
         if (trailingActive && pos.highWatermark > 0) {
             const pullbackFromHighPct = ((pos.highWatermark - pos.currentPrice) / pos.highWatermark) * 100;
-            if (pullbackFromHighPct >= config.trailing_stop_pct || pnlPct < 0) {
+            if (pullbackFromHighPct >= config.trailing_stop_pct) {
                 return { symbol: pos.symbol, reason: 'trailing_stop', pnlPct };
             }
         }

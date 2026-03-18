@@ -16,7 +16,7 @@ max_open_positions = 5
 max_trades_per_day = 20
 
 [risk]
-min_confidence = 0.25
+min_confidence = 0.40
 max_daily_loss_pct = 0.05
 max_weekly_loss_pct = 0.10
 max_consecutive_losses = 3
@@ -40,7 +40,7 @@ min_score_advantage = 15
 min_hold_minutes = 30
 
 [signals]
-min_signal_score = 0.25
+min_signal_score = 0.40
 dexscreener_enabled = true
 dexscreener_min_liquidity_usd = 50000
 dexscreener_volume_spike_multiplier = 3.0

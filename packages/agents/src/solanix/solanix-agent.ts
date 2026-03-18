@@ -476,7 +476,7 @@ export class SolanaAgent extends BaseAgent {
             this.lastSignalScanTime = nowTs;
             try {
                 const signals = await this.signalGenerator.scan();
-                this.log('info', `TA scan complete: ${signals.length} actionable signal(s) from ${this.signalGenerator.watchlistSize} tokens`);
+                this.log('info', `DexScreener signal scan: ${signals.length} actionable signal(s) from ${this.signalGenerator.watchlistSize} tokens`);
                 for (const signal of signals) {
                     await this.evaluateSignal({
                         symbol: signal.symbol,

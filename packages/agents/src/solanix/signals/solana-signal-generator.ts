@@ -221,13 +221,15 @@ export class SolanaSignalGenerator {
             reasoning.push(`RSI above neutral (${rsi.toFixed(1)})`);
         }
 
-        // MACD component (weight 0.30)
-        if (macd > macdSignal) {
-            score += 0.30;
-            reasoning.push('MACD bullish crossover');
-        } else {
-            score -= 0.30;
-            reasoning.push('MACD bearish crossover');
+        // MACD component (weight 0.30) — gradient based on histogram strength
+        const histogram = macd - macdSignal;
+        const normalizedMacd = Math.tanh((histogram / currentPrice) * 1000);
+        const macdScore = 0.30 * normalizedMacd;
+        score += macdScore;
+        if (normalizedMacd > 0.1) {
+            reasoning.push(`MACD bullish (strength ${(normalizedMacd * 100).toFixed(0)}%)`);
+        } else if (normalizedMacd < -0.1) {
+            reasoning.push(`MACD bearish (strength ${(Math.abs(normalizedMacd) * 100).toFixed(0)}%)`);
         }
 
         // Bollinger Bands component (weight 0.20)
