@@ -35,6 +35,7 @@ export interface TradeRecord {
     orderId?: string;
     positionId?: number;
     paperTrading: boolean;
+    metadata?: Record<string, unknown>;
 }
 
 export class SolanixPersistence {
@@ -208,14 +209,15 @@ export class SolanixPersistence {
                 `INSERT INTO solanix_trades
                     (symbol, mint_address, side, qty, fill_price, dollar_amount,
                      realized_pnl, confidence, reasoning, exit_reason, paper_trading,
-                     order_id, position_id)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+                     order_id, position_id, metadata)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
                 [
                     trade.symbol, trade.mintAddress, trade.side, trade.qty,
                     trade.fillPrice, trade.dollarAmount, trade.realizedPnl ?? null,
                     trade.confidence ?? null, trade.reasoning ?? null,
                     trade.exitReason ?? null, trade.paperTrading,
                     trade.orderId ?? null, trade.positionId ?? null,
+                    trade.metadata ? JSON.stringify(trade.metadata) : null,
                 ],
             );
         } catch (err: any) {

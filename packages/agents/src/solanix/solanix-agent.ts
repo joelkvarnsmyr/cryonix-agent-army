@@ -18,6 +18,7 @@ import { PolymarketIntelligence } from '../shared/polymarket-intelligence';
 import { SolanixPersistence } from './persistence';
 import { BayesianLearner } from './bayesian-learner';
 import { ShadowStrategy } from './shadow-strategy';
+import { PostTradeAnalyzer } from './post-trade-analyzer';
 import type { SolanaPosition, SolanaAccountState } from './types';
 
 export class SolanaAgent extends BaseAgent {
@@ -36,6 +37,7 @@ export class SolanaAgent extends BaseAgent {
     private riskManager = new RiskManager();
     private persistence = new SolanixPersistence();
     private bayesian = new BayesianLearner();
+    private postTradeAnalyzer = new PostTradeAnalyzer();
     private shadows: ShadowStrategy[] = [];
     /** Maps symbol -> DB position ID for open positions */
     private positionDbIds = new Map<string, number>();
@@ -404,6 +406,15 @@ export class SolanaAgent extends BaseAgent {
                     const pnlDollar = pos ? pos.unrealizedPl : 0;
                     this.riskManager.recordExit(pnlDollar);
                     this.riskManager.recordTrade(false);
+                    // Post-Trade Analysis — fetch market context at exit
+                    const holdMin = pos ? Math.round((Date.now() - pos.entryTime) / 60_000) : 0;
+                    const pta = await this.postTradeAnalyzer.analyze(
+                        exit.symbol, pos?.mintAddress ?? '',
+                        pos?.avgEntryPrice ?? 0, pos?.currentPrice ?? 0,
+                        holdMin, exit.reason, exit.pnlPct, pnlDollar,
+                    );
+                    this.log('info', `[PTA] ${exit.symbol}: ${pta.verdict} — ${pta.lesson}`);
+
                     // Persist exit to DB
                     const dbId = this.positionDbIds.get(exit.symbol);
                     if (dbId) {
@@ -414,6 +425,7 @@ export class SolanaAgent extends BaseAgent {
                             dollarAmount: (pos?.qty ?? 0) * (pos?.currentPrice ?? 0),
                             realizedPnl: pnlDollar, exitReason: exit.reason,
                             paperTrading: this.tomlConfig.broker.paper_trading,
+                            metadata: { pta },
                         });
                         this.positionDbIds.delete(exit.symbol);
                     }
@@ -645,6 +657,15 @@ export class SolanaAgent extends BaseAgent {
                 const victimPnlDollar = rotation.victim.unrealizedPl ?? 0;
                 this.riskManager.recordExit(victimPnlDollar);
                 this.riskManager.recordTrade(false);
+                // Post-Trade Analysis for rotation victim
+                const victimHoldMin = Math.round((Date.now() - (rotation.victim.entryTime ?? Date.now())) / 60_000);
+                const victimPta = await this.postTradeAnalyzer.analyze(
+                    rotation.victim.symbol, rotation.victim.mintAddress,
+                    rotation.victim.avgEntryPrice, rotation.victim.currentPrice,
+                    victimHoldMin, 'rotation', victimPnlPct, victimPnlDollar,
+                );
+                this.log('info', `[PTA] ${rotation.victim.symbol}: ${victimPta.verdict} — ${victimPta.lesson}`);
+
                 // Persist rotation close to DB
                 const victimDbId = this.positionDbIds.get(rotation.victim.symbol);
                 if (victimDbId) {
@@ -655,6 +676,7 @@ export class SolanaAgent extends BaseAgent {
                         dollarAmount: rotation.victim.qty * rotation.victim.currentPrice,
                         realizedPnl: victimPnlDollar, exitReason: 'rotation',
                         paperTrading: this.tomlConfig.broker.paper_trading,
+                        metadata: { pta: victimPta },
                     });
                     this.positionDbIds.delete(rotation.victim.symbol);
                 }
