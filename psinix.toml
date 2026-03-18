@@ -13,8 +13,8 @@ sources = [
     "fear_greed",      # CoinMarketCap Fear & Greed index
     "cryonix_ta",      # Technical analysis patterns from Python engine
 ]
-# Minimum signals needed for Ψ computation
-min_signals = 3
+# Minimum signals needed for Ψ computation (lowered: 2 independent sources enough)
+min_signals = 2
 
 [psi]
 # Kuramoto phase transition threshold — C above this = synchronized
@@ -29,12 +29,12 @@ entropy_floor = 0.1
 beta_scale = 3.0
 
 [trading]
-# Only trade when Ψ magnitude exceeds this threshold
-min_psi_magnitude = 0.05
-# Maximum position size in USD
-max_position_size_usd = 200
+# Only trade when Ψ magnitude exceeds this threshold (lowered for more trades)
+min_psi_magnitude = 0.03
+# Maximum position size in USD (sweep: $600 optimal for PnL)
+max_position_size_usd = 500
 # Maximum concurrent positions
-max_positions = 3
+max_positions = 4
 # Symbols to trade (Binance USDC pairs)
 symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC", "BNB/USDC"]
 
