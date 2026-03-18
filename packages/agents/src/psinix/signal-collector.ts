@@ -146,8 +146,10 @@ export class SignalCollector {
             const totalTrades = (data.buys ?? 0) + (data.sells ?? 0);
             if (totalTrades < 3) return null; // Not enough data
 
-            const score = data.score ?? 0;
-            const direction = Math.max(-1, Math.min(1, score / 100));
+            // Score 0-100: 0=all sells, 50=neutral, 100=all buys
+            // Map to [-1, +1]: σ = (score - 50) / 50
+            const score = data.score ?? 50;
+            const direction = Math.max(-1, Math.min(1, (score - 50) / 50));
             if (Math.abs(direction) < 0.1) return null; // Too neutral
 
             return {
@@ -217,6 +219,10 @@ export class SignalCollector {
     static parseTASignal(raw: string, filterBase: string): PsiSignal | null {
         try {
             const data = JSON.parse(raw);
+
+            // Guard against circular reference — reject any signal from psinix itself
+            if ((data.source ?? '').toLowerCase().includes('psinix')) return null;
+
             const signalBase = (data.symbol ?? '').split('/')[0];
             if (signalBase !== filterBase) return null;
 

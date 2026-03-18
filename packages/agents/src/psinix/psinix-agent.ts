@@ -298,13 +298,13 @@ export class PsinixAgent {
         // Trade decision
         if (result.phaseTransition && Math.abs(result.psi) >= this.config.trading.min_psi_magnitude) {
             const sourceIds = signals.map(s => s.sourceId);
-            await this.executeTrade(symbol, result, sourceIds);
+            await this.executeTrade(symbol, result, sourceIds, prices);
         }
     }
 
     // ── Trade Execution ──────────────────────────────────────────────
 
-    private async executeTrade(symbol: string, psi: PsiResult, sourceIds: string[] = []): Promise<void> {
+    private async executeTrade(symbol: string, psi: PsiResult, sourceIds: string[] = [], recentPrices: number[] = []): Promise<void> {
         // Already have position?
         if (this.positions.has(symbol)) return;
 
@@ -330,10 +330,25 @@ export class PsinixAgent {
             return;
         }
 
-        // ── Fee-aware edge check ──
-        const roundTripFee = risk.fee_pct * 2; // Buy + sell
-        const expectedEdge = Math.abs(psi.psi) * psi.coherence * 100; // Rough expected move %
-        if (expectedEdge < roundTripFee + risk.min_edge_after_fees) {
+        // ── Fee-aware edge check (ATR-based) ──
+        // Expected profit = |Ψ| × avg_bar_return × estimated_hold_bars
+        // Must exceed round-trip fees + min_edge
+        const roundTripFeePct = risk.fee_pct * 2 / 100; // e.g. 0.002 (0.2%)
+        let expectedEdgePct = 0;
+        if (recentPrices.length >= 10) {
+            // Compute average absolute return per bar from recent prices
+            let sumAbsRet = 0;
+            for (let i = 1; i < recentPrices.length; i++) {
+                sumAbsRet += Math.abs(recentPrices[i] - recentPrices[i - 1]) / recentPrices[i - 1];
+            }
+            const avgAbsRetPerBar = sumAbsRet / (recentPrices.length - 1);
+            const estimatedHoldBars = Math.max(risk.min_hold_bars, 10); // Assume ~10 bar hold
+            expectedEdgePct = Math.abs(psi.psi) * avgAbsRetPerBar * estimatedHoldBars;
+        } else {
+            // Fallback: assume 0.13% per 15m bar (BTC avg)
+            expectedEdgePct = Math.abs(psi.psi) * 0.0013 * 10;
+        }
+        if (expectedEdgePct < roundTripFeePct + risk.min_edge_after_fees / 100) {
             return; // Not enough expected edge to overcome fees
         }
 
