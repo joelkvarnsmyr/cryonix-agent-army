@@ -788,6 +788,14 @@ candle_limit = 100
 # When to change: raise to 900 (15min) if getting too many signals.
 signal_cooldown_seconds = 60
 
+# ── Fast 5m Scan (V2 Gap 1) ───────────────────────────────────────────
+fast_scan_enabled = true
+fast_scan_timeframe = "5m"
+fast_scan_min_confidence = 0.70
+fast_scan_cooldown_seconds = 300
+fast_scan_min_atr_pct = 0.2
+fast_scan_max_signals_per_cycle = 3
+
 # How often NewsScout runs sentiment analysis (seconds).
 # 900 = 15 minutes. News doesn't change fast enough to justify more.
 news_scan_interval_seconds = 900
@@ -1115,3 +1123,27 @@ volume_threshold = 2.0            # Volume vs 20-period avg for +30 score
 atr_expansion_threshold = 1.5     # Current ATR vs ATR 20 periods ago for +15 score
 moonshot_threshold = 70           # Score above this = moonshot trade type
 scalp_threshold = 30              # Score below this = scalp trade type
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  CONFIDENCE MODEL V2                                                    ║
+# ║  Controls how post-AI intelligence adjustments combine.                 ║
+# ║  "additive" = legacy sequential ±% adjustments (V1)                    ║
+# ║  "multiplicative" = grouped correlation model (V2)                      ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[confidence_model]
+mode = "multiplicative"
+max_group_modifier = 0.15
+
+[bayesian]
+use_softmax_ranking = true
+use_kelly_sizing = true
+softmax_temperature = 2.0
+min_observations_for_kelly = 10
+
+[sizing]
+vol_adjusted = true
+baseline_atr_pct = 0.3
+min_vol_factor = 0.5
+max_vol_factor = 1.5

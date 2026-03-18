@@ -206,6 +206,41 @@ class MarketScoutTank(BaseTank):
             print(f"[{self.name}] {symbol} {action_emoji} {signal['action']} "
                   f"(conf: {signal['confidence']:.1%}) - {signal['reason'][:50]}...")
 
+            # ── Fast 5m scan (V2 Gap 1) ──────────────────────────────────────
+            fast_enabled = get_toml('engine', 'fast_scan_enabled', False)
+            if fast_enabled and signal['action'] != 'BUY':
+                # Only run fast scan if primary 15m didn't find a BUY
+                fast_tf = get_toml('engine', 'fast_scan_timeframe', '5m')
+                fast_min_conf = get_toml('engine', 'fast_scan_min_confidence', 0.70)
+                fast_min_atr = get_toml('engine', 'fast_scan_min_atr_pct', 0.2)
+                try:
+                    fast_ohlcv = market_data.fetch_ohlcv(symbol=symbol, timeframe=fast_tf, limit=50)
+                    if fast_ohlcv and len(fast_ohlcv) >= 30:
+                        fast_analysis = quant.analyze(fast_ohlcv, symbol)
+                        if fast_analysis.get('status') == 'success':
+                            fast_sig = fast_analysis.get('signal', {})
+                            fast_pats = [p['pattern'] for p in fast_analysis.get('patterns', [])]
+                            fast_atr_pct = fast_analysis.get('indicators', {}).get('atr_percent', 0)
+                            allowed = ['DIP_BUY', 'BOLLINGER_SQUEEZE']
+                            eligible = [p for p in fast_pats if p in allowed]
+                            if (eligible
+                                and fast_sig.get('confidence', 0) >= fast_min_conf
+                                and fast_atr_pct >= fast_min_atr
+                                and fast_sig.get('action') == 'BUY'):
+                                # Override primary signal with fast 5m dip signal
+                                print(f"[{self.name}] {symbol} FAST 5m: {'+'.join(eligible)} conf={fast_sig['confidence']:.0%}")
+                                trading_signal['action'] = 'BUY'
+                                trading_signal['confidence'] = fast_sig['confidence']
+                                trading_signal['reason'] = f"[FAST 5m] {fast_sig.get('reason', '')}"
+                                trading_signal['patterns'] = eligible
+                                trading_signal['entry_price'] = fast_sig.get('entry_price', trading_signal['entry_price'])
+                                trading_signal['stop_loss'] = fast_sig.get('stop_loss', trading_signal['stop_loss'])
+                                trading_signal['target_price'] = fast_sig.get('target_price', trading_signal['target_price'])
+                                trading_signal['indicators']['price_change_4h'] = fast_analysis.get('indicators', {}).get('price_change_4h', 0)
+                                signal = fast_sig  # update for downstream checks
+                except Exception as e:
+                    print(f"[{self.name}] Fast 5m scan failed for {symbol}: {e}")
+
             # Propagate market regime to Redis so capital allocator can read it
             regime = indicators.get('market_regime', 'unknown')
             if regime != 'unknown':

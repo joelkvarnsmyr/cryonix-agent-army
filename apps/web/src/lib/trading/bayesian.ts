@@ -234,7 +234,7 @@ export async function rankSignalsBySoftmax(
       const prior = await getPrior(redis, system, 'pattern', sig.pattern);
       if (prior.n < MIN_OBSERVATIONS) {
         // Not enough data — use original confidence as score
-        return { sig, ev: sig.confidence / 100 };
+        return { sig, ev: sig.confidence }; // confidence is already 0-1
       }
       const p = prior.alpha / (prior.alpha + prior.beta);
       const ev = p * Math.abs(prior.avgWin) - (1 - p) * Math.abs(prior.avgLoss);

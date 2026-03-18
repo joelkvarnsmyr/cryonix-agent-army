@@ -7,7 +7,7 @@ import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
 
 import { TimingService } from '@/lib/trading/timing';
-import { updatePosterior, getBayesianAdjustment } from '@/lib/trading/bayesian';
+import { updatePosterior, getBayesianAdjustment, rankSignalsBySoftmax } from '@/lib/trading/bayesian';
 
 export const dynamic = 'force-dynamic';
 
@@ -1298,6 +1298,27 @@ async function monitorPositions(): Promise<MonitorResult[]> {
               exitReason = `Short SL hit: $${currentPrice.toFixed(4)} >= $${pos.stopLoss.toFixed(4)}`;
             }
           } else {
+            // Dynamic SL: recalculate with current ATR (V2 Gap 4)
+            const dynSlEnabled = (TOML as any)?.exits?.dynamic_sl ?? false;
+            if (dynSlEnabled) {
+              try {
+                const currentATR = await fetchCurrentATR(pos.symbol);
+                if (currentATR && currentATR > 0) {
+                  const slMult = TOML?.exits?.sl_atr_multiplier ?? 5.0;
+                  const dynamicSL = pos.entryPrice - (currentATR * slMult);
+                  const maxMovePct = (TOML as any)?.exits?.max_sl_move_per_cycle_pct ?? 0.5;
+                  const maxMove = pos.entryPrice * (maxMovePct / 100);
+                  if (dynamicSL > pos.stopLoss) {
+                    const newSL = Math.min(dynamicSL, pos.stopLoss + maxMove);
+                    if (newSL > pos.stopLoss) {
+                      console.log(`[DYNAMIC-SL] ${pos.symbol}: SL ${pos.stopLoss.toFixed(4)} → ${newSL.toFixed(4)} (ATR=$${currentATR.toFixed(4)})`);
+                      pos.stopLoss = newSL;
+                    }
+                  }
+                }
+              } catch { /* ATR unavailable — keep static SL */ }
+            }
+
             // LONG position: exit by selling
             if (currentPrice >= pos.takeProfit) {
               shouldSell = true;
@@ -2420,7 +2441,39 @@ TP distance: ${tpDistancePct}%`;
 }
 
 // ============================================================================
-// POSITION SIZING (Half-Kelly)
+// ATR CACHE (for Dynamic SL — V2 Gap 4)
+// ============================================================================
+
+const atrCache = new Map<string, { atr: number; timestamp: number }>();
+
+async function fetchCurrentATR(symbol: string): Promise<number | null> {
+  const ttl = (TOML as any)?.exits?.atr_cache_ttl_seconds ?? 60;
+  const cached = atrCache.get(symbol);
+  if (cached && Date.now() - cached.timestamp < ttl * 1000) return cached.atr;
+
+  try {
+    const ex = getExchange();
+    const ohlcv = await ex.fetchOHLCV(symbol, '15m', undefined, 15);
+    if (!ohlcv || ohlcv.length < 14) return null;
+
+    let atrSum = 0;
+    for (let i = 1; i < ohlcv.length; i++) {
+      const high = Number(ohlcv[i][2] ?? 0);
+      const low = Number(ohlcv[i][3] ?? 0);
+      const prevClose = Number(ohlcv[i - 1][4] ?? 0);
+      const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+      atrSum += tr;
+    }
+    const atr = atrSum / (ohlcv.length - 1);
+    atrCache.set(symbol, { atr, timestamp: Date.now() });
+    return atr;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================================
+// POSITION SIZING (Half-Kelly + Vol-Adjusted + Bayesian)
 // ============================================================================
 
 async function calculatePositionSize(signal: Signal): Promise<number> {
@@ -2449,11 +2502,45 @@ async function calculatePositionSize(signal: Signal): Promise<number> {
   const b = risk > 0 ? reward / risk : 1.5;
   const p = signal.confidence;
   const q = 1 - p;
-  const kellyFraction = Math.max(0, ((p * b - q) / b) * (TOML?.capital.kelly_fraction_multiplier ?? 0.5));
+  let kellyFraction = Math.max(0, ((p * b - q) / b) * (TOML?.capital.kelly_fraction_multiplier ?? 0.5));
+
+  // Bayesian Kelly: use historical win rate if sufficient data (V2 Gap 5)
+  const useBayesKelly = (TOML as any)?.bayesian?.use_kelly_sizing ?? false;
+  if (useBayesKelly) {
+    try {
+      const bayesAdj = await getBayesianAdjustment(
+        redis, 'cryonix', signal.patterns?.join(', ') || '', signal.symbol,
+      );
+      const minObs = (TOML as any)?.bayesian?.min_observations_for_kelly ?? 10;
+      if (bayesAdj.kellyFraction > 0 && bayesAdj.sampleSize >= minObs) {
+        const effectiveKelly = Math.min(bayesAdj.kellyFraction, kellyFraction);
+        console.log(`[KELLY] ${signal.symbol}: RR=${(kellyFraction * 100).toFixed(1)}% Bayes=${(bayesAdj.kellyFraction * 100).toFixed(1)}% → ${(effectiveKelly * 100).toFixed(1)}%`);
+        kellyFraction = effectiveKelly;
+      }
+    } catch { /* Bayesian unavailable */ }
+  }
+
   let positionValue = Math.min(capital * kellyFraction, maxPositionValue);
 
+  // Volatility-adjusted sizing: scale inversely with ATR (V2 Gap 3)
+  const volAdjusted = (TOML as any)?.sizing?.vol_adjusted ?? false;
+  if (volAdjusted) {
+    const atrPct = Number(signal.indicators?.atr_percent ?? 0);
+    const baseline = (TOML as any)?.sizing?.baseline_atr_pct ?? 0.3;
+    const minFactor = (TOML as any)?.sizing?.min_vol_factor ?? 0.5;
+    const maxFactor = (TOML as any)?.sizing?.max_vol_factor ?? 1.5;
+    let volFactor = 1.0;
+    if (atrPct > 0) {
+      volFactor = baseline / atrPct;
+      volFactor = Math.max(minFactor, Math.min(maxFactor, volFactor));
+    }
+    if (volFactor !== 1.0) {
+      console.log(`[VOL-SIZE] ${signal.symbol}: ATR=${atrPct.toFixed(2)}% factor=${volFactor.toFixed(2)} $${positionValue.toFixed(2)} → $${(positionValue * volFactor).toFixed(2)}`);
+      positionValue *= volFactor;
+    }
+  }
+
   // Ensure position clears NOTIONAL minimum.
-  // With small capital, Kelly often produces values below NOTIONAL.
   if (positionValue < CONFIG.MIN_ORDER_VALUE && availableBudget >= CONFIG.MIN_ORDER_VALUE) {
     positionValue = CONFIG.MIN_ORDER_VALUE;
   }
@@ -3330,7 +3417,29 @@ export async function POST() {
     // Re-enable when Vedic has proven edge with sufficient sample size.
     // See ADR-028 and cross-instance-intelligence.md for context.
 
-    parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
+    // Bayesian softmax ranking (V2 Gap 5) — rank by EV instead of raw confidence
+    const useSoftmax = (TOML as any)?.bayesian?.use_softmax_ranking ?? false;
+    if (useSoftmax && parsed.length > 1) {
+      try {
+        const ranked = await rankSignalsBySoftmax(
+          redis, 'cryonix',
+          parsed.map(p => ({ ...p.signal, pattern: p.signal.patterns?.join(', ') || '' })),
+          (TOML as any)?.bayesian?.softmax_temperature ?? 2.0,
+        );
+        const rankedSymbols = ranked.map((s: any) => s.symbol);
+        parsed.sort((a, b) => {
+          const idxA = rankedSymbols.indexOf(a.signal.symbol);
+          const idxB = rankedSymbols.indexOf(b.signal.symbol);
+          return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+        });
+        console.log(`[BAYES-RANK] Softmax: ${parsed.slice(0, 5).map(p => p.signal.symbol).join(' > ')}`);
+      } catch (e) {
+        console.warn('[BAYES-RANK] Softmax failed, falling back:', e);
+        parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
+      }
+    } else {
+      parsed.sort((a, b) => (b.signal.confidence || 0) - (a.signal.confidence || 0));
+    }
     const topSignals = parsed.slice(0, 15);
     // Remove low-quality signals we won't process
     for (const p of parsed.slice(15)) {
@@ -3495,100 +3604,246 @@ export async function POST() {
       const aiWeight = weightSum > 0 ? rawAiWeight / weightSum : 0.5;
       signal.confidence = Math.round((signal.confidence * taWeight + aiResult.aiConfidence * aiWeight) * 10000) / 10000;
 
-      // X Sentiment confidence adjustment — bullish X buzz boosts, bearish penalizes
-      if (signal.action === 'BUY') {
+      // ══════════════════════════════════════════════════════════════════════
+      // POST-AI INTELLIGENCE ADJUSTMENTS (V2: Multiplicative Correlation Model)
+      // Groups correlated sources, takes max within each group, multiplies across.
+      // Config: [confidence_model] mode = "multiplicative" | "additive"
+      // ══════════════════════════════════════════════════════════════════════
+      const confModelMode = (TOML as any)?.confidence_model?.mode ?? 'multiplicative';
+      const maxGroupMod = (TOML as any)?.confidence_model?.max_group_modifier ?? 0.15;
+
+      if (signal.action === 'BUY' && confModelMode === 'multiplicative') {
+        const confBlended = signal.confidence;
+        const baseAsset = signal.symbol.split('/')[0];
+
+        // ── Group A: Market Sentiment (correlated) — X sentiment, Smart Money, Solanix DEX ──
+        const groupA: number[] = [];
+
+        // X Sentiment
+        try {
+          const xScore = parseInt((await redis.get(`sentiment:${baseAsset}`)) || '0');
+          const bullishBoost = TOML?.sentiment?.bullish_boost ?? 0.05;
+          const strongBullishBoost = TOML?.sentiment?.strong_bullish_boost ?? 0.08;
+          const bearishPenalty = TOML?.sentiment?.bearish_penalty ?? 0.05;
+          if (xScore >= 3) groupA.push(strongBullishBoost);
+          else if (xScore >= 2) groupA.push(bullishBoost);
+          else if (xScore <= -2) groupA.push(-bearishPenalty);
+        } catch { /* sentiment unavailable */ }
+
+        // Smart Money
+        try {
+          const smRaw = await redis.get(`smartmoney:${baseAsset}`) as string | null;
+          if (smRaw) {
+            const sm = JSON.parse(smRaw);
+            const smScore = sm.score ?? 0;
+            const smWallets = sm.uniqueWallets ?? 0;
+            if (smScore >= 50 && smWallets >= 2) groupA.push(0.05);
+            else if (smScore <= -50 && smWallets >= 2) groupA.push(-0.05);
+          }
+        } catch { /* smart money unavailable */ }
+
+        // Solanix DEX
+        if (signal.symbol.includes('SOL')) {
+          try {
+            const solanixPos = await redis.get('solanix:positions') as string | null;
+            if (solanixPos) {
+              const positions = JSON.parse(solanixPos);
+              const solPos = positions.find((p: any) => p.symbol === 'SOL');
+              if (solPos) {
+                const solPnlPct = solPos.currentPrice && solPos.avgEntryPrice
+                  ? ((solPos.currentPrice - solPos.avgEntryPrice) / solPos.avgEntryPrice) * 100
+                  : 0;
+                if (solPnlPct > 2) groupA.push(0.03);
+                else if (solPnlPct < -3) groupA.push(-0.03);
+              }
+            }
+          } catch { /* solanix unavailable */ }
+        }
+
+        // ── Group B: Macro/Structural (correlated) — Polymarket, Aktienix macro, CoinGlass ──
+        const groupB: number[] = [];
+
+        // Polymarket (re-read inside for-loop per signal)
+        try {
+          const [pmCryptoRaw, pmFedRaw] = await Promise.all([
+            redis.get('polymarket:crypto'),
+            redis.get('polymarket:fed'),
+          ]);
+          if (pmCryptoRaw) {
+            const crypto = JSON.parse(pmCryptoRaw);
+            const patterns = signal.patterns || [];
+            const isDeepValue = patterns.some((pat: string) =>
+              ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'].includes(pat)
+            );
+            if (crypto.score <= 20 && isDeepValue) {
+              const boost = TOML?.polymarket?.crypto_bearish_dv_boost ?? 0.06;
+              groupB.push(boost);
+            } else if (crypto.score >= 80) {
+              const penalty = TOML?.polymarket?.crypto_bullish_penalty ?? 0.05;
+              groupB.push(-penalty);
+            }
+          }
+          if (pmFedRaw) {
+            const fed = JSON.parse(pmFedRaw);
+            const dovishThreshold = TOML?.polymarket?.fed_dovish_threshold ?? 70;
+            const hawkishThreshold = TOML?.polymarket?.fed_hawkish_threshold ?? 30;
+            if (fed.score >= dovishThreshold) {
+              const boost = TOML?.polymarket?.fed_dovish_boost ?? 0.04;
+              groupB.push(boost);
+            } else if (fed.score <= hawkishThreshold) {
+              const penalty = TOML?.polymarket?.fed_hawkish_penalty ?? 0.05;
+              groupB.push(-penalty);
+            }
+          }
+        } catch { /* polymarket unavailable */ }
+
+        // Aktienix macro events
+        try {
+          const macroEvents = await redis.hgetall('aktienix:macro:event_states');
+          if (macroEvents && Object.keys(macroEvents).length > 0) {
+            for (const [eventId, rawEvt] of Object.entries(macroEvents)) {
+              try {
+                const event = JSON.parse(rawEvt as string);
+                const phase = event.phase ?? '';
+                if (phase === 'developing' || phase === 'escalating') {
+                  groupB.push(-0.03);
+                  signal.reason += ` | macro: ${eventId} (${phase})`;
+                  break;
+                }
+              } catch { /* skip unparseable event */ }
+            }
+          }
+        } catch { /* macro unavailable */ }
+
+        // CoinGlass (funding rate + OI)
+        try {
+          const fundingRaw = await redis.get(`coinglass:funding:${baseAsset}`);
+          if (fundingRaw) {
+            const f = JSON.parse(fundingRaw) as { rate: number };
+            const rate = f.rate;
+            const extremeNeg = TOML?.coinglass?.funding_extreme_negative_threshold ?? -0.0005;
+            const mildNeg    = TOML?.coinglass?.funding_negative_threshold        ?? -0.0002;
+            const extremePos = TOML?.coinglass?.funding_extreme_positive_threshold ?? 0.001;
+            const mildPos    = TOML?.coinglass?.funding_positive_threshold         ?? 0.0005;
+            if (rate <= extremeNeg) groupB.push(TOML?.coinglass?.funding_squeeze_boost ?? 0.08);
+            else if (rate <= mildNeg) groupB.push(TOML?.coinglass?.funding_bearish_boost ?? 0.04);
+            else if (rate >= extremePos) groupB.push(-(TOML?.coinglass?.funding_crowded_penalty ?? 0.08));
+            else if (rate >= mildPos) groupB.push(-(TOML?.coinglass?.funding_positive_penalty ?? 0.04));
+          }
+          const oiRaw = await redis.get(`coinglass:oi:${baseAsset}`);
+          if (oiRaw) {
+            const oi = JSON.parse(oiRaw) as { oi_change_24h_pct: number };
+            const oiChange = oi.oi_change_24h_pct;
+            const surgeThreshold = TOML?.coinglass?.oi_surge_threshold ?? 0.10;
+            const patterns = signal.patterns || [];
+            const isDipPattern = patterns.some((pat: string) =>
+              ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'].includes(pat)
+            );
+            if (oiChange >= surgeThreshold) groupB.push(TOML?.coinglass?.oi_trend_boost ?? 0.05);
+            else if (oiChange <= -surgeThreshold && isDipPattern) groupB.push(TOML?.coinglass?.oi_capitulation_boost ?? 0.04);
+            else if (oiChange <= -surgeThreshold) groupB.push(-(TOML?.coinglass?.oi_panic_penalty ?? 0.05));
+          }
+        } catch { /* coinglass unavailable */ }
+
+        // ── Group C: Historical Edge (independent) — Bayesian self-learning ──
+        const groupC: number[] = [];
+        try {
+          const bayesAdj = await getBayesianAdjustment(
+            redis, 'cryonix', signal.patterns?.[0] || 'UNKNOWN', signal.symbol,
+            new Date().getUTCHours(), (await redis.get('market:regime')) || undefined,
+          );
+          if (bayesAdj.sampleSize >= 10) {
+            const modifier = bayesAdj.confidenceModifier / 100; // e.g., +0.10
+            groupC.push(modifier);
+          }
+        } catch { /* bayesian unavailable */ }
+
+        // ── Combine: take max-abs within each group, clamp, multiply ──
+        const pickMaxAbs = (arr: number[]): number => {
+          if (arr.length === 0) return 0;
+          return arr.reduce((best, v) => Math.abs(v) > Math.abs(best) ? v : best, 0);
+        };
+
+        let maxA = Math.max(-maxGroupMod, Math.min(maxGroupMod, pickMaxAbs(groupA)));
+        let maxB = Math.max(-maxGroupMod, Math.min(maxGroupMod, pickMaxAbs(groupB)));
+        let maxC = Math.max(-maxGroupMod, Math.min(maxGroupMod, pickMaxAbs(groupC)));
+
+        signal.confidence = confBlended * (1 + maxA) * (1 + maxB) * (1 + maxC);
+        signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
+
+        console.log(`[CONF-V2] ${signal.symbol}: ${(confBlended * 100).toFixed(0)}% → ${(signal.confidence * 100).toFixed(0)}% (A=${maxA >= 0 ? '+' : ''}${(maxA * 100).toFixed(1)}% B=${maxB >= 0 ? '+' : ''}${(maxB * 100).toFixed(1)}% C=${maxC >= 0 ? '+' : ''}${(maxC * 100).toFixed(1)}%)`);
+
+      } else if (signal.action === 'BUY') {
+        // ── LEGACY ADDITIVE PATH (mode = "additive") — kept for rollback ──
+
+        // X Sentiment confidence adjustment
         try {
           const baseAsset = signal.symbol.split('/')[0];
           const xScore = parseInt((await redis.get(`sentiment:${baseAsset}`)) || '0');
           const bullishBoost = TOML?.sentiment?.bullish_boost ?? 0.05;
           const strongBullishBoost = TOML?.sentiment?.strong_bullish_boost ?? 0.08;
           const bearishPenalty = TOML?.sentiment?.bearish_penalty ?? 0.05;
-
           if (xScore >= 3) {
             signal.confidence += strongBullishBoost;
-            console.log(`[SENTIMENT] ${signal.symbol}: +${(strongBullishBoost * 100).toFixed(0)}% boost (X score ${xScore}, strong bullish)`);
           } else if (xScore >= 2) {
             signal.confidence += bullishBoost;
-            console.log(`[SENTIMENT] ${signal.symbol}: +${(bullishBoost * 100).toFixed(0)}% boost (X score ${xScore}, bullish)`);
           } else if (xScore <= -2) {
             signal.confidence -= bearishPenalty;
-            console.log(`[SENTIMENT] ${signal.symbol}: -${(bearishPenalty * 100).toFixed(0)}% penalty (X score ${xScore}, bearish)`);
           }
-          // Clamp confidence to valid range after all adjustments
           signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
-        } catch { /* sentiment unavailable — no adjustment */ }
-      }
+        } catch { /* sentiment unavailable */ }
 
-      // Smart Money sentiment (Copynix whale tracking → Cryonix intelligence)
-      if (signal.action === 'BUY') {
+        // Smart Money sentiment
         try {
           const baseAsset = signal.symbol.split('/')[0];
           const smRaw = await redis.get(`smartmoney:${baseAsset}`) as string | null;
           if (smRaw) {
             const sm = JSON.parse(smRaw);
-            const smScore = sm.score ?? 0; // -100 to +100
+            const smScore = sm.score ?? 0;
             const smWallets = sm.uniqueWallets ?? 0;
-
-            if (smScore >= 50 && smWallets >= 2) {
-              // Strong whale buying consensus — boost confidence
-              signal.confidence += 0.05;
-              console.log(`[SMART-MONEY] ${signal.symbol}: +5% boost (whale score ${smScore}, ${smWallets} wallets buying)`);
-            } else if (smScore <= -50 && smWallets >= 2) {
-              // Whales dumping — penalize
-              signal.confidence -= 0.05;
-              console.log(`[SMART-MONEY] ${signal.symbol}: -5% penalty (whale score ${smScore}, ${smWallets} wallets selling)`);
-            }
+            if (smScore >= 50 && smWallets >= 2) signal.confidence += 0.05;
+            else if (smScore <= -50 && smWallets >= 2) signal.confidence -= 0.05;
             signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
           }
-        } catch { /* smart money data unavailable — no adjustment */ }
-      }
+        } catch { /* smart money unavailable */ }
 
-      // Aktienix macro events (stock market → crypto cross-intelligence)
-      if (signal.action === 'BUY') {
+        // Aktienix macro events
         try {
           const macroEvents = await redis.hgetall('aktienix:macro:event_states');
           if (macroEvents && Object.keys(macroEvents).length > 0) {
-            for (const [eventId, raw] of Object.entries(macroEvents)) {
+            for (const [eventId, rawEvt] of Object.entries(macroEvents)) {
               try {
-                const event = JSON.parse(raw as string);
+                const event = JSON.parse(rawEvt as string);
                 const phase = event.phase ?? '';
-                // Active geopolitical/macro crisis → risk-off penalty for crypto
                 if (phase === 'developing' || phase === 'escalating') {
                   signal.confidence -= 0.03;
                   signal.reason += ` | macro: ${eventId} (${phase}) -3%`;
-                  console.log(`[MACRO] ${signal.symbol}: -3% penalty (${eventId} ${phase})`);
-                  break; // One macro event penalty is enough
+                  break;
                 }
               } catch { /* skip unparseable event */ }
             }
             signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
           }
-        } catch { /* macro data unavailable — no adjustment */ }
-      }
+        } catch { /* macro unavailable */ }
 
-      // Solanix DEX sentiment (Solana DEX trading → crypto cross-intelligence)
-      if (signal.action === 'BUY' && signal.symbol.includes('SOL')) {
-        try {
-          const solanixPos = await redis.get('solanix:positions') as string | null;
-          if (solanixPos) {
-            const positions = JSON.parse(solanixPos);
-            const solPos = positions.find((p: any) => p.symbol === 'SOL');
-            if (solPos) {
-              // Solanix is actively holding SOL — check their P&L for sentiment
-              const solPnlPct = solPos.currentPrice && solPos.avgEntryPrice
-                ? ((solPos.currentPrice - solPos.avgEntryPrice) / solPos.avgEntryPrice) * 100
-                : 0;
-              if (solPnlPct > 2) {
-                signal.confidence += 0.03;
-                console.log(`[SOLANIX] ${signal.symbol}: +3% boost (Solanix SOL position +${solPnlPct.toFixed(1)}%)`);
-              } else if (solPnlPct < -3) {
-                signal.confidence -= 0.03;
-                console.log(`[SOLANIX] ${signal.symbol}: -3% penalty (Solanix SOL position ${solPnlPct.toFixed(1)}%)`);
+        // Solanix DEX sentiment
+        if (signal.symbol.includes('SOL')) {
+          try {
+            const solanixPos = await redis.get('solanix:positions') as string | null;
+            if (solanixPos) {
+              const positions = JSON.parse(solanixPos);
+              const solPos = positions.find((p: any) => p.symbol === 'SOL');
+              if (solPos) {
+                const solPnlPct = solPos.currentPrice && solPos.avgEntryPrice
+                  ? ((solPos.currentPrice - solPos.avgEntryPrice) / solPos.avgEntryPrice) * 100
+                  : 0;
+                if (solPnlPct > 2) signal.confidence += 0.03;
+                else if (solPnlPct < -3) signal.confidence -= 0.03;
+                signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
               }
-              signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
             }
-          }
-        } catch { /* solanix data unavailable — no adjustment */ }
+          } catch { /* solanix unavailable */ }
+        }
       }
 
       // Dedup lock: prevent duplicate executions for the same symbol
