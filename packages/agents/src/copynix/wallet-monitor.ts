@@ -181,10 +181,9 @@ export class WalletMonitor {
             if (!res.ok) {
                 if (res.status === 429) {
                     this.pollStats.rateLimited++;
-                    if (this.pollStats.rateLimited <= 1 || this.pollStats.rateLimited % 10 === 0) {
-                        console.warn(`[WalletMonitor] Helius rate limited (429) — falling back to RPC`);
-                    }
-                    // Fall back to RPC instead of returning empty
+                    // Fall back to Shyft if available, then RPC
+                    const shyftResult = await this.fetchViaShyft(walletAddress);
+                    if (shyftResult.length > 0) return shyftResult;
                     return this.fetchViaRpc(walletAddress);
                 }
                 console.warn(`[WalletMonitor] ${label}... Helius HTTP ${res.status}: ${res.statusText}`);
@@ -353,6 +352,60 @@ export class WalletMonitor {
      * Fallback: detect wallet activity via public Solana RPC.
      * Cannot parse swap details without Helius — logs activity for monitoring.
      */
+    private async fetchViaShyft(walletAddress: string): Promise<WalletTrade[]> {
+        const shyftKey = process.env.SHYFT_API_KEY;
+        if (!shyftKey) return [];
+
+        try {
+            // Shyft transaction history API — similar to Helius enhanced
+            const url = `https://api.shyft.to/sol/v1/transaction/history?network=mainnet-beta&tx_num=10&account=${walletAddress}&enable_raw=false`;
+            const res = await fetch(url, {
+                headers: { 'x-api-key': shyftKey },
+                signal: AbortSignal.timeout(10_000),
+            });
+
+            if (!res.ok) return [];
+
+            const json = await res.json() as { success: boolean; result: any[] };
+            if (!json.success || !Array.isArray(json.result)) return [];
+
+            const trades: WalletTrade[] = [];
+            for (const tx of json.result) {
+                // Shyft returns parsed actions
+                const actions = tx.actions ?? [];
+                for (const action of actions) {
+                    if (action.type !== 'TOKEN_SWAP' && action.type !== 'SWAP') continue;
+                    const info = action.info ?? {};
+
+                    const isBuy = STABLECOINS.has(info.tokens_swapped?.in?.token_address ?? '') &&
+                                  !STABLECOINS.has(info.tokens_swapped?.out?.token_address ?? '');
+                    const isSell = !STABLECOINS.has(info.tokens_swapped?.in?.token_address ?? '') &&
+                                   STABLECOINS.has(info.tokens_swapped?.out?.token_address ?? '');
+
+                    if (!isBuy && !isSell) continue;
+
+                    trades.push({
+                        walletAddress,
+                        tokenMint: isBuy ? info.tokens_swapped.out.token_address : info.tokens_swapped.in.token_address,
+                        tokenSymbol: isBuy ? (info.tokens_swapped.out.symbol ?? 'UNKNOWN') : (info.tokens_swapped.in.symbol ?? 'UNKNOWN'),
+                        action: isBuy ? 'BUY' : 'SELL',
+                        amountUsd: 0,
+                        priceUsd: 0,
+                        timestamp: (tx.timestamp ? new Date(tx.timestamp).getTime() : Date.now()),
+                        txSignature: tx.signatures?.[0] ?? tx.txhash ?? '',
+                    });
+                }
+            }
+
+            if (trades.length > 0) {
+                console.log(`[WalletMonitor] Shyft: ${walletAddress.slice(0, 8)}... ${trades.length} swap(s)`);
+            }
+            return trades;
+        } catch {
+            return [];
+        }
+    }
+
     private async fetchViaRpc(walletAddress: string): Promise<WalletTrade[]> {
         try {
             const rpcUrl = 'https://api.mainnet-beta.solana.com';
