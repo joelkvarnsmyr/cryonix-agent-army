@@ -285,8 +285,9 @@ export class AktienixAgent extends BaseAgent {
                     // Run MacroIntelligence even when market is closed (news is 24/7)
                     try {
                         if (this.macroIntelligence && Date.now() - this.lastNewsScanTime > config.intelligence.news_scan_interval_ms) {
-                            this.log('info', '[PRE-MARKET] Running MacroIntelligence scan...');
-                            this.activeMacroSignals = await this.macroIntelligence.scan();
+                            this.log('info', '[PRE-MARKET] Running MacroIntelligence cycle...');
+                            await this.macroIntelligence.runIntelligenceCycle();
+                            this.activeMacroSignals = await this.macroIntelligence.getLiveSignals();
                             this.lastNewsScanTime = Date.now();
                             if (this.activeMacroSignals.length > 0) {
                                 this.log('info', `[PRE-MARKET] ${this.activeMacroSignals.length} macro signals active`);
