@@ -36,8 +36,8 @@ dexscreener_scan_interval_ms = 300000
 
 [rotation]
 enabled = true
-min_score_advantage = 15
-min_hold_minutes = 30
+min_score_advantage = 30
+min_hold_minutes = 120
 
 [signals]
 min_signal_score = 0.40

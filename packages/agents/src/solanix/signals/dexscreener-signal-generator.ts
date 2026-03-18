@@ -218,8 +218,8 @@ export class DexScreenerSignalGenerator {
 
         // 4. Buy pressure (weight 0.10)
         const totalTxns = buysH1 + sellsH1;
+        const buyRatio = totalTxns > 0 ? buysH1 / totalTxns : 0.5;
         if (totalTxns >= 10) {
-            const buyRatio = buysH1 / totalTxns;
             if (buyRatio >= 0.65) {
                 score += 0.10;
                 reasoning.push(`buy pressure ${(buyRatio * 100).toFixed(0)}%`);
@@ -235,8 +235,8 @@ export class DexScreenerSignalGenerator {
             }
         }
 
-        // 5. Trend alignment bonus (weight 0.15)
-        if (h1Change > 0.2 && h6Change > 0.5) {
+        // 5. Trend alignment bonus (weight 0.15) — strict thresholds
+        if (h1Change > 1.0 && h6Change > 2.0) {
             score += 0.15;
             reasoning.push('trend alignment (h1+h6 bullish)');
         } else if (h1Change > 0.5 && h6Change < -1) {
@@ -259,6 +259,12 @@ export class DexScreenerSignalGenerator {
         } else if (h24Change <= -5) {
             score += 0.05;
             reasoning.push(`h24 ${h24Change.toFixed(1)}% oversold bounce candidate`);
+        }
+
+        // Buy pressure gate — reject BUY when sellers dominate
+        if (totalTxns >= 20 && buyRatio < 0.45 && score > 0) {
+            score = 0;
+            reasoning.push(`buy pressure gate: ${(buyRatio * 100).toFixed(0)}% buy rejected`);
         }
 
         // Determine action

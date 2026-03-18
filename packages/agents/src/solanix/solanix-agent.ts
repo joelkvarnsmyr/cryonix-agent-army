@@ -53,6 +53,9 @@ export class SolanaAgent extends BaseAgent {
     private lastResetDay = new Date().getUTCDate();
     private lastResetWeek = getISOWeek();
     private signalsBoughtThisLoop = new Set<string>();
+    /** Per-symbol cooldown after exit — prevents re-entry into same losing trade */
+    private symbolCooldowns = new Map<string, number>();
+    private readonly SYMBOL_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours
 
     private tomlConfig = loadSolanixConfig();
 
@@ -138,6 +141,20 @@ export class SolanaAgent extends BaseAgent {
                     });
                 }
                 this.log('info', `Restored ${saved.length} position(s) from DB: ${saved.map(p => p.symbol).join(', ')}`);
+            }
+        }
+
+        // Load symbol cooldowns from recent exits (prevents restart bypass)
+        if (dbConnected) {
+            const recentExits = await this.persistence.getRecentExits(this.SYMBOL_COOLDOWN_MS);
+            for (const exit of recentExits) {
+                const cooldownEnd = exit.closedAt + this.SYMBOL_COOLDOWN_MS;
+                if (cooldownEnd > Date.now()) {
+                    this.symbolCooldowns.set(exit.symbol, cooldownEnd);
+                }
+            }
+            if (this.symbolCooldowns.size > 0) {
+                this.log('info', `Restored ${this.symbolCooldowns.size} symbol cooldown(s): ${[...this.symbolCooldowns.keys()].join(', ')}`);
             }
         }
 
@@ -382,6 +399,7 @@ export class SolanaAgent extends BaseAgent {
                     const pos = this.positions.find(p => p.symbol === exit.symbol);
                     await this.brokerClient.closePosition(exit.symbol);
                     this.positionMeta.delete(exit.symbol);
+                    this.symbolCooldowns.set(exit.symbol, Date.now() + this.SYMBOL_COOLDOWN_MS);
                     // Track realized P&L in dollars for risk limits
                     const pnlDollar = pos ? pos.unrealizedPl : 0;
                     this.riskManager.recordExit(pnlDollar);
@@ -582,6 +600,14 @@ export class SolanaAgent extends BaseAgent {
             return;
         }
 
+        // Symbol cooldown — prevent re-entry after recent exit
+        const cooldownUntil = this.symbolCooldowns.get(symbol);
+        if (cooldownUntil && Date.now() < cooldownUntil) {
+            const minsLeft = Math.round((cooldownUntil - Date.now()) / 60_000);
+            this.log('info', `${symbol} on cooldown (${minsLeft}min left) — skipping re-entry.`);
+            return;
+        }
+
         // Dedup: skip if we already bought this symbol in the current loop iteration
         if (this.signalsBoughtThisLoop.has(symbol)) {
             this.log('info', `Already bought ${symbol} this loop — dedup skip.`);
@@ -612,6 +638,7 @@ export class SolanaAgent extends BaseAgent {
             try {
                 await this.brokerClient.closePosition(rotation.victim.symbol);
                 this.positionMeta.delete(rotation.victim.symbol);
+                this.symbolCooldowns.set(rotation.victim.symbol, Date.now() + this.SYMBOL_COOLDOWN_MS);
                 const victimPnlPct = rotation.victim.avgEntryPrice > 0
                     ? ((rotation.victim.currentPrice - rotation.victim.avgEntryPrice) / rotation.victim.avgEntryPrice) * 100
                     : 0;

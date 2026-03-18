@@ -245,6 +245,26 @@ export class SolanixPersistence {
         }
     }
 
+    /** Get recently closed positions (for populating symbol cooldowns on restart) */
+    async getRecentExits(windowMs: number): Promise<{ symbol: string; closedAt: number }[]> {
+        if (!this.pool) return [];
+        try {
+            const { rows } = await this.pool.query(
+                `SELECT symbol, closed_at FROM solanix_positions
+                 WHERE status = 'CLOSED' AND closed_at > NOW() - INTERVAL '1 millisecond' * $1
+                 ORDER BY closed_at DESC`,
+                [windowMs],
+            );
+            return rows.map((r: any) => ({
+                symbol: r.symbol,
+                closedAt: new Date(r.closed_at).getTime(),
+            }));
+        } catch (err: any) {
+            console.error('[solanix-persist] getRecentExits error:', err.message);
+            return [];
+        }
+    }
+
     async disconnect(): Promise<void> {
         await this.pool?.end();
     }
