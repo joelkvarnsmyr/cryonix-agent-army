@@ -55,12 +55,12 @@ SHORT_THRESHOLD = 0.40            # P(up) < 40% → go short
 EXIT_NEUTRAL_ZONE = (0.45, 0.55)  # Close if signal fades to neutral
 
 # Stop losses (tighter for short-term)
-LONG_SL = 0.05                   # -5%
-LONG_TP = 0.10                   # +10%
-SHORT_SL = 0.05                  # -5% (price goes UP 5%)
-SHORT_TP = 0.10                  # +10% (price goes DOWN 10%)
-TRAILING_ACT = 0.03              # Activate at 3%
-TRAILING_STOP = 0.015            # Trail at 1.5%
+LONG_SL = 0.08                   # -8% (aligned with trader — 5% was too tight)
+LONG_TP = 0.20                   # +20%
+SHORT_SL = 0.08                  # -8%
+SHORT_TP = 0.20                  # +20%
+TRAILING_ACT = 0.04              # Activate at 4%
+TRAILING_STOP = 0.02             # Trail at 2%
 
 # Symbols to trade
 SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "LTC"]
