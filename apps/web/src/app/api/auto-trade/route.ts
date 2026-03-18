@@ -2147,7 +2147,7 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
   // Mean-reversion (BOLLINGER_SQUEEZE) works when buying dips, not chasing pumps.
   if (signal.action === 'BUY') {
     try {
-      const maxChase = TOML?.momentum?.max_chase_pct ?? 3.0;
+      const maxChase = (TOML as any)?.momentum?.max_chase_pct ?? 3.0;
       const atrPct = Number(signal.indicators?.atr_pct ?? 0);
       const priceChange4h = Number(signal.indicators?.price_change_4h ?? 0);
 
