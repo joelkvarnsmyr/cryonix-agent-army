@@ -152,11 +152,9 @@ stagnation_timeout_hours = 24
 stagnation_min_pnl_pct = 3.0
 
 [timing]
-# Main loop interval — controls exit checks, price updates, state publishing
+# Main loop: 30s — controls exits, prices, state, AND priority wallet polling
 poll_interval_ms = 30000
-# Wallet scan interval — 2 min for speed. Priority wallets polled every cycle.
-# ~3 priority + 10 regular = 13 calls/cycle × 30/hour × 24h = 9,360/day.
-# Will hit 429 eventually — backoff handles it automatically.
+# Regular wallet scan: 2 min (priority wallets bypass this, polled every 30s)
 wallet_scan_interval_ms = 120000
 # Discovery interval (7 days). Discovery uses ~10 extra Helius calls.
 discovery_interval_ms = 604800000

@@ -328,12 +328,12 @@ export class CopynixAgent extends BaseAgent {
                     this.log('info', '[DAILY RESET] Trade counter and risk state cleared');
                 }
 
-                // 1. Get new trades — WebSocket (real-time) or polling (fallback)
+                // 1. Get new trades — priority wallets every cycle (30s), regular wallets every 2min
                 this.pollCount++;
                 const now = Date.now();
                 let newTrades: WalletTrade[] = [];
 
-                // Phase 2: drain WebSocket buffer if connected (sub-second latency)
+                // Phase 2: drain WebSocket buffer if connected
                 if (this.wsMonitor?.isConnected) {
                     newTrades = this.wsMonitor.drainTrades();
                     if (newTrades.length > 0) {
@@ -341,7 +341,17 @@ export class CopynixAgent extends BaseAgent {
                     }
                 }
 
-                // Fallback: poll if WebSocket is down OR as supplementary scan
+                // Priority wallets: poll EVERY cycle (30s) for minimum latency
+                if (!this.wsMonitor?.isConnected) {
+                    try {
+                        const priorityTrades = await this.walletMonitor!.pollPriorityOnly();
+                        if (priorityTrades.length > 0) {
+                            newTrades.push(...priorityTrades);
+                        }
+                    } catch { /* non-critical */ }
+                }
+
+                // Regular wallets: poll on interval with backoff
                 const walletScanInterval = this.tomlConfig.timing.wallet_scan_interval_ms * this.walletScanBackoff;
                 if (!this.wsMonitor?.isConnected && now - this.lastWalletScanTime >= walletScanInterval) {
                     const errorsBefore = this.walletMonitor!.getStats().rateLimited;

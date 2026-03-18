@@ -46,6 +46,48 @@ export class WalletMonitor {
      *
      * Returns new trades since last poll.
      */
+    /**
+     * Poll ONLY priority wallets. Called every 30s for minimum latency.
+     * Separate from pollNewTrades which handles regular rotation.
+     */
+    async pollPriorityOnly(): Promise<WalletTrade[]> {
+        if (this.priorityWallets.size === 0) return [];
+        const allTrades: WalletTrade[] = [];
+
+        for (const wallet of this.priorityWallets) {
+            const label = wallet.slice(0, 8);
+            try {
+                this.pollStats.calls++;
+                const trades = await Promise.race([
+                    this.fetchWalletSwaps(wallet),
+                    new Promise<WalletTrade[]>((_, reject) =>
+                        setTimeout(() => reject(new Error(`Priority ${label} timeout`)), 10_000),
+                    ),
+                ]);
+                const lastSeen = this.lastSeenTx.get(wallet);
+                let newCount = 0;
+                for (const trade of trades) {
+                    if (lastSeen && trade.txSignature === lastSeen) break;
+                    allTrades.push(trade);
+                    newCount++;
+                }
+                if (trades.length > 0) this.lastSeenTx.set(wallet, trades[0].txSignature);
+                if (newCount > 0) {
+                    this.pollStats.swapsFound += newCount;
+                    console.log(`[WalletMonitor] PRIORITY ${label}... ${newCount} new swap(s)`);
+                }
+            } catch (err) {
+                this.pollStats.errors++;
+            }
+            await new Promise(r => setTimeout(r, 500)); // 500ms between priority wallets
+        }
+        return allTrades;
+    }
+
+    /**
+     * Poll regular wallets in rotating batches. Priority wallets excluded
+     * (they're polled separately via pollPriorityOnly every 30s).
+     */
     async pollNewTrades(): Promise<WalletTrade[]> {
         const allTrades: WalletTrade[] = [];
 
