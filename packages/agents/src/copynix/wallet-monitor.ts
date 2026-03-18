@@ -12,7 +12,8 @@ export class WalletMonitor {
     private pollIntervalMs: number;
     private pollStats = { calls: 0, errors: 0, rateLimited: 0, swapsFound: 0 };
     private walletRotationIndex = 0;
-    private readonly WALLETS_PER_POLL = 10; // Only poll 10 wallets per cycle to save API credits
+    private readonly WALLETS_PER_POLL = 10;
+    private priorityWallets: Set<string> = new Set(); // Score ≥85 wallets polled EVERY cycle
 
     constructor(config: {
         wallets: string[];
@@ -30,6 +31,10 @@ export class WalletMonitor {
         this.trackedWallets.add(address);
     }
 
+    setPriorityWallets(addresses: string[]): void {
+        this.priorityWallets = new Set(addresses);
+    }
+
     removeWallet(address: string): void {
         this.trackedWallets.delete(address);
         this.lastSeenTx.delete(address);
@@ -44,19 +49,25 @@ export class WalletMonitor {
     async pollNewTrades(): Promise<WalletTrade[]> {
         const allTrades: WalletTrade[] = [];
 
-        // Rotate through wallets — poll WALLETS_PER_POLL per cycle to save API credits.
-        // With 40 wallets and 10/poll, full rotation = 4 cycles = ~60 min at 15min interval.
+        // Priority wallets (score ≥85) are polled EVERY cycle for minimum latency.
+        // Regular wallets rotate in batches of WALLETS_PER_POLL.
         const walletArray = Array.from(this.trackedWallets);
-        const batch = walletArray.slice(
+        const regularWallets = walletArray.filter(w => !this.priorityWallets.has(w));
+
+        // Always include priority wallets
+        const batch: string[] = [...this.priorityWallets];
+
+        // Add rotating batch of regular wallets
+        const regularBatch = regularWallets.slice(
             this.walletRotationIndex,
             this.walletRotationIndex + this.WALLETS_PER_POLL,
         );
-        // Wrap around
-        if (batch.length < this.WALLETS_PER_POLL && this.walletRotationIndex > 0) {
-            const remaining = this.WALLETS_PER_POLL - batch.length;
-            batch.push(...walletArray.slice(0, remaining));
+        if (regularBatch.length < this.WALLETS_PER_POLL && this.walletRotationIndex > 0) {
+            const remaining = this.WALLETS_PER_POLL - regularBatch.length;
+            regularBatch.push(...regularWallets.slice(0, remaining));
         }
-        this.walletRotationIndex = (this.walletRotationIndex + this.WALLETS_PER_POLL) % walletArray.length;
+        this.walletRotationIndex = (this.walletRotationIndex + this.WALLETS_PER_POLL) % Math.max(1, regularWallets.length);
+        batch.push(...regularBatch);
 
         for (const wallet of batch) {
             const label = wallet.slice(0, 8);

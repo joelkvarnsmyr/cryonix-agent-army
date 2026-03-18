@@ -101,10 +101,11 @@ discovery_interval_hours = 24
 "Bi4rd5FH5bYEN8scZ7wevxNZyNmKHdaBcvewdPFxYdLt" = 70
 
 [consensus]
-# With 3 tracked wallets: 3 = strong, 2 = medium is reasonable
 min_wallets_strong = 3
 min_wallets_medium = 2
-time_window_minutes = 15
+# Reduced from 15min to 5min — if wallets don't agree within 5min,
+# the opportunity has likely passed. Tighter window = fresher consensus.
+time_window_minutes = 5
 cooldown_hours = 4
 
 [capital]
@@ -153,10 +154,9 @@ stagnation_min_pnl_pct = 3.0
 [timing]
 # Main loop interval — controls exit checks, price updates, state publishing
 poll_interval_ms = 30000
-# Wallet scan interval — Helius API calls (10 wallets per batch via rotation)
-# 300s = 5 min. With rotation (10/batch, 40 total): full rotation = 20 min.
-# 10 calls × 12/hour × 24h = 2,880/day × 100 credits = 288K/day ≈ 8.6M/month.
-# Backoff auto-throttles on 429. New Helius key has fresh 1M credits.
-wallet_scan_interval_ms = 300000
+# Wallet scan interval — 2 min for speed. Priority wallets polled every cycle.
+# ~3 priority + 10 regular = 13 calls/cycle × 30/hour × 24h = 9,360/day.
+# Will hit 429 eventually — backoff handles it automatically.
+wallet_scan_interval_ms = 120000
 # Discovery interval (7 days). Discovery uses ~10 extra Helius calls.
 discovery_interval_ms = 604800000

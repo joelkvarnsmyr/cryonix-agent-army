@@ -282,6 +282,13 @@ export class CopynixAgent extends BaseAgent {
             await this.bayesian.persistNow();
         }
 
+        // Set priority wallets (score ≥85) — polled every cycle, not rotated
+        const priorityAddresses = Object.entries(config.wallets.scores)
+            .filter(([_, score]) => score >= 85)
+            .map(([addr]) => addr);
+        this.walletMonitor.setPriorityWallets(priorityAddresses);
+        this.log('info', `Priority wallets: ${priorityAddresses.length} (polled every cycle)`);
+
         this.log('info', `Tracked wallets: ${this.walletMonitor.walletCount}`);
         this.log('info', `Single-whale mode: ${Object.keys(config.wallets.scores).length} scored wallets`);
         this.log('info', `Paper trading: $${acct.usdcBalance} USDC`);
@@ -483,6 +490,34 @@ export class CopynixAgent extends BaseAgent {
         if (adjustedConfidence < this.tomlConfig.risk.min_confidence * 100) {
             this.log('info', `[SKIP] Low confidence: ${adjustedConfidence}% (min ${this.tomlConfig.risk.min_confidence * 100}%)`);
             return;
+        }
+
+        // LATENCY FIX 1: Reject stale signals — if the whale bought >10 min ago, we're too late
+        const signalAge = Date.now() - signal.timestamp;
+        const maxSignalAgeMs = 10 * 60_000; // 10 minutes
+        if (signalAge > maxSignalAgeMs) {
+            this.log('info', `[STALE] ${signal.tokenSymbol} signal is ${(signalAge / 60_000).toFixed(0)}min old — too late`);
+            return;
+        }
+
+        // LATENCY FIX 2: Check if pump already happened — compare current price to whale entry
+        if (signal.avgPriceUsd > 0) {
+            try {
+                const url = `https://api.dexscreener.com/tokens/v1/solana/${signal.tokenMint}`;
+                const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+                if (res.ok) {
+                    const pairs = await res.json() as Array<{ priceUsd: string; chainId: string; liquidity?: { usd: number } }>;
+                    const solanaPair = Array.isArray(pairs) ? pairs.find(p => p.chainId === 'solana') : null;
+                    if (solanaPair) {
+                        const currentPrice = parseFloat(solanaPair.priceUsd);
+                        const pumpPct = ((currentPrice - signal.avgPriceUsd) / signal.avgPriceUsd) * 100;
+                        if (pumpPct > 30) {
+                            this.log('info', `[TOO LATE] ${signal.tokenSymbol} already pumped +${pumpPct.toFixed(0)}% since whale entry — skipping`);
+                            return;
+                        }
+                    }
+                }
+            } catch { /* non-critical — proceed if price check fails */ }
         }
 
         // Anti-rug safety check
