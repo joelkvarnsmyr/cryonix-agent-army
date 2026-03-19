@@ -23,6 +23,7 @@ export interface RedisReader {
     get(key: string): Promise<string | null>;
     keys(pattern: string): Promise<string[]>;
     lrange(key: string, start: number, stop: number): Promise<string[]>;
+    hgetall(key: string): Promise<Record<string, string> | null>;
 }
 
 export class SignalCollector {
@@ -64,6 +65,18 @@ export class SignalCollector {
         // ── Market Regime — engine's regime classification ──
         const regime = await this.getMarketRegime();
         if (regime) signals.push(regime);
+
+        // ── Equity market (S&P 500 + NASDAQ) ──
+        const equity = await this.getEquitySignal();
+        if (equity) signals.push(equity);
+
+        // ── DXY Dollar Index (inverse) ──
+        const dxy = await this.getDxySignal();
+        if (dxy) signals.push(dxy);
+
+        // ── Aktienix Macro Events ──
+        const macro = await this.getMacroEvents();
+        if (macro) signals.push(macro);
 
         return signals;
     }
@@ -280,5 +293,117 @@ export class SignalCollector {
         } catch {
             return null;
         }
+    }
+
+    // ── Equity Market ───────────────────────────────────────────────
+
+    private async getEquitySignal(): Promise<PsiSignal | null> {
+        try {
+            let weightedChange = 0;
+            let totalWeight = 0;
+
+            for (const [key, weight] of [['psinix:equity:spy', 0.4], ['psinix:equity:qqq', 0.6]] as const) {
+                const raw = await this.redis.get(key);
+                if (!raw) continue;
+                const data = JSON.parse(raw);
+                const age = Date.now() - (data.timestamp ?? 0);
+                if (age > 15 * 60_000) continue;
+
+                const changePct = data.changePct ?? 0;
+                const direction = Math.max(-1, Math.min(1, changePct / 2));
+                weightedChange += direction * weight;
+                totalWeight += weight;
+            }
+
+            if (totalWeight < 0.3) return null;
+            const compositeDir = weightedChange / totalWeight;
+            if (Math.abs(compositeDir) < 0.05) return null;
+
+            return {
+                sourceId: 'equity:spx_qqq',
+                direction: Math.max(-1, Math.min(1, compositeDir)),
+                weight: 0.6,
+                timestamp: Date.now(),
+            };
+        } catch { return null; }
+    }
+
+    // ── DXY Dollar Index ────────────────────────────────────────────
+
+    private async getDxySignal(): Promise<PsiSignal | null> {
+        try {
+            const raw = await this.redis.get('psinix:equity:uup');
+            if (!raw) return null;
+
+            const data = JSON.parse(raw);
+            const age = Date.now() - (data.timestamp ?? 0);
+            if (age > 15 * 60_000) return null;
+
+            const changePct = data.changePct ?? 0;
+            const direction = Math.max(-1, Math.min(1, -changePct / 1.5));
+            if (Math.abs(direction) < 0.05) return null;
+
+            return {
+                sourceId: 'macro:dxy',
+                direction,
+                weight: 0.5,
+                timestamp: Date.now(),
+            };
+        } catch { return null; }
+    }
+
+    // ── Macro Events ────────────────────────────────────────────────
+
+    private async getMacroEvents(): Promise<PsiSignal | null> {
+        try {
+            const events = await this.redis.hgetall('aktienix:macro:event_states');
+            if (!events || Object.keys(events).length === 0) return null;
+
+            let bearishScore = 0;
+            let bullishScore = 0;
+            let eventCount = 0;
+
+            const cryptoImpact: Record<string, number> = {
+                'fed_rate_hike': -0.8,
+                'fomc_statement_release': -0.3,
+                'fomc_economic_projections': -0.2,
+                'inflation_surge': -0.6,
+                'recession_fear': -0.5,
+                'oil_supply_shock': -0.4,
+                'middle_east_conflict': -0.3,
+                'trade_war_tariffs': -0.4,
+                'ukraine_russia_escalation': -0.3,
+            };
+
+            for (const [eventId, rawValue] of Object.entries(events)) {
+                try {
+                    const event = JSON.parse(rawValue as string);
+                    if (event.phase === 'resolved') continue;
+
+                    const impact = cryptoImpact[eventId] ?? 0;
+                    if (impact === 0) continue;
+
+                    const confidence = event.confidence ?? 0.5;
+                    const score = impact * confidence;
+
+                    if (score < 0) bearishScore += Math.abs(score);
+                    else bullishScore += score;
+                    eventCount++;
+                } catch { continue; }
+            }
+
+            if (eventCount === 0) return null;
+
+            const netScore = bullishScore - bearishScore;
+            const direction = Math.max(-1, Math.min(1, netScore));
+            if (Math.abs(direction) < 0.05) return null;
+
+            return {
+                sourceId: 'macro:events',
+                direction,
+                weight: 0.5,
+                timestamp: Date.now(),
+            };
+        } catch { return null; }
     }
 }
