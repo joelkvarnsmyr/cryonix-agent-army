@@ -138,6 +138,19 @@ export class StatePublisher {
         }
     }
 
+    /**
+     * Read a Redis hash (HGETALL). Returns empty object if key missing or Redis unavailable.
+     */
+    async hgetall(key: string): Promise<Record<string, string>> {
+        try {
+            await this.ensureConnected();
+            return await this.client.hgetall(key);
+        } catch (err) {
+            console.error('[StatePublisher] hgetall error:', err);
+            return {};
+        }
+    }
+
     async disconnect(): Promise<void> {
         try {
             await this.client.disconnect();

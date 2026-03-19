@@ -133,6 +133,88 @@ export class MacroFilter {
             }
         } catch {}
 
+        // 5. VIX / Equity Fear & Greed (from Aktienix)
+        try {
+            const fgRaw = await this.publisher.get('aktienix:feargreed');
+            if (fgRaw) {
+                const fg = JSON.parse(fgRaw) as { vix?: number; score?: number };
+                const vix = fg.vix ?? 0;
+                if (vix >= 30) {
+                    result.delta -= 0.08;
+                    result.reasons.push(`VIX=${vix.toFixed(0)} panic risk-off -8%`);
+                } else if (vix >= 25) {
+                    result.delta -= 0.04;
+                    result.reasons.push(`VIX=${vix.toFixed(0)} elevated fear -4%`);
+                } else if (vix > 0 && vix <= 15) {
+                    result.delta += 0.03;
+                    result.reasons.push(`VIX=${vix.toFixed(0)} low vol +3%`);
+                }
+            }
+        } catch {}
+
+        // 6. Equity correlation — SPY/QQQ (from Ψnix EquityFetcher)
+        try {
+            let weightedChange = 0;
+            let totalWeight = 0;
+            for (const [key, weight] of [['psinix:equity:spy', 0.4], ['psinix:equity:qqq', 0.6]] as const) {
+                const raw = await this.publisher.get(key);
+                if (!raw) continue;
+                const data = JSON.parse(raw) as { changePct?: number; timestamp?: number };
+                const age = Date.now() - (data.timestamp ?? 0);
+                if (age > 15 * 60_000) continue; // stale
+                weightedChange += (data.changePct ?? 0) * weight;
+                totalWeight += weight;
+            }
+            if (totalWeight >= 0.3) {
+                const composite = weightedChange / totalWeight;
+                if (composite >= 1.5) {
+                    result.delta += 0.06;
+                    result.reasons.push(`equity rally +${composite.toFixed(1)}% boost +6%`);
+                } else if (composite >= 0.5) {
+                    result.delta += 0.03;
+                    result.reasons.push(`equity up +${composite.toFixed(1)}% boost +3%`);
+                } else if (composite <= -1.5) {
+                    result.delta -= 0.08;
+                    result.reasons.push(`equity sell-off ${composite.toFixed(1)}% penalty -8%`);
+                } else if (composite <= -0.5) {
+                    result.delta -= 0.04;
+                    result.reasons.push(`equity weak ${composite.toFixed(1)}% penalty -4%`);
+                }
+            }
+        } catch {}
+
+        // 7. Aktienix Macro Events (FOMC, inflation, recession)
+        try {
+            const events = await this.publisher.hgetall('aktienix:macro:event_states');
+            if (events && Object.keys(events).length > 0) {
+                const cryptoImpact: Record<string, number> = {
+                    fed_rate_hike: -0.08,
+                    fomc_statement_release: -0.03,
+                    inflation_surge: -0.06,
+                    recession_fear: -0.05,
+                    oil_supply_shock: -0.04,
+                    trade_war_tariffs: -0.04,
+                };
+                let macroSum = 0;
+                const activeEvents: string[] = [];
+                for (const [eventId, rawValue] of Object.entries(events)) {
+                    try {
+                        const event = JSON.parse(rawValue) as { phase?: string; confidence?: number };
+                        if (event.phase === 'resolved') continue;
+                        const impact = cryptoImpact[eventId];
+                        if (!impact) continue;
+                        macroSum += impact * (event.confidence ?? 0.5);
+                        activeEvents.push(eventId);
+                    } catch { continue; }
+                }
+                const clampedMacro = Math.max(-0.15, Math.min(0.15, macroSum));
+                if (Math.abs(clampedMacro) > 0.02 && activeEvents.length > 0) {
+                    result.delta += clampedMacro;
+                    result.reasons.push(`macro events [${activeEvents.join(',')}] ${clampedMacro > 0 ? '+' : ''}${(clampedMacro * 100).toFixed(0)}%`);
+                }
+            }
+        } catch {}
+
         return result;
     }
 
