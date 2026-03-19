@@ -87,6 +87,19 @@ def discretize_signals(raw: Dict[str, Any]) -> Dict[str, str]:
     else:
         bins["v4_bin"] = "avoid"
 
+    # 12. Polymarket crypto sentiment (external, from polymarket-scanner)
+    pm_score = raw.get("polymarket_crypto_score", 50)
+    if pm_score <= 20:
+        bins["polymarket_crypto"] = "very_bearish"
+    elif pm_score <= 40:
+        bins["polymarket_crypto"] = "bearish"
+    elif pm_score <= 60:
+        bins["polymarket_crypto"] = "neutral"
+    elif pm_score <= 80:
+        bins["polymarket_crypto"] = "bullish"
+    else:
+        bins["polymarket_crypto"] = "euphoria"
+
     return bins
 
 
@@ -155,6 +168,14 @@ RESEARCH_PRIORS: Dict[str, Dict[str, Tuple[int, int]]] = {
         "buy":        (55, 45),
         "neutral":    (50, 50),
         "avoid":      (40, 60),
+    },
+    "polymarket_crypto": {
+        # External: prediction market sentiment (contrarian edges)
+        "very_bearish": (45, 55),  # Contrarian caution — may bottom but risky
+        "bearish":      (48, 52),
+        "neutral":      (50, 50),
+        "bullish":      (52, 48),
+        "euphoria":     (45, 55),  # FOMO = crowded = slightly negative
     },
 }
 

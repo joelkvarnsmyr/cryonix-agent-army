@@ -48,6 +48,21 @@ from src.vedic.natal import CRYPTO_GENESIS
 from src.vedic.dasha import compute_all_dashas
 from src.vedic.bayesian import BayesianVedic
 
+import tomllib
+from pathlib import Path
+
+def _load_toml() -> dict:
+    for p in [Path("/app/cryonix.toml"), Path(__file__).parents[2] / "cryonix.toml"]:
+        if p.exists():
+            with open(p, "rb") as f:
+                return tomllib.load(f)
+    return {}
+
+TOML = _load_toml()
+_exits = TOML.get("vedic", {}).get("exits", {})
+_risk = TOML.get("vedic", {}).get("risk", {})
+_pm = TOML.get("vedic", {}).get("polymarket", {})
+
 # ── Configuration ─────────────────────────────────────────────────────
 
 # Watchlist: all 16 cryptos with natal charts, as USDC pairs
@@ -131,6 +146,48 @@ class PaperWallet:
     created_at: float = field(default_factory=lambda: time.time())
 
 
+class CircuitBreaker:
+    def __init__(self, redis_client, key: str, config: dict):
+        self.redis = redis_client
+        self.key = key
+        self.max_consecutive = config.get("max_consecutive_losses", 2)
+        self.max_daily_loss_pct = config.get("max_daily_loss_pct", 0.05)
+        self.max_trades_per_day = config.get("max_trades_per_day", 5)
+        self.state = {"consecutive_losses": 0, "daily_pnl": 0.0, "trades_today": 0, "last_reset_date": ""}
+
+    async def load(self):
+        raw = await self.redis.get(self.key)
+        if raw:
+            self.state = json.loads(raw)
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self.state.get("last_reset_date") != today:
+            self.state = {"consecutive_losses": 0, "daily_pnl": 0.0, "trades_today": 0, "last_reset_date": today}
+
+    async def save(self):
+        await self.redis.set(self.key, json.dumps(self.state), ex=86400)
+
+    def can_trade(self, portfolio_value: float) -> Tuple[bool, str]:
+        if self.state["consecutive_losses"] >= self.max_consecutive:
+            return False, f"Circuit breaker: {self.state['consecutive_losses']} consecutive losses (max {self.max_consecutive})"
+        if portfolio_value > 0 and self.state["daily_pnl"] < 0:
+            loss_pct = abs(self.state["daily_pnl"]) / portfolio_value
+            if loss_pct >= self.max_daily_loss_pct:
+                return False, f"Daily loss limit: {loss_pct*100:.1f}% >= {self.max_daily_loss_pct*100}%"
+        if self.state["trades_today"] >= self.max_trades_per_day:
+            return False, f"Daily trade limit: {self.state['trades_today']} >= {self.max_trades_per_day}"
+        return True, "OK"
+
+    def record_exit(self, pnl: float):
+        self.state["daily_pnl"] += pnl
+        if pnl < 0:
+            self.state["consecutive_losses"] += 1
+        else:
+            self.state["consecutive_losses"] = 0
+
+    def record_entry(self):
+        self.state["trades_today"] += 1
+
+
 # ── Main Trader ───────────────────────────────────────────────────────
 
 class VedicTrader:
@@ -140,6 +197,7 @@ class VedicTrader:
         self.name = "VedicTrader"
         self.wallet: Optional[PaperWallet] = None
         self.bayes = BayesianVedic()
+        self.circuit = CircuitBreaker(self.redis, "vedic_trader:risk", _risk)
         self._bayes_loaded = False
         # Venus Rx BTD state tracking
         self.prev_venus_rx = False
@@ -166,6 +224,15 @@ class VedicTrader:
             data.setdefault("per_symbol_pnl", {})
 
             self.wallet = PaperWallet(**data)
+
+            # Migration: add V4 enhancement fields to existing positions
+            for sym, pos in self.wallet.positions.items():
+                pos.setdefault("tiers_filled", [])
+                pos.setdefault("original_quantity", pos["quantity"])
+                pos.setdefault("breakeven_sl", False)
+                pos.setdefault("ratchet_active", False)
+                pos.setdefault("ratchet_trail_price", 0.0)
+
             n_pos = len(self.wallet.positions)
             print(f"[{self.name}] Loaded wallet: ${self.wallet.balance:.2f} | "
                   f"Positions: {n_pos} | Trades: {self.wallet.total_trades} | "
@@ -325,6 +392,96 @@ class VedicTrader:
 
         return False, "Hold"
 
+    async def get_polymarket_adjustment(self) -> Tuple[float, str]:
+        if not _pm.get("enabled", True):
+            return 1.0, ""
+        try:
+            raw = await self.redis.get("polymarket:crypto")
+            if not raw:
+                return 1.0, ""
+            data = json.loads(raw)
+            score = data.get("score", 50)
+            if score <= _pm.get("bearish_threshold", 20):
+                reduction = _pm.get("bearish_size_reduction", 0.30)
+                return 1.0 - reduction, f"Polymarket bearish ({score}) size -{reduction*100:.0f}%"
+            elif score >= _pm.get("bullish_threshold", 80):
+                return 1.0, f"Polymarket FOMO ({score})"
+            return 1.0, ""
+        except Exception:
+            return 1.0, ""
+
+    async def check_tiered_exit(self, symbol: str, price: float, pos: dict, vedic_score):
+        if not _exits.get("enabled", True):
+            return
+        entry = pos["entry_price"]
+        pnl_pct = (price - entry) / entry
+        filled = pos.get("tiers_filled", [])
+        orig_qty = pos.get("original_quantity", pos["quantity"])
+
+        # T1: sell 40% at +4%, move SL to breakeven
+        t1_target = _exits.get("t1_target_pct", 0.04)
+        t1_sell = _exits.get("t1_sell_pct", 0.40)
+        if "T1" not in filled and pnl_pct >= t1_target:
+            sell_qty = orig_qty * t1_sell
+            sell_qty = min(sell_qty, pos["quantity"])
+            if sell_qty > 0:
+                sell_value = sell_qty * price
+                pos["quantity"] = max(0, pos["quantity"] - sell_qty)
+                self.wallet.balance += sell_value
+                pos.setdefault("tiers_filled", [])
+                pos["tiers_filled"].append("T1")
+                pos["breakeven_sl"] = True
+                print(f"[{self.name}] T1 HIT {symbol}: sold {t1_sell*100:.0f}% @ ${price:,.2f} (+{pnl_pct*100:.1f}%)")
+                await self.log_trade({"action": "PARTIAL_SELL", "tier": "T1", "base_asset": symbol,
+                    "price": price, "quantity": sell_qty, "pnl_pct": round(pnl_pct * 100, 2),
+                    "reason": f"T1 +{pnl_pct*100:.1f}%", "timestamp": time.time(),
+                    "datetime": datetime.now(timezone.utc).isoformat(), "source": "trader"})
+
+        # T2: sell 30% at +8%, activate ratchet
+        t2_target = _exits.get("t2_target_pct", 0.08)
+        t2_sell = _exits.get("t2_sell_pct", 0.30)
+        if "T1" in pos.get("tiers_filled", []) and "T2" not in pos.get("tiers_filled", []) and pnl_pct >= t2_target:
+            sell_qty = orig_qty * t2_sell
+            sell_qty = min(sell_qty, pos["quantity"])
+            if sell_qty > 0:
+                sell_value = sell_qty * price
+                pos["quantity"] = max(0, pos["quantity"] - sell_qty)
+                self.wallet.balance += sell_value
+                pos["tiers_filled"].append("T2")
+                pos["ratchet_active"] = True
+                trail_pct = TRAILING_STOP_PCT
+                pos["ratchet_trail_price"] = price * (1 - trail_pct)
+                print(f"[{self.name}] T2 HIT {symbol}: sold {t2_sell*100:.0f}% @ ${price:,.2f} (+{pnl_pct*100:.1f}%) ratchet ON")
+                await self.log_trade({"action": "PARTIAL_SELL", "tier": "T2", "base_asset": symbol,
+                    "price": price, "quantity": sell_qty, "pnl_pct": round(pnl_pct * 100, 2),
+                    "reason": f"T2 +{pnl_pct*100:.1f}% ratchet", "timestamp": time.time(),
+                    "datetime": datetime.now(timezone.utc).isoformat(), "source": "trader"})
+
+        # T3: ratcheting trail
+        if pos.get("ratchet_active") and "T2" in pos.get("tiers_filled", []):
+            profit_pct = pnl_pct * 100
+            if profit_pct >= 20: mult = _exits.get("ratchet_20pct_mult", 3.0)
+            elif profit_pct >= 10: mult = _exits.get("ratchet_10pct_mult", 2.0)
+            elif profit_pct >= 5: mult = _exits.get("ratchet_5pct_mult", 1.0)
+            else: mult = 1.0
+            new_trail = price * (1 - TRAILING_STOP_PCT * mult)
+            if new_trail > pos.get("ratchet_trail_price", 0):
+                pos["ratchet_trail_price"] = new_trail
+            if price <= pos["ratchet_trail_price"]:
+                await self.execute_sell(symbol, price, f"T3 ratchet ({pnl_pct*100:+.1f}%)", vedic_score)
+                return
+
+        # Breakeven SL after T1
+        if pos.get("breakeven_sl") and "T1" in pos.get("tiers_filled", []) and pnl_pct <= 0:
+            await self.execute_sell(symbol, price, f"Breakeven SL after T1 ({pnl_pct*100:+.1f}%)", vedic_score)
+            return
+
+        # Close if remaining quantity is tiny
+        if pos["quantity"] * price < 2.0 and pos.get("tiers_filled"):
+            await self.execute_sell(symbol, price, f"Dust close after tiers ({pnl_pct*100:+.1f}%)", vedic_score)
+
+        await self.save_wallet()
+
     # ── Execution ─────────────────────────────────────────────────────
 
     async def execute_buy(
@@ -363,6 +520,11 @@ class VedicTrader:
             "base_asset": symbol,
             "entry_price": price,
             "quantity": quantity,
+            "original_quantity": quantity,
+            "tiers_filled": [],
+            "breakeven_sl": False,
+            "ratchet_active": False,
+            "ratchet_trail_price": 0.0,
             "entry_time": time.time(),
             "entry_reason": reason,
             "vedic_score_at_entry": vedic_score.overall_score,
@@ -374,6 +536,8 @@ class VedicTrader:
             "bayes_signals": bayes_entry_signals,
         }
         self.wallet.positions[symbol] = position
+        self.circuit.record_entry()
+        await self.circuit.save()
         await self.save_wallet()
 
         trade_log = {
@@ -442,6 +606,9 @@ class VedicTrader:
             await self.bayes.save(self.redis)
             print(f"[{self.name}] Bayes updated: {'WIN' if pnl > 0 else 'LOSS'} "
                   f"(total={self.bayes.state.total_trades})")
+
+        self.circuit.record_exit(pnl)
+        await self.circuit.save()
 
         # Remove position
         del self.wallet.positions[symbol]
@@ -616,12 +783,29 @@ class VedicTrader:
                 continue
 
             pos = self.wallet.positions[symbol]
+
+            # Tiered exits first
+            await self.check_tiered_exit(symbol, price, pos, vedic_score)
+            if symbol not in self.wallet.positions:
+                continue  # Fully closed by tiered exit
+
             should, reason = self.should_sell(symbol, vedic_score, price, pos)
             if should:
                 await self.execute_sell(symbol, price, reason, vedic_score)
             else:
                 # Persist peak_price updates from trailing stop tracking
                 await self.save_wallet()
+
+        # Circuit breaker check
+        await self.circuit.load()
+        can_trade, cb_reason = self.circuit.can_trade(self.wallet.balance + sum(
+            p["quantity"] * prices.get(s, 0) for s, p in self.wallet.positions.items()))
+        if not can_trade:
+            print(f"[{self.name}] BLOCKED: {cb_reason}")
+
+        pm_mult, pm_reason = await self.get_polymarket_adjustment()
+        if pm_reason:
+            print(f"[{self.name}] {pm_reason}")
 
         # 7. Check candidates for BUY (if we have open slots)
         # In BTD mode: use larger position size (25%) and wider stops
@@ -630,8 +814,10 @@ class VedicTrader:
             effective_pos_size = 0.25  # 25% during BTD (research: aggressive works)
             print(f"[{self.name}] BTD MODE ACTIVE — 25% position size, wide stops")
 
+        effective_pos_size *= pm_mult
+
         open_slots = MAX_POSITIONS - len(self.wallet.positions)
-        if open_slots > 0:
+        if can_trade and open_slots > 0:
             for sym, transit_sc in candidates:
                 if open_slots <= 0:
                     break

@@ -88,6 +88,14 @@ class VedicScout:
             "eclipse_near": get_angular_distance(p["Moon"].longitude, p["Rahu"].longitude) < 15,
             "v4_score": vedic_score.overall_score,
         }
+        # Add Polymarket sentiment if available
+        try:
+            pm_raw = await self.redis.get("polymarket:crypto")
+            if pm_raw:
+                pm_data = json.loads(pm_raw)
+                bayes_signals["polymarket_crypto_score"] = pm_data.get("score", 50)
+        except Exception:
+            pass
         bayes_prob, bayes_details = self.bayes.predict(bayes_signals)
 
         # ── 5. Write everything to Redis ──

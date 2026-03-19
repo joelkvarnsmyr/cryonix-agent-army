@@ -986,6 +986,40 @@ mercury_rx_penalty = 0.05
 # 0 retro: +1.92%/7d, 3 retro: +0.25%/7d.
 high_retro_penalty = 0.04
 
+# ── Tiered Exit Scaling (borrowed from Cryonix T1/T2/T3) ──────────────
+# Instead of all-or-nothing SL/TP, sell in tiers to lock profit early.
+# T1: sell 40% at +4%, move SL to breakeven
+# T2: sell 30% at +8%, activate ratcheting trail for remaining 30%
+# T3: ratcheting trail (multiplier increases with profit level)
+[vedic.exits]
+enabled = true
+t1_target_pct = 0.04
+t1_sell_pct = 0.40
+t2_target_pct = 0.08
+t2_sell_pct = 0.30
+t3_sell_pct = 0.30
+ratchet_5pct_mult = 1.0
+ratchet_10pct_mult = 2.0
+ratchet_20pct_mult = 3.0
+
+# ── Circuit Breakers (borrowed from Aktienix RiskManager) ──────────────
+# Pause trading after consecutive losses or excessive daily drawdown.
+# Resets daily at UTC midnight. Consecutive losses reset on any win.
+[vedic.risk]
+max_consecutive_losses = 2
+max_daily_loss_pct = 0.05
+max_trades_per_day = 5
+
+# ── Polymarket Sentiment Overlay ───────────────────────────────────────
+# Reads polymarket:crypto from Redis (written by polymarket-scanner).
+# Adjusts position size based on prediction market sentiment.
+[vedic.polymarket]
+enabled = true
+bearish_threshold = 20
+bullish_threshold = 80
+bearish_size_reduction = 0.30
+bullish_confidence_penalty = 0.05
+
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  COINGLASS — Derivatives market intelligence                           ║
 # ║  Provides funding rates, open interest, and long/short ratio.          ║
