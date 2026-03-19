@@ -30,6 +30,7 @@ export const NAV_GROUPS = [
       { href: '/', label: 'Cryonix', icon: Activity, desc: 'Crypto trading' },
     ],
     subPages: [
+      { href: '/overview',  label: 'Overview' },
       { href: '/',           label: 'Terminal' },
       { href: '/analytics',  label: 'Analytics' },
       { href: '/backtest',   label: 'Backtest' },

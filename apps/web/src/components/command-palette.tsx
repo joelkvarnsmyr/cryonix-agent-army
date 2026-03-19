@@ -12,9 +12,10 @@ import {
   CommandShortcut,
   CommandSeparator,
 } from '@cryonix/ui';
-import { Activity, BarChart3, LineChart, FlaskConical, RefreshCw, ExternalLink } from 'lucide-react';
+import { Activity, BarChart3, LayoutDashboard, LineChart, FlaskConical, RefreshCw, ExternalLink } from 'lucide-react';
 
 const pages = [
+  { name: 'Overview', href: '/overview', icon: LayoutDashboard, shortcut: '⌘0' },
   { name: 'Terminal', href: '/', icon: Activity, shortcut: '1' },
   { name: 'Legacy Dashboard', href: '/legacy', icon: BarChart3, shortcut: '2' },
   { name: 'Analytics', href: '/analytics', icon: LineChart, shortcut: '3' },
