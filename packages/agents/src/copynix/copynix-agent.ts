@@ -597,6 +597,9 @@ export class CopynixAgent extends BaseAgent {
     // Exit Management
     // -------------------------------------------------------------------------
 
+    // Track which wallets have exited each position
+    private leaderExits = new Map<string, Set<string>>(); // tokenMint -> wallets that sold
+
     private async handleLeaderExit(trade: WalletTrade): Promise<void> {
         if (!this.tomlConfig.exits.leader_exit_enabled) return;
 
@@ -606,11 +609,45 @@ export class CopynixAgent extends BaseAgent {
         // Check if the selling wallet is one we copied from
         if (!pos.copiedFrom.includes(trade.walletAddress)) return;
 
-        this.log('info', `[LEADER EXIT] ${trade.walletAddress.slice(0, 8)}... sold ${pos.tokenSymbol} — closing position`);
-        const result = this.executor!.executeSell(trade.tokenMint, pos.currentPrice, 'leader exit');
-        if (result.success) {
-            this.log('info', `[SELL] ${result.message}`);
-            await this.logSell(pos, pos.currentPrice, 'leader_exit', result.pnl);
+        // Track this wallet's exit
+        let exits = this.leaderExits.get(trade.tokenMint);
+        if (!exits) {
+            exits = new Set();
+            this.leaderExits.set(trade.tokenMint, exits);
+        }
+        exits.add(trade.walletAddress);
+
+        const totalCopied = pos.copiedFrom.length;
+        const totalExited = exits.size;
+        const exitRatio = totalExited / totalCopied;
+
+        this.log('info', `[LEADER EXIT] ${trade.walletAddress.slice(0, 8)}... sold ${pos.tokenSymbol} (${totalExited}/${totalCopied} wallets exited)`);
+
+        if (totalCopied <= 1 || exitRatio >= 1.0) {
+            // ALL wallets sold → full exit
+            this.log('info', `[LEADER EXIT] All ${totalCopied} wallets sold ${pos.tokenSymbol} — closing position`);
+            const result = this.executor!.executeSell(trade.tokenMint, pos.currentPrice, 'leader_exit_all');
+            if (result.success) {
+                this.log('info', `[SELL] ${result.message}`);
+                await this.logSell(pos, pos.currentPrice, 'leader_exit_all', result.pnl);
+                this.leaderExits.delete(trade.tokenMint);
+            }
+        } else if (exitRatio >= 0.5 && !pos.partialTpTaken) {
+            // MAJORITY sold → sell 50%, keep rest riding
+            this.log('info', `[LEADER EXIT] Majority (${totalExited}/${totalCopied}) sold ${pos.tokenSymbol} — partial exit 50%`);
+            const halfQty = pos.qty / 2;
+            const halfPnl = (pos.currentPrice - pos.avgEntryPrice) * halfQty;
+            this.executor!.reducePosition(pos.tokenMint, halfQty);
+            pos.partialTpTaken = true;
+            await this.logSell(
+                { ...pos, qty: halfQty },
+                pos.currentPrice,
+                'leader_exit_majority',
+                halfPnl,
+            );
+        } else {
+            // MINORITY sold → log but hold. Other wallets still believe in this token.
+            this.log('info', `[LEADER EXIT] Only ${totalExited}/${totalCopied} wallets sold ${pos.tokenSymbol} — holding (minority exit)`);
         }
     }
 
