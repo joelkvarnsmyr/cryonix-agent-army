@@ -9,6 +9,7 @@ export { Slider } from './components/slider';
 export { Switch } from './components/switch';
 export { Tabs, TabsContent, TabsList, TabsTrigger } from './components/tabs';
 export { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from './components/dialog';
+export { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from './components/sheet';
 export { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/dropdown-menu';
 export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/select';
 export { Separator } from './components/separator';

@@ -4,13 +4,14 @@ import { ReactNode, useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import {
-  Activity, BarChart3, LineChart, Settings, Wifi, WifiOff,
-  FlaskConical, TrendingUp, CircleDollarSign, ChevronRight, Target, Moon,
+  Activity, Settings, Wifi, WifiOff,
+  TrendingUp, CircleDollarSign, ChevronRight, Target, Moon,
 } from 'lucide-react';
 import { Button } from '@cryonix/ui';
 import { useSystemHealth } from '@/hooks/useSystemHealth';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { NotificationCenter } from '@/components/notification-center';
+import { MobileNav } from '@/components/dashboard/mobile-nav';
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -18,7 +19,7 @@ interface DashboardLayoutProps {
 
 // ─── Nav structure ────────────────────────────────────────────────────────────
 // Main nav: one entry per instance. Sub-pages shown as tabs on the instance page.
-const NAV_GROUPS = [
+export const NAV_GROUPS = [
   {
     id: 'cryonix',
     label: 'CRYONIX',
@@ -101,12 +102,12 @@ type NavGroup = (typeof NAV_GROUPS)[number];
 type SubPage = { href: string; label: string };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function isActive(href: string, pathname: string) {
+export function isActive(href: string, pathname: string) {
   return href === '/' ? pathname === '/' : pathname.startsWith(href);
 }
 
 /** Check if pathname belongs to a group (including sub-pages). */
-function isGroupActive(group: NavGroup, pathname: string) {
+export function isGroupActive(group: NavGroup, pathname: string) {
   if (group.items.some(item => isActive(item.href, pathname))) return true;
   if ('subPages' in group) {
     return (group as NavGroup & { subPages: SubPage[] }).subPages.some(sp => isActive(sp.href, pathname));
@@ -206,34 +207,45 @@ function DashboardFooter({
           </span>
         </div>
 
-        {/* Center: quick-link grid */}
-        <nav className="flex items-center gap-3 flex-wrap justify-center">
-          {NAV_GROUPS.map((group, gi) => (
-            <div key={group.id} className="flex items-center gap-2">
-              {gi > 0 && <span className="text-border/30 text-[10px]">|</span>}
+        {/* Center: quick-link grid — compact dots on mobile, full labels on lg+ */}
+        <nav className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
+          {/* Mobile: compact agent dots */}
+          <div className="flex lg:hidden items-center gap-1.5">
+            {NAV_GROUPS.map((group) => {
+              const active = group.items.some(item => isActive(item.href, pathname));
+              return (
+                <Link key={group.id} href={group.items[0].href} title={group.items[0].label}>
+                  <span className={`inline-block h-2 w-2 rounded-full transition-all ${
+                    active ? `${group.dot} scale-125` : 'bg-muted-foreground/25 hover:bg-muted-foreground/45'
+                  }`} />
+                </Link>
+              );
+            })}
+          </div>
 
-              <span className={`hidden lg:inline text-[8px] font-mono font-bold tracking-widest opacity-40 ${group.accent}`}>
-                {group.label}
-              </span>
-
-              {group.items.map((item) => {
-                const active = isActive(item.href, pathname);
-                return (
-                  <Link key={item.href} href={item.href} title={item.desc}>
-                    <span
-                      className={`text-[9px] font-mono transition-colors ${
-                        active
-                          ? group.accent
-                          : 'text-muted-foreground/45 hover:text-foreground/65'
-                      }`}
-                    >
-                      {item.label}
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
+          {/* Desktop: full labels */}
+          <div className="hidden lg:flex items-center gap-3">
+            {NAV_GROUPS.map((group, gi) => (
+              <div key={group.id} className="flex items-center gap-2">
+                {gi > 0 && <span className="text-border/30 text-[10px]">|</span>}
+                <span className={`text-[8px] font-mono font-bold tracking-widest opacity-40 ${group.accent}`}>
+                  {group.label}
+                </span>
+                {group.items.map((item) => {
+                  const active = isActive(item.href, pathname);
+                  return (
+                    <Link key={item.href} href={item.href} title={item.desc}>
+                      <span className={`text-[9px] font-mono transition-colors ${
+                        active ? group.accent : 'text-muted-foreground/45 hover:text-foreground/65'
+                      }`}>
+                        {item.label}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </nav>
 
         {/* Right: services + version */}
@@ -288,6 +300,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           {/* Left: Logo + nav groups */}
           <div className="flex items-center gap-3 min-w-0">
 
+            {/* Mobile hamburger */}
+            <MobileNav pathname={pathname} />
+
             {/* Logo */}
             <Link href="/" className="flex items-center gap-2 group shrink-0">
               <div className="relative">
@@ -302,28 +317,28 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               </div>
             </Link>
 
-            {/* Divider */}
-            <div className="h-5 w-px bg-border/30 shrink-0" />
+            {/* Divider — hidden on mobile */}
+            <div className="hidden md:block h-5 w-px bg-border/30 shrink-0" />
 
-            {/* Instance buttons — one per agent */}
-            <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
+            {/* Instance buttons — hidden on mobile, shown on md+ */}
+            <div className="hidden md:flex items-center gap-1 overflow-x-auto scrollbar-none">
               {NAV_GROUPS.map((group) => {
                 const Icon = group.items[0].icon;
                 const active = isGroupActive(group, pathname);
                 return (
-                  <Link key={group.id} href={group.items[0].href}>
-                    <button
-                      title={group.items[0].desc}
-                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-                        active
-                          ? `bg-background/80 ${group.accent} shadow-sm border border-border/40`
-                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/20'
-                      }`}
-                    >
-                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${active ? group.dot : 'bg-muted-foreground/30'}`} />
-                      <Icon className="h-3.5 w-3.5 shrink-0" />
-                      <span className="hidden sm:inline">{group.items[0].label}</span>
-                    </button>
+                  <Link
+                    key={group.id}
+                    href={group.items[0].href}
+                    title={group.items[0].desc}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      active
+                        ? `bg-background/80 ${group.accent} shadow-sm border border-border/40`
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/20'
+                    }`}
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${active ? group.dot : 'bg-muted-foreground/30'}`} />
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden sm:inline">{group.items[0].label}</span>
                   </Link>
                 );
               })}
@@ -354,7 +369,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             {/* Cmd+K */}
             <button
               onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
-              className="hidden md:flex items-center gap-1 px-2 py-1 rounded-md bg-muted/20 hover:bg-muted/40 transition-colors"
+              className="flex items-center gap-1 px-2 py-1 rounded-md bg-muted/20 hover:bg-muted/40 transition-colors"
               aria-label="Open command palette"
             >
               <span className="text-[9px] font-mono text-muted-foreground/60">⌘K</span>
@@ -366,13 +381,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 ? <Wifi className="h-3 w-3 text-emerald-400" />
                 : <WifiOff className="h-3 w-3 text-red-400" />
               }
-              <span className="text-[9px] font-mono text-muted-foreground/60">
+              <span className="hidden sm:inline text-[9px] font-mono text-muted-foreground/60">
                 {isConnected ? 'LIVE' : 'OFF'}
               </span>
             </div>
 
             {/* Clock */}
-            <LiveClock />
+            <div className="hidden sm:block">
+              <LiveClock />
+            </div>
 
             {/* Notifications */}
             <NotificationCenter />
@@ -407,16 +424,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               {subPages.map((sp) => {
                 const active = isActive(sp.href, pathname);
                 return (
-                  <Link key={sp.href} href={sp.href}>
-                    <button
-                      className={`px-3 py-1 text-[10px] font-mono font-medium rounded-md transition-all ${
-                        active
-                          ? `${ctx.group.accent} bg-background/60 border border-border/30`
-                          : 'text-muted-foreground/50 hover:text-foreground/70 hover:bg-muted/20'
-                      }`}
-                    >
-                      {sp.label}
-                    </button>
+                  <Link
+                    key={sp.href}
+                    href={sp.href}
+                    className={`px-3 py-1 text-[10px] font-mono font-medium rounded-md transition-all ${
+                      active
+                        ? `${ctx.group.accent} bg-background/60 border border-border/30`
+                        : 'text-muted-foreground/50 hover:text-foreground/70 hover:bg-muted/20'
+                    }`}
+                  >
+                    {sp.label}
                   </Link>
                 );
               })}
@@ -426,7 +443,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       </nav>
 
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
-      <main className="relative z-10 flex-1 overflow-y-auto p-3">
+      <main className="relative z-10 flex-1 overflow-y-auto p-2 sm:p-3">
         {children}
       </main>
 
