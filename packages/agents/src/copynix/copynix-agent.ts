@@ -10,6 +10,7 @@ import { loadCopynixConfig } from './config';
 import { PolymarketIntelligence } from '../shared/polymarket-intelligence';
 import { WalletDiscovery } from './wallet-discovery';
 import { BayesianScorer } from './bayesian-scorer';
+import { PostTradeAnalyzer, type TradeContext } from './post-trade-analyzer';
 import { WebSocketMonitor } from './websocket-monitor';
 import type { CopyPosition, CopySignal, WalletTrade } from './types';
 
@@ -151,6 +152,8 @@ class CopynixTradeLogger {
         } catch { return false; }
     }
 
+    getPg(): any { return this.pg; }
+
     async close(): Promise<void> {
         try { await this.pg?.end(); } catch { }
     }
@@ -169,6 +172,7 @@ export class CopynixAgent extends BaseAgent {
     private tradeLogger = new CopynixTradeLogger();
     private bayesian = new BayesianScorer();
     private wsMonitor: WebSocketMonitor | null = null;
+    private postTradeAnalyzer: PostTradeAnalyzer | null = null;
 
     private walletDiscovery: WalletDiscovery | null = null;
     // Delay first discovery by 10 minutes after startup (avoid Helius burst),
@@ -261,6 +265,12 @@ export class CopynixAgent extends BaseAgent {
 
         // Connect trade logger to Postgres
         await this.tradeLogger.connect();
+
+        // Initialize post-trade AI analyzer (uses Grok via XAI_API_KEY)
+        if (process.env.XAI_API_KEY) {
+            this.postTradeAnalyzer = new PostTradeAnalyzer(this.tradeLogger.getPg(), 5 * 60_000);
+            this.log('info', 'Post-trade AI analyzer enabled (Grok, 5min delay)');
+        }
 
         // Restore open positions from Postgres (survives restarts)
         await this.restorePositionsFromDb();
@@ -793,6 +803,40 @@ export class CopynixAgent extends BaseAgent {
             `P/L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)\n` +
             `Wallet scores: ${walletScores}`,
         );
+
+        // Schedule AI post-trade analysis (runs 5 min after exit)
+        if (this.postTradeAnalyzer) {
+            let tradeId: number | null = null;
+            try {
+                const pgClient = this.tradeLogger.getPg();
+                if (pgClient) {
+                    const { rows } = await pgClient.query(
+                        `SELECT id FROM copynix_trades WHERE token_mint = $1 AND side = 'SELL' ORDER BY id DESC LIMIT 1`,
+                        [pos.tokenMint],
+                    );
+                    tradeId = rows[0]?.id ?? null;
+                }
+            } catch { /* non-critical */ }
+
+            const tradeContext: TradeContext = {
+                tokenMint: pos.tokenMint,
+                tokenSymbol: pos.tokenSymbol,
+                entryPrice: pos.avgEntryPrice,
+                exitPrice,
+                holdMinutes: (Date.now() - pos.entryTime) / 60_000,
+                pnlUsd: pnl,
+                pnlPct,
+                exitReason: reason,
+                consensusLevel: pos.consensusLevel,
+                walletAddresses: pos.copiedFrom,
+                walletScores: pos.copiedFrom.map(a => ({
+                    wallet: a.slice(0, 8),
+                    score: Math.round(this.bayesian.getScore(a)),
+                })),
+                tradeId,
+            };
+            this.postTradeAnalyzer.scheduleAnalysis(tradeContext);
+        }
     }
 
     // -------------------------------------------------------------------------
