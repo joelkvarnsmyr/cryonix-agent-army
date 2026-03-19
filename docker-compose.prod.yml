@@ -362,6 +362,7 @@ services:
       - NODE_ENV=production
       - KV_URL=redis://redis:6379
       - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY:-}
     networks:
       - cryonix-net
     depends_on:
