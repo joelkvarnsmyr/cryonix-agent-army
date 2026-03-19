@@ -3918,6 +3918,40 @@ export async function POST() {
           }
         } catch { /* coinglass unavailable */ }
 
+        // Equity market correlation (from Ψnix/Aktienix — SPY/QQQ)
+        try {
+          const spyRaw = await redis.get('psinix:equity:spy') as string | null;
+          if (spyRaw) {
+            const spy = JSON.parse(spyRaw);
+            const spyChange = spy.changePct ?? 0;
+            // S&P 500 down >1.5% = risk-off environment → penalty for crypto
+            if (spyChange < -1.5) {
+              groupB.push(-0.06);
+              console.log(`[EQUITY] ${signal.symbol}: -6% penalty (S&P 500 ${spyChange.toFixed(1)}% today)`);
+            }
+            // S&P 500 up >1% = risk-on → slight boost
+            else if (spyChange > 1.0) {
+              groupB.push(0.03);
+              console.log(`[EQUITY] ${signal.symbol}: +3% boost (S&P 500 +${spyChange.toFixed(1)}% today)`);
+            }
+          }
+        } catch { /* equity data unavailable */ }
+
+        // Aktienix portfolio momentum (are stocks winning or losing?)
+        try {
+          const aktPos = await redis.get('aktienix:positions') as string | null;
+          if (aktPos) {
+            const positions = JSON.parse(aktPos);
+            if (Array.isArray(positions) && positions.length > 0) {
+              const avgPnl = positions.reduce((s: number, p: any) => s + (p.unrealizedPlPct ?? 0), 0) / positions.length;
+              if (avgPnl < -3) {
+                groupB.push(-0.04);
+                console.log(`[AKTIENIX] ${signal.symbol}: -4% penalty (stock portfolio avg ${avgPnl.toFixed(1)}%)`);
+              }
+            }
+          }
+        } catch { /* aktienix data unavailable */ }
+
         // ── Group C: Historical Edge (independent) — Bayesian self-learning ──
         const groupC: number[] = [];
         try {
