@@ -42,8 +42,14 @@ export function InstanceCard({
 }: InstanceCardProps) {
   const colors = ACCENT_COLORS[accent] ?? ACCENT_COLORS.cyan;
   const route = INSTANCE_ROUTES[id] ?? '/';
-  const pnlColor = totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400';
-  const dailyColor = dailyPnl >= 0 ? 'text-emerald-400' : 'text-red-400';
+  // Defensive: ensure numeric values are actually numbers (not objects/arrays from API)
+  const safePortfolio = typeof portfolioValue === 'number' ? portfolioValue : 0;
+  const safeTotalPnl = typeof totalPnl === 'number' ? totalPnl : 0;
+  const safeDailyPnl = typeof dailyPnl === 'number' ? dailyPnl : 0;
+  const safeWinRate = typeof winRate === 'number' ? winRate : 0;
+  const safeOpenPositions = typeof openPositions === 'number' ? openPositions : 0;
+  const pnlColor = safeTotalPnl >= 0 ? 'text-emerald-400' : 'text-red-400';
+  const dailyColor = safeDailyPnl >= 0 ? 'text-emerald-400' : 'text-red-400';
 
   return (
     <Link href={route}>
@@ -92,22 +98,22 @@ export function InstanceCard({
         <div className="grid grid-cols-2 gap-y-2 gap-x-4">
           <div>
             <p className="text-[8px] font-mono text-muted-foreground/50 uppercase">Portfolio</p>
-            <p className="text-sm font-mono font-semibold tabular-nums">${portfolioValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            <p className="text-sm font-mono font-semibold tabular-nums">${safePortfolio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           </div>
           <div>
             <p className="text-[8px] font-mono text-muted-foreground/50 uppercase">Total P&L</p>
             <p className={`text-sm font-mono font-semibold tabular-nums ${pnlColor}`}>
-              {totalPnl >= 0 ? '+' : ''}${Math.abs(totalPnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {safeTotalPnl >= 0 ? '+' : ''}${Math.abs(safeTotalPnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
           </div>
           <div>
             <p className="text-[8px] font-mono text-muted-foreground/50 uppercase">Win Rate</p>
-            <p className="text-sm font-mono font-semibold tabular-nums">{winRate.toFixed(1)}%</p>
+            <p className="text-sm font-mono font-semibold tabular-nums">{safeWinRate.toFixed(1)}%</p>
           </div>
           <div>
             <p className="text-[8px] font-mono text-muted-foreground/50 uppercase">Positions</p>
             <p className="text-sm font-mono font-semibold tabular-nums">
-              {openPositions}<span className="text-muted-foreground/40">/{maxPositions}</span>
+              {safeOpenPositions}<span className="text-muted-foreground/40">/{maxPositions}</span>
             </p>
           </div>
         </div>
@@ -116,7 +122,7 @@ export function InstanceCard({
         <div className="mt-3 pt-2 border-t border-border/15 flex items-center justify-between">
           <span className="text-[9px] font-mono text-muted-foreground/45">Today</span>
           <span className={`text-xs font-mono font-semibold tabular-nums ${dailyColor}`}>
-            {dailyPnl >= 0 ? '+' : ''}${Math.abs(dailyPnl).toFixed(2)}
+            {safeDailyPnl >= 0 ? '+' : ''}${Math.abs(safeDailyPnl).toFixed(2)}
           </span>
         </div>
       </div>

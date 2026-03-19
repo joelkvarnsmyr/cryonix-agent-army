@@ -271,7 +271,7 @@ async function fetchPsinix(): Promise<InstanceData> {
     totalPnl: data?.total_pnl ?? data?.totalPnl ?? summary.totalPnl ?? 0,
     winRate: data?.winRate != null ? data.winRate : (summary.winRate ?? 0),
     totalTrades: (data?.wins ?? 0) + (data?.losses ?? 0) || (summary.total ?? 0),
-    openPositions: data?.positions ?? 0,
+    openPositions: Array.isArray(data?.positions) ? data.positions.length : (typeof data?.positions === 'number' ? data.positions : 0),
     maxPositions: 3,
     recentTrades: (trades?.trades ?? []).slice(0, 5).map((t: any) => ({
       symbol: t.symbol ?? '',
