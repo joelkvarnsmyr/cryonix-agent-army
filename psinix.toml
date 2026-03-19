@@ -65,6 +65,12 @@ profit_factor_gate = 0.8
 # Number of recent trades for dynamic Kelly + profit factor calculation
 rolling_window = 30
 
+[equity]
+# Finnhub API key (free tier, 60 calls/min). Empty = equity signals disabled.
+finnhub_api_key = ""
+# Poll interval for SPY/QQQ/UUP quotes (ms) — 5 minutes
+poll_interval_ms = 300000
+
 [timing]
 # Main loop interval (how often to compute Ψ)
 poll_interval_ms = 60000

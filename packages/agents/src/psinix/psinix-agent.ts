@@ -16,6 +16,7 @@ import { PsiEngine, type PsiResult } from './psi-engine';
 import { SignalCollector, type RedisReader } from './signal-collector';
 import { OHLCVFetcher } from './ohlcv-fetcher';
 import { BayesianWeightTracker } from './bayesian-weights';
+import { EquityFetcher } from './equity-fetcher';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ interface PsinixConfig {
         profit_factor_gate: number;      // If rolling PF < this, halve positions
         rolling_window: number;          // Number of recent trades for dynamic Kelly + PF
     };
+    equity: { finnhub_api_key: string; poll_interval_ms: number };
     timing: { poll_interval_ms: number; price_update_ms: number };
 }
 
@@ -132,6 +134,7 @@ export class PsinixAgent {
     private ohlcv = new OHLCVFetcher(60_000);
     private logger = new PsinixTradeLogger();
     private weights = new BayesianWeightTracker(0.92);
+    private equityFetcher: EquityFetcher | null = null;
     private isRunning = false;
 
     // Paper trading state
@@ -172,9 +175,20 @@ export class PsinixAgent {
                 get: async (key: string) => this.redis.get(key),
                 keys: async (pattern: string) => this.redis.keys(pattern),
                 lrange: async (key: string, start: number, stop: number) => this.redis.lrange(key, start, stop),
+                hgetall: async (key: string) => this.redis.hgetall(key),
             });
 
             console.log('[psinix] Redis connected — signal collector ready');
+
+            // Start equity data poller (Finnhub → Redis)
+            if (this.redis) {
+                this.equityFetcher = new EquityFetcher(
+                    this.redis,
+                    this.config.equity.finnhub_api_key || undefined,
+                    this.config.equity.poll_interval_ms,
+                );
+                this.equityFetcher.start();
+            }
 
             // Restore Bayesian weights from Redis
             try {
@@ -211,6 +225,7 @@ export class PsinixAgent {
 
     async stop(): Promise<void> {
         this.isRunning = false;
+        this.equityFetcher?.stop();
         await this.logger.close();
         try { await this.redis?.quit(); } catch { }
         console.log('[psinix] Stopped.');
@@ -641,6 +656,7 @@ export class PsinixAgent {
                 profit_factor_gate: 0.8,
                 rolling_window: 30,
             },
+            equity: { finnhub_api_key: '', poll_interval_ms: 300_000 },
             timing: { poll_interval_ms: 60000, price_update_ms: 30000 },
         };
 
@@ -657,6 +673,7 @@ export class PsinixAgent {
                 trading: { ...defaults.trading, ...parsed.trading },
                 exits: { ...defaults.exits, ...parsed.exits },
                 risk: { ...defaults.risk, ...(parsed as any).risk },
+                equity: { ...defaults.equity, ...(parsed as any).equity },
                 timing: { ...defaults.timing, ...parsed.timing },
             };
         } catch {
