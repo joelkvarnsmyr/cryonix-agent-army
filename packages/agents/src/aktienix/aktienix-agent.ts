@@ -307,6 +307,8 @@ export class AktienixAgent extends BaseAgent {
                         if (this.sentimentScanner) {
                             await this.sentimentScanner.fetchFearGreed();
                             await this.sentimentScanner.fetchPutCallRatio();
+                            await this.sentimentScanner.fetchEarningsCalendar(config.watchlist.symbols);
+                            await this.sentimentScanner.fetchEconomicCalendar();
                         }
                     } catch { /* non-critical */ }
 
@@ -581,10 +583,11 @@ export class AktienixAgent extends BaseAgent {
                     }
                 }
 
-                // 7c. Fetch insider activity during signal scan
+                // 7c. Fetch insider + analyst activity during signal scan
                 if (this.sentimentScanner) {
                     try {
                         await this.sentimentScanner.fetchInsiderActivity(config.watchlist.symbols);
+                        await this.sentimentScanner.fetchAnalystData(config.watchlist.symbols);
                     } catch { /* non-critical */ }
                 }
 
@@ -675,6 +678,17 @@ export class AktienixAgent extends BaseAgent {
         const config = this.tomlConfig;
         let { symbol, action, confidence, reasoning, currentPrice } = payload;
         this.log('info', `Evaluating signal to ${action} ${symbol} (Base Confidence: ${confidence})`);
+
+        // Earnings safety gate: block BUY within 3 days of earnings
+        if (action === 'BUY' && this.sentimentScanner) {
+            try {
+                const earningsGate = await this.sentimentScanner.getEarningsGate(symbol);
+                if (earningsGate.blocked) {
+                    this.log('warn', `EARNINGS GATE: ${symbol} — ${earningsGate.reason}`);
+                    return;
+                }
+            } catch { /* non-critical */ }
+        }
 
         // Max open positions check
         if (action === 'BUY' && this.positions.length >= config.limits.max_open_positions) {
@@ -850,7 +864,7 @@ export class AktienixAgent extends BaseAgent {
         let sentimentAdjustment = 0;
         if (this.sentimentScanner && action === 'BUY') {
             try {
-                const sentiment = await this.sentimentScanner.getConfidenceAdjustment(symbol);
+                const sentiment = await this.sentimentScanner.getConfidenceAdjustment(symbol, currentPrice);
                 sentimentAdjustment = sentiment.adjustment;
                 if (sentiment.reasons.length > 0) {
                     this.log('info', `SENTIMENT: ${symbol} → ${sentiment.reasons.join(', ')}`);
@@ -889,6 +903,18 @@ export class AktienixAgent extends BaseAgent {
             return;
         }
 
+        // Economic calendar gate: halve sizing on FOMC/CPI/NFP days
+        let econSizingMultiplier = 1.0;
+        if (this.sentimentScanner) {
+            try {
+                const econGate = await this.sentimentScanner.getEconGate();
+                if (econGate.reducedSizing) {
+                    econSizingMultiplier = 0.5;
+                    this.log('info', `ECON GATE: ${econGate.reason}`);
+                }
+            } catch { /* non-critical */ }
+        }
+
         // Bayesian tiered position sizing:
         // Adjust max position size based on historical win rate for this symbol
         // Tier: <50% → 0.5x, 50-65% → 1.0x, >65% → 1.5x
@@ -914,7 +940,7 @@ export class AktienixAgent extends BaseAgent {
 
         // Apply Bayesian multiplier to config for this trade only
         const originalMaxSize = config.capital.max_position_size_usd;
-        config.capital.max_position_size_usd = originalMaxSize * bayesSizeMultiplier;
+        config.capital.max_position_size_usd = originalMaxSize * bayesSizeMultiplier * econSizingMultiplier;
 
         // Calculate fractional qty via the position-sizer module
         const qty = PositionSizer.calc(
