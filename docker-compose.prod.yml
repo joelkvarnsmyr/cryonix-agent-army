@@ -410,6 +410,7 @@ services:
       - SOLANA_WS_URL=${SOLANA_WS_URL:-}
       - DEXCHECK_API_KEY=${DEXCHECK_API_KEY:-}
       - DUNE_API_KEY=${DUNE_API_KEY:-}
+      - XAI_API_KEY=${XAI_API_KEY:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
     networks:
