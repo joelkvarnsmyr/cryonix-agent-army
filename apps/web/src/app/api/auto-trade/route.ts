@@ -195,6 +195,7 @@ interface OpenPosition {
   moonshot_score?: number;
   trade_type?: string;
   exitPlan?: ExitPlan;
+  indicators?: Record<string, any>; // Entry-time indicators for post-trade analysis
 }
 
 // ============================================================================
@@ -1557,6 +1558,11 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             console.warn(`[BAYES] Update failed (non-critical):`, bayesErr);
           }
 
+          // Post-trade analysis: learn from every exit
+          try {
+            await postTradeAnalysis(pos, closePrice, pnlPct, exitType);
+          } catch { /* non-critical */ }
+
           results.push({
             symbol: pos.symbol,
             action: exitType,
@@ -2189,6 +2195,29 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     } catch { /* momentum data unavailable — skip gate */ }
   }
 
+  // === HTF TREND FILTER: don't buy into downtrends ===
+  // Data: All 3 losing trades on 2026-03-18 were bought during a bearish 4h trend.
+  // BTC -1.06%, AVAX -1.19%, SOL -0.15% — all would have been avoided.
+  // Exception: DEEP_VALUE_CRASH is allowed in downtrends (catching capitulation).
+  if (signal.action === 'BUY') {
+    const htfTrend = String(signal.indicators?.htf_trend ?? '');
+    const trendAligned = Boolean(signal.indicators?.trend_aligned);
+    const isDipPattern = signal.patterns?.some((p: string) =>
+      ['DEEP_VALUE_CRASH', 'DIP_BUY'].includes(p)
+    );
+    const htfFilterEnabled = (TOML as any)?.htf_filter?.enabled ?? true;
+
+    if (htfFilterEnabled && htfTrend === 'bearish' && !trendAligned && !isDipPattern) {
+      const penalty = (TOML as any)?.htf_filter?.bearish_penalty ?? 0.15;
+      signal.confidence -= penalty;
+      console.log(`[HTF-FILTER] ${signal.symbol}: -${(penalty * 100).toFixed(0)}% penalty (4h trend bearish, patterns: ${signal.patterns?.join('+')})`);
+
+      if (signal.confidence < CONFIG.MIN_CONFIDENCE) {
+        return { pass: false, reason: `HTF bearish trend: conf ${(signal.confidence * 100).toFixed(0)}% < ${(CONFIG.MIN_CONFIDENCE * 100).toFixed(0)}% after -${(penalty * 100).toFixed(0)}% penalty (patterns: ${signal.patterns?.join('+')})` };
+      }
+    }
+  }
+
   // === WEAK PATTERN FILTER: reject single-pattern signals with known poor performance ===
   // These patterns consistently lose money when they fire alone (no confirming pattern).
   // Data: RSI_OVERSOLD solo → 33% WR, -$0.48 total | EMA_BULLISH_CROSS solo → 0% WR, -$0.05
@@ -2438,6 +2467,107 @@ TP distance: ${tpDistancePct}%`;
     // On AI failure, reject (fail-closed) — don't trade without validation
     return { approved: false, aiConfidence: 0, reasoning: `AI error (fail-closed): ${msg}` };
   }
+}
+
+// ============================================================================
+// POST-TRADE ANALYSIS — Learn from every exit
+// ============================================================================
+
+async function postTradeAnalysis(
+  pos: OpenPosition,
+  exitPrice: number,
+  pnlPct: number,
+  exitType: string,
+): Promise<void> {
+  const holdMinutes = (Date.now() - new Date(pos.openedAt || Date.now()).getTime()) / 60_000;
+  const won = pnlPct > 0;
+
+  // 1. What was the market doing when we entered?
+  const htfTrend = pos.indicators?.htf_trend ?? 'unknown';
+  const entryRegime = pos.indicators?.market_regime ?? 'unknown';
+  const entryRsi = pos.indicators?.rsi ?? 50;
+
+  // 2. How far did price move from our entry?
+  const maxDrawdown = pos.entryPrice > 0 && pos.stopLoss > 0
+    ? ((pos.entryPrice - pos.stopLoss) / pos.entryPrice * 100)
+    : 0;
+  const hwmPct = pos.highWaterMark > 0 && pos.entryPrice > 0
+    ? ((pos.highWaterMark - pos.entryPrice) / pos.entryPrice * 100)
+    : 0;
+
+  // 3. Were intelligence layers aligned?
+  const smartMoneyRaw = await redis.get(`smartmoney:${pos.symbol.split('/')[0]}`);
+  const smartMoneyScore = smartMoneyRaw ? JSON.parse(smartMoneyRaw).score ?? 0 : 0;
+  const regimeNow = await redis.get('market:regime');
+
+  // 4. What happened to price AFTER we sold? (check in 5 minutes via delayed key)
+  // Store exit context so we can compare later
+  await redis.set(`post_trade:${pos.symbol}:${Date.now()}`, JSON.stringify({
+    exitPrice,
+    exitTime: Date.now(),
+    symbol: pos.symbol,
+  }), 'EX', 600); // 10 min TTL — we'll check this on next cycle
+
+  // 5. Build analysis report
+  const analysis = {
+    symbol: pos.symbol,
+    pattern: pos.pattern,
+    exitType,
+    won,
+    pnlPct: Math.round(pnlPct * 100) / 100,
+    holdMinutes: Math.round(holdMinutes),
+    entryConditions: {
+      htfTrend,
+      regime: entryRegime,
+      rsi: entryRsi,
+      confidence: pos.confidence,
+    },
+    priceAction: {
+      entry: pos.entryPrice,
+      exit: exitPrice,
+      hwm: pos.highWaterMark,
+      hwmPct: Math.round(hwmPct * 100) / 100,
+      maxDrawdownPct: Math.round(maxDrawdown * 100) / 100,
+    },
+    intelligence: {
+      smartMoneyScore,
+      regimeAtExit: regimeNow,
+    },
+    lessons: [] as string[],
+  };
+
+  // Generate lessons
+  if (!won && htfTrend === 'bearish') {
+    analysis.lessons.push('Bought in bearish HTF trend — avoid unless DEEP_VALUE_CRASH');
+  }
+  if (!won && holdMinutes < 10) {
+    analysis.lessons.push('Held < 10 minutes — likely noise/whipsaw, need stronger confirmation');
+  }
+  if (won && hwmPct > pnlPct * 2) {
+    analysis.lessons.push(`Left ${(hwmPct - pnlPct).toFixed(1)}% on table — HWM was ${hwmPct.toFixed(1)}% but exited at ${pnlPct.toFixed(1)}%`);
+  }
+  if (!won && smartMoneyScore < -30) {
+    analysis.lessons.push('Smart Money was bearish at entry — should have weighted this higher');
+  }
+  if (exitType === 'SOLD_SL' && maxDrawdown < 2) {
+    analysis.lessons.push('SL too tight — consider wider ATR multiplier for this pattern');
+  }
+  if (exitType === 'SOLD_STAGNATION' && pnlPct > -0.5) {
+    analysis.lessons.push('Stagnation exit on near-breakeven — might have recovered with more patience');
+  }
+
+  // Log analysis
+  const emoji = won ? 'W' : 'L';
+  const lessonsStr = analysis.lessons.length > 0 ? ` | Lessons: ${analysis.lessons.join('; ')}` : '';
+  console.log(`[POST-TRADE] ${emoji} ${pos.symbol} ${pos.pattern} ${exitType}: ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% in ${Math.round(holdMinutes)}min | HTF=${htfTrend} RSI=${entryRsi} HWM=${hwmPct.toFixed(1)}% SmartMoney=${smartMoneyScore}${lessonsStr}`);
+
+  // Store analysis in Redis for dashboard (last 20 analyses)
+  try {
+    const key = 'cryonix:post_trade_analyses';
+    await redis.lpush(key, JSON.stringify(analysis));
+    await redis.ltrim(key, 0, 19);
+    await redis.expire(key, 7 * 86400); // 7 day TTL
+  } catch { /* non-critical */ }
 }
 
 // ============================================================================
@@ -2692,6 +2822,7 @@ async function executeBuy(signal: Signal): Promise<{
       moonshot_score: signal.moonshot_score,
       trade_type: signal.trade_type,
       exitPlan,
+      indicators: signal.indicators, // Store entry-time indicators for post-trade analysis
     });
 
     // Sync to Postgres positions table

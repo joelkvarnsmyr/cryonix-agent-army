@@ -1147,3 +1147,7 @@ vol_adjusted = true
 baseline_atr_pct = 0.3
 min_vol_factor = 0.5
 max_vol_factor = 1.5
+
+[htf_filter]
+enabled = true
+bearish_penalty = 0.15
