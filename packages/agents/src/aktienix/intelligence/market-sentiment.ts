@@ -33,18 +33,31 @@ export class MarketSentimentScanner {
             const date = new Date().toISOString().split('T')[0];
             const res = await fetch(
                 `https://production.dataviz.cnn.io/index/fearandgreed/graphdata/${date}`,
-                { signal: AbortSignal.timeout(5000) },
+                {
+                    signal: AbortSignal.timeout(5000),
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                },
             );
             if (!res.ok) return;
             const data = await res.json();
-            const score = data?.fear_and_greed?.score ?? data?.score ?? null;
+            const score = data?.fear_and_greed?.score ?? null;
+            const rating = data?.fear_and_greed?.rating ?? null;
+            // Extract sub-indicators (CNN includes Put/Call ratio!)
+            const putCallScore = data?.put_call_options?.score ?? null;
+            const putCallRatio = data?.put_call_options?.data?.[0]?.y ?? null;
+            const vixScore = data?.market_volatility_vix?.score ?? null;
+            const momentumScore = data?.market_momentum_sp500?.score ?? null;
+
             if (score != null) {
                 await this.publisher.set(
                     'aktienix:feargreed',
-                    JSON.stringify({ score, timestamp: Date.now() }),
+                    JSON.stringify({
+                        score, rating, putCallScore, putCallRatio,
+                        vixScore, momentumScore, timestamp: Date.now(),
+                    }),
                     3600,
                 );
-                console.log(`[SENTIMENT] Fear & Greed: ${score.toFixed(0)}`);
+                console.log(`[SENTIMENT] Fear & Greed: ${score.toFixed(0)} (${rating}) | P/C: ${putCallRatio?.toFixed(2) ?? '?'} | VIX: ${vixScore?.toFixed(0) ?? '?'} | Momentum: ${momentumScore?.toFixed(0) ?? '?'}`);
             }
             this.lastFearGreedFetch = Date.now();
         } catch (err: any) {
@@ -52,42 +65,27 @@ export class MarketSentimentScanner {
         }
     }
 
-    // ── CBOE Put/Call Ratio ───────────────────────────────────────────────────
+    // ── Put/Call Ratio (extracted from CNN F&G data) ───────────────────────────
+    // CBOE CSV archive stops at 2012 — not useful. CNN F&G includes live P/C ratio
+    // as a sub-indicator, so we extract it during fetchFearGreed() and store separately.
 
     async fetchPutCallRatio(): Promise<void> {
-        // Only fetch once daily
-        if (Date.now() - this.lastPutCallFetch < 24 * 60 * 60 * 1000) return;
+        // P/C ratio is now extracted from CNN F&G data in fetchFearGreed()
+        // This method reads it from the cached feargreed data and writes a dedicated key
         try {
-            const res = await fetch(
-                'https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/indexpcarchive.csv',
-                { signal: AbortSignal.timeout(10000) },
-            );
-            if (!res.ok) return;
-            const csv = await res.text();
-            const lines = csv.trim().split('\n');
-            const lastLine = lines[lines.length - 1];
-            const parts = lastLine.split(',');
-            // CSV format varies — find the P/C ratio column (usually column index 2 or 3)
-            // Try to find a float between 0.3 and 3.0
-            let ratio: number | null = null;
-            for (const part of parts.slice(1)) {
-                const val = parseFloat(part);
-                if (val >= 0.3 && val <= 3.0) {
-                    ratio = val;
-                    break;
-                }
-            }
-            if (ratio != null) {
+            const raw = await this.publisher.get('aktienix:feargreed');
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (data.putCallRatio != null) {
                 await this.publisher.set(
                     'aktienix:putcall',
-                    JSON.stringify({ ratio, date: parts[0], timestamp: Date.now() }),
-                    86400,
+                    JSON.stringify({ ratio: data.putCallRatio, score: data.putCallScore, timestamp: Date.now() }),
+                    3600,
                 );
-                console.log(`[SENTIMENT] Put/Call ratio: ${ratio.toFixed(2)}`);
             }
             this.lastPutCallFetch = Date.now();
         } catch (err: any) {
-            console.warn(`[SENTIMENT] Put/Call fetch failed: ${err.message}`);
+            console.warn(`[SENTIMENT] Put/Call extract failed: ${err.message}`);
         }
     }
 
