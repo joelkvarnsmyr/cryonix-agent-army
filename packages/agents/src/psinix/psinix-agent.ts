@@ -50,10 +50,17 @@ interface PaperPosition {
     unrealizedPnl: number;
     psiAtEntry: number;
     coherenceAtEntry: number;
+    betaAtEntry: number;
+    atrPctAtEntry: number;  // ATR as % of price at entry
     entryTime: number;
     highWatermark: number;
     trailingActive: boolean;
     signalSourceIds: string[];
+    // Dynamic exit levels (computed at entry from Ψ state)
+    dynamicTpPct: number;
+    dynamicSlPct: number;
+    dynamicTrailActivation: number;
+    dynamicTrailDistance: number;
 }
 
 interface PaperTrade {
@@ -411,6 +418,38 @@ export class PsinixAgent {
         const qty = cappedSize / currentPrice;
         const side: 'LONG' | 'SHORT' = psi.psi > 0 ? 'LONG' : 'SHORT';
 
+        // ── Dynamic exit levels from Ψ state ──
+        // ATR as % of price (from recent prices)
+        let atrPct = 0.5; // Fallback: 0.5% per bar
+        if (recentPrices.length >= 10) {
+            let sumAbsRet = 0;
+            for (let i = 1; i < recentPrices.length; i++) {
+                sumAbsRet += Math.abs(recentPrices[i] - recentPrices[i - 1]) / recentPrices[i - 1];
+            }
+            atrPct = (sumAbsRet / (recentPrices.length - 1)) * 100; // Convert to %
+        }
+
+        // Normalize β to [0.5, 2.0] range for exit scaling
+        // High β (ordered market) → tighter exits (trend will reverse cleanly)
+        // Low β (chaotic market) → wider exits (more noise to survive)
+        const betaNorm = Math.max(0.5, Math.min(2.0, psi.beta / 3.0));
+
+        // TP scales with: coherence (wider when signals agree) + ATR (wider in volatile markets)
+        // High C → let profit run, low C → take quick profit
+        const baseTp = this.config.exits.take_profit_pct;
+        const baseSl = this.config.exits.stop_loss_pct;
+
+        const dynamicTpPct = Math.max(1.0, baseTp * (0.5 + psi.coherence * 0.8) * (atrPct / 0.3));
+        // SL scales inversely with β: chaotic market → wider SL to avoid whipsaws
+        const dynamicSlPct = Math.max(0.5, baseSl * (1 / betaNorm) * (atrPct / 0.3));
+        const dynamicTrailActivation = dynamicTpPct * 0.5;
+        const dynamicTrailDistance = dynamicSlPct * 0.67;
+
+        console.log(
+            `[psinix] Dynamic exits ${symbol}: TP=${dynamicTpPct.toFixed(1)}% SL=${dynamicSlPct.toFixed(1)}% ` +
+            `trail=${dynamicTrailActivation.toFixed(1)}%/${dynamicTrailDistance.toFixed(1)}% | ATR=${atrPct.toFixed(2)}% β=${psi.beta.toFixed(1)} C=${psi.coherence.toFixed(2)}`,
+        );
+
         // Execute paper trade (deduct fee)
         this.balance -= (cappedSize + fee);
         this.totalFees += fee;
@@ -423,10 +462,16 @@ export class PsinixAgent {
             unrealizedPnl: 0,
             psiAtEntry: psi.psi,
             coherenceAtEntry: psi.coherence,
+            betaAtEntry: psi.beta,
+            atrPctAtEntry: atrPct,
             entryTime: Date.now(),
             highWatermark: currentPrice,
             trailingActive: false,
             signalSourceIds: sourceIds,
+            dynamicTpPct,
+            dynamicSlPct,
+            dynamicTrailActivation,
+            dynamicTrailDistance,
         });
 
         const trade: PaperTrade = {
@@ -459,8 +504,6 @@ export class PsinixAgent {
     // ── Exit Management ──────────────────────────────────────────────
 
     private async checkExits(): Promise<void> {
-        const config = this.config.exits;
-
         for (const [symbol, pos] of this.positions) {
             const price = this.priceCache.get(symbol) ?? pos.currentPrice;
             pos.currentPrice = price;
@@ -474,26 +517,32 @@ export class PsinixAgent {
             if (pos.side === 'LONG' && price > pos.highWatermark) pos.highWatermark = price;
             if (pos.side === 'SHORT' && price < pos.highWatermark) pos.highWatermark = price;
 
+            // Use DYNAMIC exit levels (computed at entry from Ψ state)
+            const tp = pos.dynamicTpPct;
+            const sl = pos.dynamicSlPct;
+            const trailAct = pos.dynamicTrailActivation;
+            const trailDist = pos.dynamicTrailDistance;
+
             let exitReason: string | null = null;
 
-            // Stop loss
-            if (pnlPct <= -config.stop_loss_pct) {
-                exitReason = `SL hit (${pnlPct.toFixed(1)}%)`;
+            // Stop loss (dynamic)
+            if (pnlPct <= -sl) {
+                exitReason = `SL hit (${pnlPct.toFixed(1)}% / limit -${sl.toFixed(1)}%)`;
             }
-            // Take profit
-            else if (pnlPct >= config.take_profit_pct) {
-                exitReason = `TP hit (${pnlPct.toFixed(1)}%)`;
+            // Take profit (dynamic)
+            else if (pnlPct >= tp) {
+                exitReason = `TP hit (${pnlPct.toFixed(1)}% / target ${tp.toFixed(1)}%)`;
             }
-            // Trailing stop
+            // Trailing stop (dynamic)
             else {
-                if (pnlPct >= config.trailing_activation_pct) pos.trailingActive = true;
+                if (pnlPct >= trailAct) pos.trailingActive = true;
                 if (pos.trailingActive) {
                     const hwmPnl = pos.side === 'LONG'
                         ? ((pos.highWatermark - pos.entryPrice) / pos.entryPrice) * 100
                         : ((pos.entryPrice - pos.highWatermark) / pos.entryPrice) * 100;
                     const drawdown = hwmPnl - pnlPct;
-                    if (drawdown >= config.trailing_stop_pct) {
-                        exitReason = `Trailing stop (${drawdown.toFixed(1)}% from HWM)`;
+                    if (drawdown >= trailDist) {
+                        exitReason = `Trailing stop (${drawdown.toFixed(1)}% from HWM / dist ${trailDist.toFixed(1)}%)`;
                     }
                 }
             }
