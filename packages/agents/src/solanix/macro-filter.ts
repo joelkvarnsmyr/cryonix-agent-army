@@ -137,8 +137,8 @@ export class MacroFilter {
         try {
             const fgRaw = await this.publisher.get('aktienix:feargreed');
             if (fgRaw) {
-                const fg = JSON.parse(fgRaw) as { vix?: number; score?: number };
-                const vix = fg.vix ?? 0;
+                const fg = JSON.parse(fgRaw) as { vix?: number; vixScore?: number; score?: number };
+                const vix = fg.vixScore ?? fg.vix ?? 0;
                 if (vix >= 30) {
                     result.delta -= 0.08;
                     result.reasons.push(`VIX=${vix.toFixed(0)} panic risk-off -8%`);
