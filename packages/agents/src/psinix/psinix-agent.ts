@@ -36,6 +36,8 @@ interface PsinixConfig {
         min_hold_bars: number;           // Minimum bars to hold a position (anti-churn)
         profit_factor_gate: number;      // If rolling PF < this, halve positions
         rolling_window: number;          // Number of recent trades for dynamic Kelly + PF
+        post_exit_cooldown_ms: number;   // Per-symbol cooldown after exit (anti-churn)
+        min_weighted_signal: number;     // Min |weightedSignal| to enter (filter weak entries)
     };
     equity: { finnhub_api_key: string; poll_interval_ms: number };
     timing: { poll_interval_ms: number; price_update_ms: number };
@@ -163,6 +165,7 @@ export class PsinixAgent {
     private circuitBreakerUntil = 0;       // Timestamp when CB lifts
     private peakEquity: number = 0;
     private recentTradePnls: number[] = []; // Rolling window for dynamic Kelly + PF
+    private symbolCooldownUntil = new Map<string, number>(); // Per-symbol re-entry cooldown
 
     constructor() {
         this.config = this.loadConfig();
@@ -337,6 +340,18 @@ export class PsinixAgent {
         if (!currentPrice || currentPrice <= 0) return;
 
         const risk = this.config.risk;
+
+        // ── Per-symbol cooldown (anti-churn after exit) ──
+        const cooldownUntil = this.symbolCooldownUntil.get(symbol) ?? 0;
+        if (Date.now() < cooldownUntil) return;
+
+        // ── Min weighted signal strength ──
+        if (Math.abs(psi.weightedSignal) < risk.min_weighted_signal) {
+            if (Math.abs(psi.psi) > 0.03) {
+                console.log(`[psinix] WEAK SIGNAL ${symbol} — |weightedSignal|=${Math.abs(psi.weightedSignal).toFixed(3)} < ${risk.min_weighted_signal}`);
+            }
+            return;
+        }
 
         // ── Circuit breaker ──
         if (Date.now() < this.circuitBreakerUntil) return;
@@ -589,6 +604,9 @@ export class PsinixAgent {
             }
         }
 
+        // ── Per-symbol cooldown (anti-churn) ──
+        this.symbolCooldownUntil.set(symbol, Date.now() + risk.post_exit_cooldown_ms);
+
         // ── Rolling PnL tracking ──
         this.recentTradePnls.push(pnl);
         if (this.recentTradePnls.length > risk.rolling_window) {
@@ -704,6 +722,8 @@ export class PsinixAgent {
                 min_hold_bars: 3,
                 profit_factor_gate: 0.8,
                 rolling_window: 30,
+                post_exit_cooldown_ms: 30 * 60 * 1000, // 30 minutes
+                min_weighted_signal: 0.15,
             },
             equity: { finnhub_api_key: '', poll_interval_ms: 300_000 },
             timing: { poll_interval_ms: 60000, price_update_ms: 30000 },

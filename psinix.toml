@@ -64,6 +64,10 @@ min_hold_bars = 3
 profit_factor_gate = 0.8
 # Number of recent trades for dynamic Kelly + profit factor calculation
 rolling_window = 30
+# Per-symbol cooldown after exit (ms) — prevents re-entry churn (30 min)
+post_exit_cooldown_ms = 1800000
+# Minimum |weightedSignal| to enter — filters weak entries like BTC LONG at 0.074
+min_weighted_signal = 0.15
 
 [equity]
 # Finnhub API key (free tier, 60 calls/min). Empty = equity signals disabled.
