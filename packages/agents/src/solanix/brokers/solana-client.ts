@@ -223,12 +223,18 @@ export class SolanaClient implements BrokerClient {
         return 6; // conservative default
     }
 
+    /** Max acceptable divergence between Jupiter and DexScreener prices */
+    private readonly MAX_PRICE_DIVERGENCE = 0.10; // 10%
+
     private async fetchJupiterPrice(
         mint: string,
         _side: 'BUY' | 'SELL',
         _usdcAmount: number,
     ): Promise<{ success: boolean; price?: number; message?: string }> {
         const tokenDecimals = this.getTokenDecimals(mint);
+
+        let jupiterPrice: number | null = null;
+        let dexPrice: number | null = null;
 
         // 1. Try Jupiter — quote 1 USDC worth of the output token
         try {
@@ -242,34 +248,51 @@ export class SolanaClient implements BrokerClient {
             const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
             if (res.ok) {
                 const data = (await res.json()) as { outAmount: string };
-                // outAmount is in the token's native smallest unit — divide by 10^tokenDecimals
                 const tokensPerUsdc = Number(data.outAmount) / (10 ** tokenDecimals);
                 if (tokensPerUsdc > 0) {
-                    return { success: true, price: 1 / tokensPerUsdc };
+                    jupiterPrice = 1 / tokensPerUsdc;
                 }
             }
         } catch {
             // Jupiter unreachable — fall through to DexScreener
         }
 
-        // 2. Fallback: DexScreener priceUsd
+        // 2. Fetch DexScreener price (always, for cross-validation)
         try {
             const res = await fetch(
                 `https://api.dexscreener.com/latest/dex/tokens/${mint}`,
                 { signal: AbortSignal.timeout(8_000) },
             );
-            if (!res.ok) return { success: false, message: `DexScreener returned ${res.status}` };
-
-            const data = (await res.json()) as { pairs?: { priceUsd?: string; chainId?: string }[] };
-            const solPair = data.pairs?.find(p => p.chainId === 'solana' && p.priceUsd);
-            if (solPair?.priceUsd) {
-                return { success: true, price: parseFloat(solPair.priceUsd) };
+            if (res.ok) {
+                const data = (await res.json()) as { pairs?: { priceUsd?: string; chainId?: string }[] };
+                const solPair = data.pairs?.find(p => p.chainId === 'solana' && p.priceUsd);
+                if (solPair?.priceUsd) {
+                    dexPrice = parseFloat(solPair.priceUsd);
+                }
             }
-            return { success: false, message: 'No Solana pair found on DexScreener' };
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { success: false, message: `Price fetch failed: ${msg}` };
+        } catch {
+            // DexScreener unreachable
         }
+
+        // 3. Cross-validate: if both sources available, check divergence
+        if (jupiterPrice && dexPrice) {
+            const divergence = Math.abs(jupiterPrice - dexPrice) / dexPrice;
+            if (divergence > this.MAX_PRICE_DIVERGENCE) {
+                console.warn(
+                    `[price] BAD QUOTE: Jupiter=$${jupiterPrice.toFixed(6)} vs DexScreener=$${dexPrice.toFixed(6)} ` +
+                    `(${(divergence * 100).toFixed(1)}% divergence) — using DexScreener`,
+                );
+                return { success: true, price: dexPrice };
+            }
+            // Both agree — use Jupiter (more precise for swaps)
+            return { success: true, price: jupiterPrice };
+        }
+
+        // 4. Only one source available — use it
+        if (jupiterPrice) return { success: true, price: jupiterPrice };
+        if (dexPrice) return { success: true, price: dexPrice };
+
+        return { success: false, message: 'Both Jupiter and DexScreener unavailable' };
     }
 
     private executePaperBuy(

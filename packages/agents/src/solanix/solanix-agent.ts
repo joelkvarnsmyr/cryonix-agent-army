@@ -746,6 +746,15 @@ export class SolanaAgent extends BaseAgent {
                 dollarAmount: usdcToSpend, confidence, reasoning: reasoning ?? undefined,
                 orderId: result.orderId, positionId: posId ?? undefined,
                 paperTrading: this.tomlConfig.broker.paper_trading,
+                metadata: {
+                    entry: {
+                        fillPrice: result.filledAvgPrice ?? 0,
+                        signalPrice: currentPrice ?? 0,
+                        rawConfidence: confidence,
+                        adjustedConfidence,
+                        source: source ?? 'dexscreener',
+                    },
+                },
             });
 
             // Mirror BUY to shadow strategies

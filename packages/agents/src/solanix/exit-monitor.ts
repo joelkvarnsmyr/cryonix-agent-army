@@ -19,6 +19,8 @@ export interface ExitConfig {
     trailing_activation_pct: number;
     stagnation_timeout_days: number;
     stagnation_min_pnl_pct: number;
+    /** Hard cap on max loss per position — emergency exit (default 10%) */
+    max_loss_pct?: number;
 }
 
 export class SolanaExitMonitor {
@@ -40,6 +42,12 @@ export class SolanaExitMonitor {
 
         const positionCost = pos.avgEntryPrice * pos.qty;
         const pnlPct = (pos.unrealizedPl / positionCost) * 100;
+
+        // Emergency exit — hard cap prevents catastrophic losses from bad quotes
+        const maxLoss = config.max_loss_pct ?? 10;
+        if (pnlPct <= -maxLoss) {
+            return { symbol: pos.symbol, reason: 'stop_loss', pnlPct };
+        }
 
         // Take Profit
         if (pnlPct >= config.take_profit_pct) {

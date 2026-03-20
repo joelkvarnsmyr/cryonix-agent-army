@@ -94,7 +94,14 @@ export class BayesianLearner {
 
         // 1. Symbol posterior — uses avgPnl as primary signal (not just WR)
         //    A token with 60% WR but -$0.50 avgPnl is bad; +$2 avgPnl is good.
+        //    Hard block: 0% WR after 3+ trades → reject entirely.
         const symPost = this.symbolPosteriors.get(features.symbol);
+        if (symPost && symPost.sampleSize >= 3 && symPost.wins === 0) {
+            return {
+                adjusted: 0,
+                factors: [`${features.symbol} 0% WR after ${symPost.sampleSize} trades → BLOCKED`],
+            };
+        }
         if (symPost && symPost.sampleSize >= 3) {
             // Normalize avgPnl: $2 avg → +0.10 boost, -$2 avg → -0.10 penalty
             const pnlSignal = Math.max(-0.15, Math.min(0.15, symPost.avgPnl * 0.05));
