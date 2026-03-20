@@ -18,36 +18,31 @@ APEX is the 8th trading instance in the Cryonix Agent Army. Unlike the other 7 i
 
 APEX creates zero signals. It reads all 7 instances via Redis:
 
-| Source | Redis Key | Data Consumed |
-|--------|-----------|---------------|
+| Source | Redis Keys | Data Consumed |
+|--------|------------|---------------|
 | Cryonix | `trades:pending`, `positions:open` | DIP_BUY/DEEP_VALUE signals + confidence scores |
-| Copynix | `copynix:state` | Whale buys (score ≥80), token address, timestamp |
-| Ψnix | `psinix:state` | Kuramoto order parameter Ψ, coherence C, regime |
+| Copynix | `copynix:positions`, `copynix:status`, `copynix:signals` (NEW) | Whale buy events with score, token, timestamp |
+| Ψnix | `psinix:positions`, `psinix:status` | Kuramoto order parameter Ψ, coherence C, regime |
 | Polymarket | `polymarket:crypto`, `polymarket:summary` | Sentiment 0-100, delta shifts ≥20pt |
-| Aktienix | `aktienix:state` | Macro signals, crypto-correlated ticker moves |
-| Solanix | `solanix:state` | DexScreener momentum, token unlock warnings |
-| Vedic | `vedic:cycle` (NEW key) | Venus Rx active/inactive, Moon speed, Rx count |
+| Aktienix | `aktienix:signals`, `aktienix:status` | Macro signals, crypto-correlated ticker moves |
+| Solanix | `solanix:positions`, `solanix:status`, `solanix:stablecoin` | DexScreener momentum, token unlock warnings |
+| Vedic | `vedic:planets` (EXISTING) | Venus/Mercury retrograde status, Moon speed |
 | CMC | `cmc:fear_greed`, `cmc:global` | Fear & Greed index, BTC dominance trend |
 
-**No new API integrations required** — all data already exists in Redis from the other instances.
+**New Redis publishers required**:
+- **Copynix**: Add `copynix:signals` key — publish whale buy events (score, token, direction, timestamp) from `copynix-agent.ts` consensus logic. Currently consensus data stays in-memory and is not exposed.
+- **Aktienix**: The existing `aktienix:signals` key from `state-publisher.ts` can be read directly.
 
-### Vedic Cycle Publisher (New Requirement)
+**No new external API integrations required** — all market data already flows through the other instances into Redis.
 
-The Vedic subsystem currently has no Redis publisher. APEX requires a lightweight service or cron job that writes the current Vedic astrology state to `vedic:cycle` with fields:
+### Vedic Data (Existing `vedic:planets` Key)
 
-```json
-{
-  "venus_rx": true|false,
-  "venus_rx_start": "2026-10-05T00:00:00Z",
-  "venus_rx_end": "2026-11-15T00:00:00Z",
-  "mercury_rx": true|false,
-  "moon_speed": "fast"|"slow",
-  "retro_count": 0-5,
-  "updated_at": "2026-03-20T12:00:00Z"
-}
-```
+The Vedic subsystem already publishes planetary data to `vedic:planets` via the VedicScout tank. This key contains retrograde status for all planets including Venus. APEX reads `vedic:planets` and extracts:
+- `Venus.is_retrograde` → Venus Rx active/inactive
+- `Mercury.is_retrograde` → Mercury Rx status
+- Planet retrograde count (sum of `is_retrograde` across all planets)
 
-This can be a simple Python script (`scripts/strategy-lab/vedic_cycle_publisher.py`) running daily via cron, using the existing Swiss Ephemeris (`swisseph`) library from the Vedic research scripts.
+No new publisher needed — the data is already there.
 
 ---
 
@@ -57,16 +52,20 @@ APEX operates in 3 distinct modes, each optimized for a specific proven edge:
 
 ### Mode 1: Venus Rx Harvest
 
-**When**: Vedic Venus Retrograde cycle is active (~40 days, 3-4 times/year)
-**Market**: Binance Futures (1-3x leverage SHORT)
-**Sizing**: 40% of capital per trade (fractional Kelly based on 96.4% historical WR)
+**When**: Vedic Venus Retrograde cycle is active (~40 days, occurs ~once every 18 months)
+**Market**: Binance Spot — simulated short via inverse position (sell at entry, rebuy lower). Binance Futures can be enabled later if account-level futures permissions are activated.
+**Sizing**: 24% of capital per trade (quarter-Kelly optimal for WR=0.964)
 **Symbols**: BTC, ETH, SOL, BNB (same as Vedic research validation set)
 
 **Entry logic**:
-- Venus Rx flag active in `vedic:cycle`
-- Wait for Cryonix/Ψnix bearish confirmation (any bearish signal)
+- Venus Rx flag active in `vedic:planets` (Venus.is_retrograde = true)
+- Wait for bearish confirmation from any source:
+  - Cryonix RSI_OVERBOUGHT or MACD_BEARISH_CROSS signal
+  - Ψnix coherence C ≥ 0.7 with bearish regime
+  - CMC Fear & Greed dropping (delta ≤ -10 in 24h)
+  - Polymarket crypto sentiment falling (delta ≤ -15)
 - Grok AI validation (fail-closed)
-- Open SHORT on Binance Futures at 1-3x leverage
+- Execute simulated SHORT (sell existing holding or paper-track short entry)
 
 **Exit**:
 - TP: +8%
@@ -74,7 +73,7 @@ APEX operates in 3 distinct modes, each optimized for a specific proven edge:
 - Trailing: 3% (activation at +4%)
 - Max hold: 15 days
 
-**Expected performance**: 96.4% WR × +6.5% avg = exceptional risk-adjusted returns during active cycles. Dormant 80% of the year.
+**Expected performance**: 96.4% WR × +6.5% avg = exceptional risk-adjusted returns during active cycles. Dormant ~90% of the time (Venus Rx occurs ~once every 18 months). When active, this is the highest-edge mode in the entire system.
 
 ### Mode 2: Dip Sniper
 
@@ -124,20 +123,33 @@ APEX operates in 3 distinct modes, each optimized for a specific proven edge:
 
 ## Confluence Scoring System
 
-Every signal from every instance contributes points based on historical edge strength:
+Every signal from every instance contributes points based on historical edge strength. Signals are direction-aware (bullish or bearish) — only signals matching the trade direction contribute.
+
+**Bullish signals (BUY):**
 
 | Signal | Points | Condition |
 |--------|--------|-----------|
-| Vedic Venus Rx active | +40 | Only during Rx cycle (40-day windows) |
 | Cryonix DEEP_VALUE_CRASH | +30 | confidence ≥ 75% |
 | Cryonix DIP_BUY | +25 | confidence ≥ 70% |
 | Copynix single-whale buy (≥80 score) | +25 | Same symbol, within 5min |
-| Polymarket crypto sentiment shift | +15 | Delta ≥ +20 points |
-| CMC Fear & Greed ≤ 25 | +15 | Contrarian dip signal |
-| Ψnix coherence C ≥ 0.7 | +10 | Phase alignment confirmed |
+| Polymarket crypto sentiment rising | +15 | Delta ≥ +20 points |
+| CMC Fear & Greed ≤ 25 (extreme fear) | +15 | Contrarian dip signal |
+| Ψnix coherence C ≥ 0.7 (bullish regime) | +10 | Phase alignment confirmed, bullish |
 | Solanix DexScreener volume spike | +10 | Top 10 trending + >$50K volume |
 | Aktienix macro bullish signal | +5 | Crypto-correlated tickers rising |
 | CMC BTC dominance falling | +5 | Altcoin rotation signal |
+
+**Bearish signals (SHORT — Venus Rx mode only):**
+
+| Signal | Points | Condition |
+|--------|--------|-----------|
+| Vedic Venus Rx active | +40 | Venus.is_retrograde = true in `vedic:planets` |
+| Cryonix RSI_OVERBOUGHT | +20 | confidence ≥ 70% |
+| Cryonix MACD_BEARISH_CROSS | +15 | confidence ≥ 65% |
+| Polymarket crypto sentiment falling | +15 | Delta ≤ -15 points |
+| CMC Fear & Greed dropping | +10 | F&G delta ≤ -10 in 24h |
+| Ψnix coherence C ≥ 0.7 (bearish regime) | +10 | Phase alignment confirmed, bearish |
+| CMC BTC dominance rising | +5 | Capital flight from alts |
 
 ### Execution Thresholds
 
@@ -152,8 +164,8 @@ Every signal from every instance contributes points based on historical edge str
 **Scenario A — Full Kelly BUY (score 70)**:
 Cryonix DEEP_VALUE_CRASH on ETH (30) + Copynix whale buys ETH (25) + CMC F&G at 20 (15) = 70 → Full Kelly spot BUY
 
-**Scenario B — Full Kelly SHORT (score 65)**:
-Venus Rx active (40) + Cryonix DIP_BUY bearish divergence (25) = 65 → Full Kelly futures SHORT
+**Scenario B — Full Kelly SHORT (score 75)**:
+Venus Rx active (40) + Cryonix RSI_OVERBOUGHT (20) + Polymarket crypto falling (15) = 75 → Full Kelly simulated SHORT
 
 **Scenario C — Half Kelly BUY (score 50)**:
 Cryonix DIP_BUY on SOL (25) + Polymarket crypto sentiment surging (15) + Ψnix coherence 0.75 (10) = 50 → Half Kelly spot BUY
@@ -173,10 +185,10 @@ Kelly fraction = 0.25 (quarter Kelly for survivability)
 Kelly % = 0.25 × (WR × avg_win - (1 - WR) × avg_loss) / avg_win
 ```
 
-Per-mode Kelly inputs:
-- Venus Rx: WR=0.964, avg_win=8%, avg_loss=3% → Kelly suggests ~22% per trade → capped at 40%
-- Dip Sniper: WR=0.85, avg_win=5%, avg_loss=2.5% → Kelly suggests ~16% per trade → use 20%
-- Confluence: WR=0.70, avg_win=6%, avg_loss=3% → Kelly suggests ~11% per trade → use 15%
+Per-mode Kelly inputs (quarter-Kelly = cap):
+- Venus Rx: WR=0.964, avg_win=8%, avg_loss=3% → quarter-Kelly ~24% per trade
+- Dip Sniper: WR=0.85, avg_win=5%, avg_loss=2.5% → quarter-Kelly ~16% per trade → use 20% (slight overbet OK given high WR)
+- Confluence: WR=0.70, avg_win=6%, avg_loss=3% → quarter-Kelly ~11% per trade → use 15%
 
 ### Circuit Breakers
 
@@ -192,7 +204,7 @@ Per-mode Kelly inputs:
 ```
 Total: $950 USDC
 ├── Active trading: 80% ($760)
-│   ├── Venus Rx reserve: 40% when active
+│   ├── Venus Rx reserve: 24% when active
 │   ├── Dip Sniper: 20% per trade
 │   └── Confluence: 15% per trade
 └── Cash reserve: 20% ($190) — never deployed, emergency buffer
@@ -236,9 +248,6 @@ packages/agents/src/apex/
 
 scripts/services/
   apex-runner.ts           # Docker entrypoint (same pattern as solanix-runner.ts)
-
-scripts/strategy-lab/
-  vedic_cycle_publisher.py # Publishes vedic:cycle to Redis (daily cron)
 
 apps/web/src/app/
   apex/page.tsx            # Dashboard page
@@ -298,7 +307,7 @@ enabled = true
 leverage = 2
 max_leverage = 3
 symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC", "BNB/USDC"]
-sizing_pct = 40.0
+sizing_pct = 24.0
 tp_pct = 8.0
 sl_pct = 3.0
 trailing_pct = 3.0
@@ -370,11 +379,42 @@ APEX routes trades to the appropriate exchange based on mode and asset:
 | Asset Type | Exchange | SDK | Existing? |
 |-----------|----------|-----|-----------|
 | CEX crypto (BTC, ETH, SOL, BNB) spot | Binance | CCXT | Yes (Cryonix) |
-| CEX crypto futures/short | Binance Futures | CCXT | New (enable futures on existing CCXT) |
+| Venus Rx shorts | Paper-simulated | Internal tracking | New (paper only — no Binance Futures needed) |
 | Solana DEX tokens | Jupiter | @jup-ag/api | Yes (Solanix) |
 | US stocks (if confluence includes Aktienix) | Alpaca | @alpacahq/alpaca-trade-api | Yes (Aktienix) |
 
-APEX reuses existing exchange clients — no new API keys needed. For Binance Futures, the same `BINANCE_API_KEY` works (futures enabled on same account).
+APEX reuses existing exchange clients — no new API keys needed. Venus Rx shorts are paper-simulated (track entry price, compute P&L on exit) until Binance Futures is explicitly enabled at the account level.
+
+### Symbol Normalization
+
+Instances use different symbol formats. APEX normalizes via a mapping table:
+
+| Instance | Format | Example | Normalized |
+|----------|--------|---------|------------|
+| Cryonix | `{BASE}/USDC` | `BTC/USDC` | `BTC` |
+| Copynix | Solana mint address | `So11...` | `SOL` (via mint→symbol lookup) |
+| Solanix | Solana mint address | `EPjF...` | `BONK` (via DexScreener metadata) |
+| Aktienix | Ticker | `COIN` | `COIN` (stock, not directly tradeable on crypto) |
+| Ψnix | `{BASE}/USDC` | `ETH/USDC` | `ETH` |
+
+Cross-market correlation mappings (for Mode 3):
+- `BTC` ↔ `MSTR`, `COIN` (crypto-correlated stocks)
+- `ETH` ↔ `ETH/USDC` on Binance or wrapped SOL DEX
+- Solana memecoins: only match within Solana DEX (no CEX equivalent)
+
+### Deduplication with Source Instances
+
+APEX and source instances may trade the same signal simultaneously. This is **intentional** — APEX only fires on high-confluence setups where doubling exposure is warranted. However:
+- APEX tracks which source signals triggered its trade in `apex:trades` metadata
+- The Overview dashboard shows combined exposure across all instances
+- Circuit breakers operate independently per instance (APEX drawdown ≠ Cryonix drawdown)
+
+### Signal Staleness Protection
+
+Before scoring, APEX checks the `updated_at` or TTL of each Redis key:
+- If a source key is older than **5 minutes**, that source's contribution is zeroed (treated as offline)
+- If `vedic:planets` is older than **24 hours**, Venus Rx signal is zeroed
+- Dashboard shows staleness warnings per source
 
 ---
 
