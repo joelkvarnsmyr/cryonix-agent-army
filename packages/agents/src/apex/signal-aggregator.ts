@@ -9,10 +9,8 @@
  *   trades:pending       — Cryonix pending signals (JSON string, GET)
  *   copynix:signals      — Copynix whale events (JSON string, GET)
  *   psinix:positions     — Ψnix positions (JSON string, GET)
- *   psinix:status        — Ψnix status string (GET, may be plain 'running')
  *   psinix:state         — Ψnix full state with positions+coherence (JSON, GET)
  *   polymarket:crypto    — Polymarket crypto sentiment (JSON string, GET)
- *   polymarket:summary   — Polymarket overall summary (JSON string, GET)
  *   aktienix:signals     — Aktienix signals (Redis LIST, LRANGE 0 -1)
  *   solanix:status       — Solanix status (JSON string, GET)
  *   vedic:planets        — Vedic planetary data (JSON string, GET)
@@ -60,15 +58,13 @@ export interface AggregatorSnapshot {
 const SLOT_CRYONIX         = 0;
 const SLOT_COPYNIX         = 1;
 const SLOT_PSINIX_POS      = 2;
-const SLOT_PSINIX_STATUS   = 3;
-const SLOT_PSINIX_STATE    = 4;
-const SLOT_POLY_CRYPTO     = 5;
-const SLOT_POLY_SUMMARY    = 6;
-const SLOT_AKTIENIX        = 7;   // LRANGE — returns string[]
-const SLOT_SOLANIX         = 8;
-const SLOT_VEDIC           = 9;
-const SLOT_CMC_FG          = 10;
-const SLOT_CMC_GLOBAL      = 11;
+const SLOT_PSINIX_STATE    = 3;
+const SLOT_POLY_CRYPTO     = 4;
+const SLOT_AKTIENIX        = 5;   // LRANGE — returns string[]
+const SLOT_SOLANIX         = 6;
+const SLOT_VEDIC           = 7;
+const SLOT_CMC_FG          = 8;
+const SLOT_CMC_GLOBAL      = 9;
 
 // ---------------------------------------------------------------------------
 // Staleness thresholds
@@ -111,10 +107,8 @@ export class SignalAggregator {
         pipe.get('trades:pending');       // SLOT_CRYONIX
         pipe.get('copynix:signals');      // SLOT_COPYNIX
         pipe.get('psinix:positions');     // SLOT_PSINIX_POS
-        pipe.get('psinix:status');        // SLOT_PSINIX_STATUS
-        pipe.get('psinix:state');         // SLOT_PSINIX_STATE
-        pipe.get('polymarket:crypto');    // SLOT_POLY_CRYPTO
-        pipe.get('polymarket:summary');   // SLOT_POLY_SUMMARY
+        pipe.get('psinix:state');        // SLOT_PSINIX_STATE
+        pipe.get('polymarket:crypto');   // SLOT_POLY_CRYPTO
         pipe.lrange('aktienix:signals', 0, -1); // SLOT_AKTIENIX — LIST!
         pipe.get('solanix:status');       // SLOT_SOLANIX
         pipe.get('vedic:planets');        // SLOT_VEDIC
@@ -488,6 +482,7 @@ export class SignalAggregator {
             }
         } catch (err) {
             console.warn('[apex/aggregator] CMC Global parse error:', err instanceof Error ? err.message : err);
+            staleness['cmc'] = true;
         }
 
         // 8. Aktienix — aktienix:signals (Redis LIST)
@@ -581,8 +576,8 @@ export class SignalAggregator {
                                 direction: 'bullish',
                                 source: 'solanix',
                                 signalType: 'dex_momentum',
-                                confidence: Math.round(confidence * 100), // normalize 0-1 → 0-100
-                                score: Math.round(confidence * 100),
+                                confidence: Math.min(100, Math.round(confidence > 1 ? confidence : confidence * 100)),
+                                score: Math.min(100, Math.round(confidence > 1 ? confidence : confidence * 100)),
                                 timestamp: ts,
                                 raw: pos,
                             });
