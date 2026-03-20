@@ -7,6 +7,10 @@ import {
   PlanetGlyph,
   VedicSignalBadge,
 } from './vedic-visuals';
+import {
+  ComposedChart, Line, Bar, Area, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, ReferenceLine, Cell,
+} from 'recharts';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -203,6 +207,7 @@ export default function VedicPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [summary, setSummary] = useState<TradesSummary | null>(null);
+  const [forecast, setForecast] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const fetchAll = useCallback(async () => {
@@ -221,6 +226,11 @@ export default function VedicPage() {
         const t = await tradesRes.json();
         setTrades(t.trades ?? []);
         setSummary(t.summary ?? null);
+      }
+      const forecastRes = await fetch('/api/vedic/forecast');
+      if (forecastRes.ok) {
+        const fc = await forecastRes.json();
+        setForecast(fc.forecast ?? []);
       }
       setError(null);
     } catch (err) {
@@ -714,6 +724,87 @@ export default function VedicPage() {
             </div>
           )}
         </div>
+
+        {/* ── V4 Score Forecast ── */}
+        {forecast.length > 0 && (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-bold text-zinc-300">V4 Score Forecast — Next 60 Days</h3>
+              <span className="text-[10px] text-zinc-500">Deterministic (planetary positions pre-computed)</span>
+            </div>
+            <ResponsiveContainer width="100%" height={200}>
+              <ComposedChart data={forecast} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#666' }} interval={6} />
+                <YAxis tick={{ fontSize: 9, fill: '#666' }} domain={[-50, 50]} />
+                <Tooltip
+                  contentStyle={{ background: '#1a1a1a', border: '1px solid #333', fontSize: 11 }}
+                  labelStyle={{ color: '#999' }}
+                  formatter={(value: number, name: string) => [value, name === 'score' ? 'V4 Score' : name]}
+                />
+                <ReferenceLine y={0} stroke="#555" strokeDasharray="3 3" />
+                <ReferenceLine y={8} stroke="#22c55e" strokeDasharray="2 2" strokeOpacity={0.3} label={{ value: 'Buy', fill: '#22c55e', fontSize: 9 }} />
+                <ReferenceLine y={-8} stroke="#ef4444" strokeDasharray="2 2" strokeOpacity={0.3} label={{ value: 'Avoid', fill: '#ef4444', fontSize: 9 }} />
+                <Area dataKey="score" fill="#8b5cf6" fillOpacity={0.1} stroke="none" />
+                <Line dataKey="score" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+                {/* Mercury Rx indicator: show dots where Mercury is Rx */}
+                <Line
+                  dataKey={(d: any) => d.mercury_rx ? d.score : null}
+                  stroke="#f59e0b"
+                  strokeWidth={0}
+                  dot={{ fill: '#f59e0b', r: 3 }}
+                  connectNulls={false}
+                  name="Mercury Rx"
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div className="flex gap-4 mt-1 text-[10px] text-zinc-500">
+              <span><span className="inline-block w-3 h-0.5 bg-purple-500 mr-1"></span>V4 Score</span>
+              <span><span className="inline-block w-2 h-2 rounded-full bg-amber-500 mr-1"></span>Mercury Rx</span>
+              <span className="text-green-500">--- Buy zone (&ge;8)</span>
+              <span className="text-red-500">--- Avoid zone (&le;-8)</span>
+            </div>
+          </div>
+        )}
+
+        {/* ── Trade P&L Chart ── */}
+        {trades.filter(t => t.pnl != null).length > 0 && (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-bold text-zinc-300">Trade P&L</h3>
+              <span className="text-[10px] text-zinc-500">{summary?.total ?? 0} closed trades</span>
+            </div>
+            <ResponsiveContainer width="100%" height={150}>
+              <ComposedChart
+                data={trades.filter(t => t.pnl != null).map((t, i) => ({
+                  name: `${t.base_asset} ${t.source}`,
+                  pnl: t.pnl,
+                  pnlPct: t.pnl_pct,
+                  idx: i,
+                }))}
+                margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#666' }} />
+                <YAxis tick={{ fontSize: 9, fill: '#666' }} />
+                <Tooltip
+                  contentStyle={{ background: '#1a1a1a', border: '1px solid #333', fontSize: 11 }}
+                  formatter={(value: number) => [`$${value.toFixed(2)}`, 'P&L']}
+                />
+                <ReferenceLine y={0} stroke="#555" />
+                <Bar
+                  dataKey="pnl"
+                  fill="#22c55e"
+                  radius={[2, 2, 0, 0]}
+                >
+                  {trades.filter(t => t.pnl != null).map((t, i) => (
+                    <Cell key={i} fill={(t.pnl ?? 0) >= 0 ? '#22c55e' : '#ef4444'} />
+                  ))}
+                </Bar>
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        )}
 
         {/* ── Research Info ── */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">

@@ -98,6 +98,26 @@ class VedicScout:
             pass
         bayes_prob, bayes_details = self.bayes.predict(bayes_signals)
 
+        # ── 4b. Forecast: compute V4 score for next 60 days ──
+        # Planetary positions are deterministic — we can predict future scores
+        from datetime import timedelta
+        forecast = []
+        for d in range(1, 61):
+            try:
+                future_dt = sky.timestamp + timedelta(days=d)
+                future_sky = get_sky_state(future_dt)
+                future_score = compute_vedic_score(future_sky)
+                forecast.append({
+                    "date": future_dt.strftime("%Y-%m-%d"),
+                    "day": d,
+                    "score": future_score.overall_score,
+                    "label": future_score.label,
+                    "mercury_rx": future_score.is_mercury_retrograde,
+                    "retrogrades": len(future_score.retrogrades),
+                })
+            except Exception:
+                continue
+
         # ── 5. Write everything to Redis ──
         pipe = self.redis.pipeline()
 
@@ -227,6 +247,8 @@ class VedicScout:
             "timestamp": vedic_score.timestamp,
         }
         pipe.set("vedic:bayes", json.dumps(bayes_data), ex=REDIS_TTL)
+
+        pipe.set("vedic:forecast", json.dumps(forecast), ex=REDIS_TTL)
 
         await pipe.execute()
 
