@@ -6,12 +6,24 @@ export class PolynixRiskManager {
     private lastResetDate = this.todayUtc();
     private pausedUntil = 0;
 
+    /**
+     * Check if a trade can be placed.
+     *
+     * Budget types:
+     *   'standard' — uses main exposure pool (max_exposure_pct - micro_reserve_pct)
+     *   'micro'    — uses reserved micro-market pool (micro_reserve_pct)
+     *
+     * This ensures micro-markets always have capital available even when
+     * standard bets have maxed out their allocation.
+     */
     check(
         edge: number,
         winProb: number,
         config: PolynixConfig,
         openPositions: number,
         currentExposure: number,
+        budgetType: 'standard' | 'micro' = 'standard',
+        microExposure: number = 0,
     ): RiskDecision {
         this.maybeResetDaily();
 
@@ -25,7 +37,6 @@ export class PolynixRiskManager {
             if (Date.now() < this.pausedUntil) {
                 return { canTrade: false, reason: 'max_consecutive_losses', suggestedSize: 0 };
             }
-            // Pause expired, reset
             this.consecutiveLosses = 0;
         }
 
@@ -34,20 +45,32 @@ export class PolynixRiskManager {
             return { canTrade: false, reason: 'max_positions', suggestedSize: 0 };
         }
 
-        // Max exposure (50% of bankroll)
+        // Budget-aware exposure check
         const bankroll = config.capital.starting_balance_usd + this.dailyPnl;
-        const maxExposure = bankroll * (config.capital.max_exposure_pct / 100);
-        if (currentExposure >= maxExposure) {
-            return { canTrade: false, reason: 'max_exposure', suggestedSize: 0 };
+        const microReservePct = config.micro_markets?.reserve_pct ?? 0;
+
+        if (budgetType === 'micro') {
+            // Micro pool: reserved % of bankroll
+            const microBudget = bankroll * (microReservePct / 100);
+            if (microExposure >= microBudget) {
+                return { canTrade: false, reason: 'max_exposure', suggestedSize: 0 };
+            }
+            // Micro bets use micro_markets.max_bet_size_usd
+            const microMaxBet = config.micro_markets?.max_bet_size_usd ?? 9;
+            return { canTrade: true, suggestedSize: microMaxBet };
+        } else {
+            // Standard pool: total exposure minus micro reserve
+            const standardMaxPct = config.capital.max_exposure_pct - microReservePct;
+            const maxExposure = bankroll * (standardMaxPct / 100);
+            if (currentExposure >= maxExposure) {
+                return { canTrade: false, reason: 'max_exposure', suggestedSize: 0 };
+            }
         }
 
         let size: number;
         if (winProb >= 0.95) {
-            // Arb: risk-free, use max bet
             size = config.capital.max_bet_size_usd;
         } else {
-            // Directional: edge-proportional sizing with Kelly fraction
-            // Scale linearly: 2% edge → 25% of max bet, 10% edge → 100% of max bet
             const edgePct = edge * 100;
             const scaleFactor = Math.min(1.0, edgePct / 10);
             size = config.capital.max_bet_size_usd * scaleFactor * config.risk.kelly_fraction;

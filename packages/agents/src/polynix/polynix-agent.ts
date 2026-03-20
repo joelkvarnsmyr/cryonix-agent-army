@@ -193,32 +193,32 @@ export class PolynixAgent extends BaseAgent {
         if (microConfig.enabled) {
             try {
                 const microMarkets = await this.microScanner.scan(microConfig);
+                const microExposure = this.positionTracker.getMicroExposure();
                 for (const market of microMarkets) {
-                    // Check arb on micro markets
-                    const arbResult = await this.checkArb(market);
-                    if (arbResult === 'executed') arbsExecuted++;
-                    if (arbResult) arbsFound++;
+                    // Dedup: skip if already holding this market
+                    if (this.positionTracker.getOpen().some(p => p.market.conditionId === market.conditionId)) continue;
 
-                    // Check directional on micro markets
+                    // Check directional on micro markets (uses micro budget pool)
                     const signal = await this.directionalEngine.evaluate(market, this.spreadDetector, this.tomlConfig);
                     if (signal && signal.edge > this.tomlConfig.strategy.min_edge_pct / 100) {
                         signalsFound++;
-                        const risk = this.riskManager.check(signal.edge, signal.confidence / 100, this.tomlConfig, this.positionTracker.getOpenCount(), this.positionTracker.getExposure());
+                        const risk = this.riskManager.check(
+                            signal.edge, signal.confidence / 100, this.tomlConfig,
+                            this.positionTracker.getOpenCount(), this.positionTracker.getExposure(),
+                            'micro', microExposure,
+                        );
                         if (risk.canTrade) {
-                            const bayesAdj = this.bayesian.evaluate('directional', market.asset, signal.direction, signal.edge, market.timeToExpiry);
-                            if (!bayesAdj.veto) {
-                                const size = risk.suggestedSize * bayesAdj.factor;
-                                const tokenId = signal.direction === 'YES' ? market.yesTokenId : market.noTokenId;
-                                const price = signal.direction === 'YES' ? signal.polymarketProb : (1 - signal.polymarketProb);
-                                const order = await this.orderManager.placeOrder(tokenId, 'BUY', price, size);
-                                if (order.status === 'filled') {
-                                    const costBasis = price * size;
-                                    this.positionTracker.addPosition(market, 'directional', signal.direction, price, size, costBasis);
-                                    this.accountState.balance -= costBasis;
-                                    await this.dbLogger.logOpen(this.positionTracker.getLastAdded()!);
-                                    signalsExecuted++;
-                                    this.log('info', `MICRO ${signal.direction}: ${market.title} | edge=${(signal.edge * 100).toFixed(1)}% | ${market.timeToExpiry.toFixed(0)}s left`);
-                                }
+                            const tokenId = signal.direction === 'YES' ? market.yesTokenId : market.noTokenId;
+                            const price = signal.direction === 'YES' ? signal.polymarketProb : (1 - signal.polymarketProb);
+                            const size = risk.suggestedSize;
+                            const order = await this.orderManager.placeOrder(tokenId, 'BUY', price, size);
+                            if (order.status === 'filled') {
+                                const costBasis = price * size;
+                                this.positionTracker.addPosition(market, 'directional', signal.direction, price, size, costBasis);
+                                this.accountState.balance -= costBasis;
+                                await this.dbLogger.logOpen(this.positionTracker.getLastAdded()!);
+                                signalsExecuted++;
+                                this.log('info', `MICRO ${signal.direction}: ${market.title} | edge=${(signal.edge * 100).toFixed(1)}% | ${market.timeToExpiry.toFixed(0)}s left | micro-budget`);
                             }
                         }
                     }

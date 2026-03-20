@@ -120,5 +120,6 @@ export interface PolynixConfig {
         min_time_to_expiry_s: number;
         max_time_to_expiry_s: number;
         max_bet_size_usd: number;
+        reserve_pct: number;        // % of bankroll reserved exclusively for micro-markets
     };
 }

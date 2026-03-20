@@ -116,11 +116,11 @@ export class DirectionalEngine {
 
         if (edge < minEdge) return null;
 
-        // Risk/reward filter: reject trades where entry price > 0.80
-        // Buying at $0.85 for $1.00 payout = $0.15 upside, $0.85 downside (5.7:1 against)
-        // Backtest showed these high-confidence trades are the biggest losers
+        // Risk/reward filter:
+        // Upper: reject entry price > 0.80 ($0.20 upside, $0.80 downside — bad asymmetry)
+        // Lower: reject entry price < 0.02 (near-certainty bets, zero practical edge, wastes slot)
         const entryPrice = direction === 'YES' ? polyProb : (1 - polyProb);
-        if (entryPrice > 0.80) return null;
+        if (entryPrice > 0.80 || entryPrice < 0.02) return null;
 
         // Confidence based on edge + momentum consistency + liquidity
         const consistency = this.momentumConsistency(history.slice(-20));

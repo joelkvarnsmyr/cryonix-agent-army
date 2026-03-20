@@ -44,6 +44,7 @@ export const POLYNIX_DEFAULTS: PolynixConfig = {
         min_time_to_expiry_s: 30,
         max_time_to_expiry_s: 300,
         max_bet_size_usd: 9,
+        reserve_pct: 20,
     },
 };
 

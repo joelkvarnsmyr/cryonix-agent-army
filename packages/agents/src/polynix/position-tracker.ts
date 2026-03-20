@@ -150,6 +150,13 @@ export class PositionTracker {
         return this.getOpen().reduce((sum, p) => sum + p.costBasis, 0);
     }
 
+    /** Get total cost basis of open micro-market positions (timeToExpiry <= 300s at entry). */
+    getMicroExposure(): number {
+        return this.getOpen()
+            .filter(p => (p.expiresAt - p.enteredAt) <= 600_000) // markets with < 10min total duration
+            .reduce((sum, p) => sum + p.costBasis, 0);
+    }
+
     getSettledTrades(): PolynixPosition[] {
         return this.settledTrades;
     }

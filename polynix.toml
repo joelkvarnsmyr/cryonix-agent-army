@@ -4,7 +4,7 @@ clob_api_url = "https://clob.polymarket.com"
 gamma_api_url = "https://gamma-api.polymarket.com"
 
 [capital]
-starting_balance_usd = 500
+starting_balance_usd = 1000
 max_bet_size_usd = 25
 max_concurrent_positions = 40
 max_exposure_pct = 95
@@ -34,6 +34,7 @@ enabled = true
 min_time_to_expiry_s = 30          # 30s minimum (need time to execute)
 max_time_to_expiry_s = 300         # 5 minutes max
 max_bet_size_usd = 9               # $9 per micro-bet (small, high frequency)
+reserve_pct = 20                   # 20% of bankroll reserved for micro-markets only
 
 [data_sources]
 binance_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
