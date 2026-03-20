@@ -8,6 +8,7 @@ import { StockSignalGenerator } from './signals/stock-signal-generator';
 import { StockNewsScanner, type MacroSignal } from './intelligence/news-scanner';
 import { MacroIntelligence } from './intelligence/macro-intelligence';
 import { MarketSentimentScanner } from './intelligence/market-sentiment';
+import { TradeAnalyst } from './intelligence/trade-analyst';
 import { loadAktienixConfig } from './config';
 import { MarketHours } from './market-hours';
 import { PositionSizer } from './position-sizer';
@@ -50,7 +51,8 @@ class TradeLogger {
         try {
             await this.pg.query(
                 `INSERT INTO aktienix_trades (timestamp, symbol, side, qty, fill_price, dollar_amount, realized_pnl, confidence, reasoning, exit_reason, broker, paper_trading, is_day_trade, order_id, metadata)
-                 VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8, $9, 'alpaca', true, false, $10, $11)`,
+                 VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8, $9, 'alpaca', true, false, $10, $11)
+                 ON CONFLICT (order_id) DO NOTHING`,
                 [
                     params.symbol, params.side, params.qty, params.fillPrice,
                     params.dollarAmount, params.realizedPnl ?? null,
@@ -161,6 +163,8 @@ export class AktienixAgent extends BaseAgent {
     private statePublisher: StatePublisher | null = null;
     private tradeLogger = new TradeLogger();
     private bayesianUpdater = new BayesianUpdater();
+    private tradeAnalyst: TradeAnalyst | null = null;
+    private lastTradeSync = 0;
 
     private tomlConfig = loadAktienixConfig();
 
@@ -248,6 +252,10 @@ export class AktienixAgent extends BaseAgent {
             const finnhubKey = process.env.FINNHUB_API_KEY || undefined;
             this.sentimentScanner = new MarketSentimentScanner(this.statePublisher, finnhubKey);
             this.log('info', `MarketSentimentScanner initialized${finnhubKey ? ' (Finnhub enabled)' : ' (no Finnhub key)'}.`);
+
+            // Initialize post-trade analyst
+            this.tradeAnalyst = new TradeAnalyst(this.statePublisher);
+            this.log('info', 'TradeAnalyst initialized.');
         } else {
             this.log('warn', 'KV_URL not set \u2014 state will not be published to Redis.');
         }
@@ -311,6 +319,9 @@ export class AktienixAgent extends BaseAgent {
                             await this.sentimentScanner.fetchEconomicCalendar();
                         }
                     } catch { /* non-critical */ }
+
+                    // Sync missing trades from Alpaca (catch unlogged sells)
+                    try { await this.syncMissingTrades(); } catch { /* non-critical */ }
 
                     const _pms = config.timing.poll_interval_ms;
                     const _tick = 250;
@@ -413,6 +424,15 @@ export class AktienixAgent extends BaseAgent {
                             pnlPct,
                             exitReason: decision.reason,
                         });
+                        // AI post-trade analysis
+                        try {
+                            await this.tradeAnalyst?.analyzeExit({
+                                symbol: decision.symbol, side: 'SELL', qty: pos.qty,
+                                entryPrice: pos.avgEntryPrice, exitPrice: pos.currentPrice, pnlPct,
+                                exitReason: decision.reason ?? 'unknown',
+                                holdingDays: Math.round((Date.now() - new Date(pos.openedAt ?? Date.now()).getTime()) / 86400000),
+                            });
+                        } catch { /* non-critical */ }
                     } else {
                         this.log('error', `Exit order failed for ${decision.symbol}: ${result.message}`);
                     }
@@ -472,6 +492,15 @@ export class AktienixAgent extends BaseAgent {
                                         pattern: 'macro_delta', symbol: pos.symbol, pnlPct,
                                         exitReason: 'macro_delta',
                                     });
+                                    // AI post-trade analysis
+                                    try {
+                                        await this.tradeAnalyst?.analyzeExit({
+                                            symbol: pos.symbol, side: 'SELL', qty: pos.qty,
+                                            entryPrice: pos.avgEntryPrice, exitPrice: pos.currentPrice, pnlPct,
+                                            exitReason: `macro_delta: ${shiftSource}`,
+                                            holdingDays: Math.round((Date.now() - new Date(pos.openedAt ?? Date.now()).getTime()) / 86400000),
+                                        });
+                                    } catch { /* non-critical */ }
                                 }
                             }
                             // Refresh positions after macro exits
@@ -512,6 +541,15 @@ export class AktienixAgent extends BaseAgent {
                                 pnlPct: eodPnlPct,
                                 exitReason: 'eod_close',
                             });
+                            // AI post-trade analysis
+                            try {
+                                await this.tradeAnalyst?.analyzeExit({
+                                    symbol: pos.symbol, side: 'SELL', qty: pos.qty,
+                                    entryPrice: pos.avgEntryPrice, exitPrice: pos.currentPrice, pnlPct: eodPnlPct,
+                                    exitReason: 'eod_close',
+                                    holdingDays: Math.round((Date.now() - new Date(pos.openedAt ?? Date.now()).getTime()) / 86400000),
+                                });
+                            } catch { /* non-critical */ }
                         } else {
                             this.log('error', `[EOD CLOSE] Failed to close ${pos.symbol}: ${result.message}`);
                         }
@@ -536,6 +574,9 @@ export class AktienixAgent extends BaseAgent {
                         } catch { /* delta key missing or unparseable — skip */ }
                     }
                 }
+
+                // 6d. Sync missing trades from Alpaca (catch unlogged sells)
+                try { await this.syncMissingTrades(); } catch { /* non-critical */ }
 
                 // 7. Scan for Macro Intelligence
                 const nowTs = Date.now();
@@ -649,6 +690,59 @@ export class AktienixAgent extends BaseAgent {
         this.log('info', 'Trading loop exited.');
     }
 
+    // ── Periodic trade reconciliation — catch sells not logged by exit monitor ──
+    private async syncMissingTrades(): Promise<void> {
+        if (Date.now() - this.lastTradeSync < 30 * 60 * 1000) return;
+
+        try {
+            const apiKey = process.env.ALPACA_PAPER_API_KEY || process.env.ALPACA_API_KEY;
+            const apiSecret = process.env.ALPACA_PAPER_API_SECRET || process.env.ALPACA_API_SECRET;
+            if (!apiKey || !apiSecret) return;
+
+            const after = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+            const res = await fetch(
+                `https://paper-api.alpaca.markets/v2/orders?status=filled&after=${after}&direction=desc&limit=100`,
+                {
+                    headers: { 'APCA-API-KEY-ID': apiKey, 'APCA-API-SECRET-KEY': apiSecret },
+                    signal: AbortSignal.timeout(10000),
+                },
+            );
+            if (!res.ok) return;
+            const orders: any[] = await res.json();
+
+            let synced = 0;
+            for (const order of orders) {
+                if (order.side !== 'sell') continue;
+
+                const dedup = `aktienix:synced:${order.id}`;
+                const existing = await this.statePublisher?.get(dedup);
+                if (existing) continue;
+
+                const qty = parseFloat(order.filled_qty);
+                const price = parseFloat(order.filled_avg_price);
+                await this.tradeLogger.logTrade({
+                    symbol: order.symbol,
+                    side: 'SELL',
+                    qty,
+                    fillPrice: price,
+                    dollarAmount: qty * price,
+                    exitReason: 'untracked',
+                    reasoning: 'Synced from Alpaca (not logged by exit monitor)',
+                    orderId: order.id,
+                });
+
+                // Mark as synced (7 day TTL)
+                await this.statePublisher?.set(dedup, '1', 7 * 86400);
+                synced++;
+            }
+
+            if (synced > 0) this.log('info', `[SYNC] Synced ${synced} missing trades from Alpaca`);
+            this.lastTradeSync = Date.now();
+        } catch (err: any) {
+            this.log('warn', `[SYNC] Trade sync failed: ${err.message}`);
+        }
+    }
+
     async stop(): Promise<void> {
         this.log('info', 'Stopping Aktienix Agent...');
         this.isTrading = false;
@@ -741,6 +835,15 @@ export class AktienixAgent extends BaseAgent {
                                 pattern: 'smart_rotation', symbol: worst.symbol,
                                 pnlPct, exitReason: 'smart_rotation',
                             });
+                            // AI post-trade analysis
+                            try {
+                                await this.tradeAnalyst?.analyzeExit({
+                                    symbol: worst.symbol, side: 'SELL', qty: worst.qty,
+                                    entryPrice: worst.avgEntryPrice, exitPrice: worst.currentPrice, pnlPct,
+                                    exitReason: `smart_rotation: replaced by ${symbol}`,
+                                    holdingDays: Math.round((Date.now() - new Date(worst.openedAt ?? Date.now()).getTime()) / 86400000),
+                                });
+                            } catch { /* non-critical */ }
                             // Refresh positions after close
                             this.positions = await this.brokerClient.getPositions();
                         }
