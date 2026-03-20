@@ -39,3 +39,17 @@ reserve_pct = 20                   # 20% of bankroll reserved for micro-markets 
 [data_sources]
 binance_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 use_polymarket_intelligence = true
+
+[exits]
+enabled = true
+take_profit_pct = 30              # Sell if P&L >= +30%
+stop_loss_pct = 40                # Sell if P&L <= -40%
+stagnation_hours = 48             # Sell if flat (|P&L| < 5%) for 48 hours
+min_hold_seconds = 300            # Hold at least 5 minutes before any exit
+
+[copy_trader]
+enabled = false                   # Disabled by default (stub)
+poll_interval_ms = 300000         # Poll every 5 minutes
+min_wallet_pnl = 100             # Min $100 PnL to follow
+min_wallet_trades = 10           # Min 10 trades to qualify
+max_copy_size_usd = 15           # Max $15 per copy trade

@@ -46,6 +46,20 @@ export const POLYNIX_DEFAULTS: PolynixConfig = {
         max_bet_size_usd: 9,
         reserve_pct: 20,
     },
+    exits: {
+        enabled: true,
+        take_profit_pct: 30,
+        stop_loss_pct: 40,
+        stagnation_hours: 48,
+        min_hold_seconds: 300,
+    },
+    copy_trader: {
+        enabled: false,
+        poll_interval_ms: 300_000,
+        min_wallet_pnl: 100,
+        min_wallet_trades: 10,
+        max_copy_size_usd: 15,
+    },
 };
 
 export function loadPolynixConfig(filePath?: string): PolynixConfig {
@@ -61,7 +75,9 @@ export function loadPolynixConfig(filePath?: string): PolynixConfig {
             risk: { ...POLYNIX_DEFAULTS.risk, ...parsed.risk },
             timing: { ...POLYNIX_DEFAULTS.timing, ...parsed.timing },
             data_sources: { ...POLYNIX_DEFAULTS.data_sources, ...parsed.data_sources },
-            micro_markets: { ...POLYNIX_DEFAULTS.micro_markets, ...parsed.micro_markets },
+            micro_markets: { ...POLYNIX_DEFAULTS.micro_markets, ...parsed.micro_markets } as PolynixConfig['micro_markets'],
+            exits: { ...POLYNIX_DEFAULTS.exits, ...parsed.exits } as PolynixConfig['exits'],
+            copy_trader: { ...POLYNIX_DEFAULTS.copy_trader, ...parsed.copy_trader } as PolynixConfig['copy_trader'],
         };
     } catch {
         console.warn('[polynix] Failed to parse polynix.toml, using defaults');

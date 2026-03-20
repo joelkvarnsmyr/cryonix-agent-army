@@ -138,6 +138,17 @@ export class PositionTracker {
         }
     }
 
+    /** Remove a position from open positions and add to settled trades (for early exits). */
+    removePosition(id: string): void {
+        const pos = this.positions.get(id);
+        if (!pos) return;
+        this.positions.delete(id);
+        this.settledTrades.push(pos);
+        if (this.settledTrades.length > 200) {
+            this.settledTrades = this.settledTrades.slice(-200);
+        }
+    }
+
     getOpen(): PolynixPosition[] {
         return Array.from(this.positions.values()).filter(p => p.status === 'open');
     }

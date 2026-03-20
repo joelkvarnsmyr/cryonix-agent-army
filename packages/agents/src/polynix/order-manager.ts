@@ -14,7 +14,7 @@ export class OrderManager {
      */
     async placeOrder(
         tokenId: string,
-        side: 'BUY',
+        side: 'BUY' | 'SELL',
         price: number,
         size: number,
     ): Promise<OrderResult> {

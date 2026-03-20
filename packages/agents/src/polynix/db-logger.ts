@@ -47,9 +47,14 @@ export class PolynixDbLogger {
                 expires_at TIMESTAMPTZ,
                 settled_at TIMESTAMPTZ,
                 market_data JSONB,
+                exit_reason TEXT,
+                exit_price DOUBLE PRECISION,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
         `);
+        // Add columns to existing tables
+        await this.pg.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS exit_reason TEXT`).catch(() => {});
+        await this.pg.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS exit_price DOUBLE PRECISION`).catch(() => {});
     }
 
     /** Save a newly opened position. */
@@ -87,8 +92,8 @@ export class PolynixDbLogger {
         if (!this.pg) return;
         try {
             await this.pg.query(
-                `UPDATE ${TABLE} SET pnl = $1, status = $2, settled_at = NOW() WHERE id = $3`,
-                [pos.pnl, pos.status, pos.id],
+                `UPDATE ${TABLE} SET pnl = $1, status = $2, settled_at = NOW(), exit_reason = $4, exit_price = $5 WHERE id = $3`,
+                [pos.pnl, pos.status, pos.id, pos.exitReason ?? null, pos.exitPrice ?? null],
             );
         } catch (err: any) {
             console.warn('[polynix-db] logSettle error:', err.message);

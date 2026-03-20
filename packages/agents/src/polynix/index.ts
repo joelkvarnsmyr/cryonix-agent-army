@@ -9,6 +9,8 @@ export { OrderManager } from './order-manager';
 export { PolynixDbLogger } from './db-logger';
 export { BayesianLearner } from './bayesian-learner';
 export { MicroMarketScanner } from './micro-market-scanner';
+export { PolynixExitMonitor } from './exit-monitor';
+export { CopyTracker } from './copy-tracker';
 export type {
     CryptoMicroMarket,
     ArbOpportunity,
@@ -18,4 +20,7 @@ export type {
     PolynixConfig,
     OrderResult,
     RiskDecision,
+    ExitConfig,
+    ExitDecision,
+    CopyTraderConfig,
 } from './types';

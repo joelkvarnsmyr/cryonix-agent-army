@@ -11,6 +11,8 @@ import { loadPolynixConfig } from './config';
 import { PolynixDbLogger } from './db-logger';
 import { BayesianLearner } from './bayesian-learner';
 import { MicroMarketScanner } from './micro-market-scanner';
+import { PolynixExitMonitor } from './exit-monitor';
+import { CopyTracker } from './copy-tracker';
 import type { PolynixConfig, PolynixAccountState, CryptoMicroMarket } from './types';
 
 export class PolynixAgent extends BaseAgent {
@@ -27,6 +29,8 @@ export class PolynixAgent extends BaseAgent {
     private dbLogger: PolynixDbLogger;
     private bayesian: BayesianLearner;
     private microScanner: MicroMarketScanner;
+    private exitMonitor: PolynixExitMonitor;
+    private copyTracker: CopyTracker;
 
     private accountState: PolynixAccountState;
     private lastHeartbeatLog = 0;
@@ -45,6 +49,8 @@ export class PolynixAgent extends BaseAgent {
         this.dbLogger = new PolynixDbLogger();
         this.bayesian = new BayesianLearner();
         this.microScanner = new MicroMarketScanner();
+        this.exitMonitor = new PolynixExitMonitor();
+        this.copyTracker = new CopyTracker(this.tomlConfig);
 
         this.accountState = {
             balance: this.tomlConfig.capital.starting_balance_usd,
@@ -93,6 +99,12 @@ export class PolynixAgent extends BaseAgent {
 
         // Seed initial price data
         await this.directionalEngine.fetchPrices(this.tomlConfig);
+
+        // Probe copy tracker API
+        if (this.copyTracker.isEnabled()) {
+            const probeOk = await this.copyTracker.probe();
+            this.log('info', `CopyTracker: probe ${probeOk ? 'OK' : 'FAILED'}`);
+        }
 
         this.setStatus('idle');
         this.log('info', `Paper mode: ${this.tomlConfig.broker.paper_trading}`);
@@ -320,7 +332,59 @@ export class PolynixAgent extends BaseAgent {
 
         // 5. Refresh current prices on open positions + compute unrealized P&L
         await this.positionTracker.refreshPrices(this.spreadDetector);
+
+        // 5b. Exit monitor — check directional positions for early exit
+        const exitConfig = this.tomlConfig.exits ?? { enabled: false, take_profit_pct: 30, stop_loss_pct: 40, stagnation_hours: 48, min_hold_seconds: 300 };
+        if (exitConfig.enabled) {
+            const exitDecisions = this.exitMonitor.check(this.positionTracker.getOpen(), exitConfig);
+            for (const exit of exitDecisions) {
+                const pos = this.positionTracker.getOpen().find(p => p.id === exit.positionId);
+                if (!pos) continue;
+
+                // Sell at current midpoint price (paper mode: instant fill)
+                const tokenId = pos.side === 'YES' ? pos.market.yesTokenId : pos.market.noTokenId;
+                const order = await this.orderManager.placeOrder(tokenId, 'SELL', exit.currentPrice, pos.size);
+                if (order.status === 'filled') {
+                    const proceeds = exit.currentPrice * pos.size;
+                    const pnl = proceeds - pos.costBasis;
+
+                    pos.status = 'exited';
+                    pos.exitReason = exit.reason;
+                    pos.exitPrice = exit.currentPrice;
+                    pos.pnl = pnl;
+
+                    this.positionTracker.removePosition(pos.id);
+                    this.accountState.balance += proceeds;
+                    this.accountState.totalPnl += pnl;
+                    this.accountState.tradesTotal++;
+                    if (pnl >= 0) this.accountState.wins++;
+                    else this.accountState.losses++;
+                    this.accountState.winRate = this.accountState.tradesTotal > 0
+                        ? (this.accountState.wins / this.accountState.tradesTotal) * 100 : 0;
+
+                    this.riskManager.recordResult(pnl);
+                    await this.dbLogger.logSettle(pos);
+                    await this.bayesian.recordOutcome({
+                        type: pos.type,
+                        asset: pos.market.asset,
+                        side: pos.side,
+                        edge: pos.entryPrice > 0 ? Math.abs(0.5 - pos.entryPrice) : 0.05,
+                        timeToExpirySec: (pos.expiresAt - pos.enteredAt) / 1000,
+                        won: pnl >= 0,
+                    });
+
+                    const emoji = pnl >= 0 ? 'PROFIT' : 'LOSS';
+                    this.log('info', `EXIT [${exit.reason}]: ${pos.market.title} → ${emoji} $${pnl.toFixed(2)} (${exit.pnlPct.toFixed(1)}%) bal=$${this.accountState.balance.toFixed(2)}`);
+                }
+            }
+        }
+
         this.accountState.openPositions = this.positionTracker.getOpenCount();
+
+        // 5c. Copy tracker poll
+        if (this.copyTracker.isEnabled()) {
+            await this.copyTracker.poll();
+        }
 
         // 6. Publish state to Redis
         await this.publishState();
@@ -419,6 +483,12 @@ export class PolynixAgent extends BaseAgent {
                 'polynix:priors',
                 JSON.stringify(this.bayesian.getSummary()),
             );
+            if (this.copyTracker.isEnabled()) {
+                await this.statePublisher.set(
+                    'polynix:copy_leaderboard',
+                    JSON.stringify(this.copyTracker.getLeaderboard()),
+                );
+            }
         } catch {
             // Non-critical
         }

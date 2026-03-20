@@ -50,10 +50,35 @@ export interface PolynixPosition {
     costBasis: number;          // Total USD spent
     enteredAt: number;          // Unix ms
     expiresAt: number;
-    status: 'open' | 'won' | 'lost' | 'settled';
+    status: 'open' | 'won' | 'lost' | 'settled' | 'exited';
     pnl: number;
     currentPrice?: number;      // Live midpoint price of our token
     unrealizedPnl?: number;     // (currentPrice * size) - costBasis (for directional) or guaranteed edge (for arb)
+    exitReason?: 'take_profit' | 'stop_loss' | 'stagnation';
+    exitPrice?: number;
+}
+
+export interface ExitConfig {
+    enabled: boolean;
+    take_profit_pct: number;    // % gain to trigger take-profit exit
+    stop_loss_pct: number;      // % loss to trigger stop-loss exit
+    stagnation_hours: number;   // Hours of flat price to trigger stagnation exit
+    min_hold_seconds: number;   // Minimum hold time before any exit
+}
+
+export interface ExitDecision {
+    positionId: string;
+    reason: 'take_profit' | 'stop_loss' | 'stagnation';
+    pnlPct: number;
+    currentPrice: number;
+}
+
+export interface CopyTraderConfig {
+    enabled: boolean;
+    poll_interval_ms: number;   // How often to poll for new trades
+    min_wallet_pnl: number;     // Minimum PnL to follow a wallet
+    min_wallet_trades: number;  // Minimum trades to qualify as leader
+    max_copy_size_usd: number;  // Max size per copy trade
 }
 
 export interface PolynixAccountState {
@@ -97,9 +122,9 @@ export interface PolynixConfig {
         momentum_lookback_seconds: number;
         min_time_to_expiry_s: number;
         max_time_to_expiry_s: number;
-        scan_all_for_arb: boolean;       // Scan all high-liquidity markets for arb (not just crypto)
-        min_liquidity_usd: number;       // Minimum liquidity for arb scanning
-        max_markets_per_scan: number;    // Limit markets per scan cycle
+        scan_all_for_arb: boolean;
+        min_liquidity_usd: number;
+        max_markets_per_scan: number;
     };
     risk: {
         kelly_fraction: number;
@@ -120,6 +145,8 @@ export interface PolynixConfig {
         min_time_to_expiry_s: number;
         max_time_to_expiry_s: number;
         max_bet_size_usd: number;
-        reserve_pct: number;        // % of bankroll reserved exclusively for micro-markets
+        reserve_pct: number;
     };
+    exits?: ExitConfig;
+    copy_trader?: CopyTraderConfig;
 }
