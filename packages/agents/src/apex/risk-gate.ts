@@ -103,14 +103,12 @@ export class RiskGate {
 
         // Score-based Kelly reduction
         const { min_score_full_kelly, min_score_half_kelly } = this.confluenceConfig;
-        if (score < min_score_full_kelly && score >= min_score_half_kelly) {
+        if (score >= min_score_full_kelly) {
+            // Full kelly — no reduction
+        } else if (score >= min_score_half_kelly) {
             size *= 0.5;
-        }
-        // Scores below min_score_half_kelly get full reduction (half Kelly applied again)
-        // — but the caller should not be calling computeSize for sub-threshold signals.
-        // We still apply half kelly as a safety net.
-        if (score < min_score_half_kelly) {
-            size *= 0.5;
+        } else {
+            size *= 0.25;
         }
 
         // Post-loss reduced sizing
@@ -146,12 +144,15 @@ export class RiskGate {
         this.state.currentCapital += pnl;
         this.state.dailyPnl += pnl;
 
+        // Decrement reduced sizing on every exit (counts trades, not outcomes)
+        if (this.state.reducedSizingTradesLeft > 0) {
+            this.state.reducedSizingTradesLeft -= 1;
+        }
+
         if (pnl < 0) {
             this.state.consecutiveLosses += 1;
         } else {
             this.state.consecutiveLosses = 0;
-            // Clear reduced sizing if we break the streak
-            this.state.reducedSizingTradesLeft = Math.max(0, this.state.reducedSizingTradesLeft - 1);
         }
 
         // Consecutive loss circuit breaker
