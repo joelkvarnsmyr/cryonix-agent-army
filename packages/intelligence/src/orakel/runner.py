@@ -44,7 +44,7 @@ DEFAULT_RETRAIN_INTERVAL_DAYS = 7
 # OHLCV fetch limits
 HOURLY_CANDLE_LIMIT = 200
 DAILY_CANDLE_LIMIT = 365
-TRAIN_CANDLE_LIMIT = 120 * 24  # 120 days of 1h candles
+TRAIN_CANDLE_LIMIT = 125 * 24  # 125 days of 1h candles (extra buffer for NaN warmup)
 
 
 class OrakelRunner:
