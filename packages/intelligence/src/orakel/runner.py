@@ -61,10 +61,15 @@ class OrakelRunner:
         # Redis connection (created async in _ensure_redis)
         self._redis: Optional[aioredis.Redis] = None
 
-        # CCXT exchange — public API only, no auth keys needed for OHLCV
+        # CCXT exchanges — public API only, no auth keys needed
         self.exchange = ccxt_async.binance({
             "enableRateLimit": True,
             "options": {"defaultType": "spot"},
+        })
+        # Separate futures exchange for funding rates
+        self.futures_exchange = ccxt_async.binance({
+            "enableRateLimit": True,
+            "options": {"defaultType": "swap"},
         })
 
         # Forecast modules
@@ -75,7 +80,7 @@ class OrakelRunner:
         self.regime_detector = RegimeDetector()
         self.volatility_forecaster = VolatilityForecaster()
         self.signal_fusion = SignalFusion()
-        self.funding_collector = FundingCollector(self.exchange)
+        self.funding_collector = FundingCollector(self.futures_exchange)
 
         # Cached BTC returns for cross-momentum features
         self.btc_returns: Optional[pd.Series] = None
@@ -122,9 +127,15 @@ class OrakelRunner:
         # Load exchange markets once
         try:
             await self.exchange.load_markets()
-            logger.info("Exchange markets loaded: %d markets", len(self.exchange.markets))
+            logger.info("Spot markets loaded: %d markets", len(self.exchange.markets))
         except Exception as e:
-            logger.error("Failed to load exchange markets: %s", e)
+            logger.error("Failed to load spot markets: %s", e)
+
+        try:
+            await self.futures_exchange.load_markets()
+            logger.info("Futures markets loaded: %d markets", len(self.futures_exchange.markets))
+        except Exception as e:
+            logger.warning("Failed to load futures markets (funding rates disabled): %s", e)
 
         while True:
             now = time.time()
@@ -547,7 +558,11 @@ class OrakelRunner:
     async def _fetch_ohlcv(
         self, symbol: str, timeframe: str, limit: int
     ) -> Optional[pd.DataFrame]:
-        """Fetch OHLCV candles from Binance via CCXT.
+        """Fetch OHLCV candles from Binance via CCXT with pagination.
+
+        CCXT Binance returns max 1000 candles per request. For larger
+        requests, this method paginates automatically using the `since`
+        parameter.
 
         Args:
             symbol: Trading pair (e.g. "BTC/USDC").
@@ -558,32 +573,70 @@ class OrakelRunner:
             DataFrame with columns [timestamp, open, high, low, close, volume]
             or None on failure.
         """
-        try:
-            candles = await self.exchange.fetch_ohlcv(
-                symbol, timeframe=timeframe, limit=limit
-            )
+        MAX_PER_REQUEST = 1000
 
-            if not candles:
+        try:
+            all_candles: list = []
+
+            if limit <= MAX_PER_REQUEST:
+                # Single request
+                all_candles = await self.exchange.fetch_ohlcv(
+                    symbol, timeframe=timeframe, limit=limit
+                )
+                await asyncio.sleep(FETCH_DELAY)
+            else:
+                # Paginated: compute start timestamp and fetch in chunks
+                tf_ms = self._timeframe_to_ms(timeframe)
+                now_ms = int(time.time() * 1000)
+                since = now_ms - (limit * tf_ms)
+
+                remaining = limit
+                while remaining > 0:
+                    batch_size = min(remaining, MAX_PER_REQUEST)
+                    batch = await self.exchange.fetch_ohlcv(
+                        symbol, timeframe=timeframe, since=since, limit=batch_size
+                    )
+                    if not batch:
+                        break
+
+                    all_candles.extend(batch)
+                    since = batch[-1][0] + tf_ms  # Next candle after last
+                    remaining -= len(batch)
+                    await asyncio.sleep(FETCH_DELAY)
+
+                    if len(batch) < batch_size:
+                        break  # No more data available
+
+            if not all_candles:
                 logger.warning("Empty OHLCV response for %s %s", symbol, timeframe)
                 return None
 
             df = pd.DataFrame(
-                candles,
+                all_candles,
                 columns=["timestamp", "open", "high", "low", "close", "volume"],
             )
+
+            # Remove duplicates (pagination overlap)
+            df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
 
             # Ensure numeric types
             for col in ["open", "high", "low", "close", "volume"]:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
-
-            # Rate limit courtesy
-            await asyncio.sleep(FETCH_DELAY)
 
             return df
 
         except Exception as e:
             logger.error("OHLCV fetch failed for %s %s: %s", symbol, timeframe, e)
             return None
+
+    @staticmethod
+    def _timeframe_to_ms(timeframe: str) -> int:
+        """Convert CCXT timeframe string to milliseconds."""
+        multipliers = {
+            "1m": 60_000, "5m": 300_000, "15m": 900_000,
+            "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000,
+        }
+        return multipliers.get(timeframe, 3_600_000)
 
     def get_status(self) -> dict:
         """Return runner status for the /status endpoint."""
@@ -607,6 +660,10 @@ class OrakelRunner:
         """Clean up resources."""
         try:
             await self.exchange.close()
+        except Exception:
+            pass
+        try:
+            await self.futures_exchange.close()
         except Exception:
             pass
         if self._redis:

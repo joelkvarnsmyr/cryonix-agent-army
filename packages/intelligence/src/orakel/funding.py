@@ -75,14 +75,29 @@ class FundingCollector:
         """Fetch funding rate for a single symbol.
 
         Returns None if the symbol has no perpetual futures contract.
+        Tries the exact symbol first, then USDT variant (most futures
+        pairs are quoted in USDT, not USDC).
         """
-        # Convert spot symbol to perpetual swap format
-        # CCXT uses the same symbol for futures on Binance
-        # but we need to ensure the exchange has the market loaded
-        try:
-            funding = await self.exchange.fetch_funding_rate(symbol)
-        except (ccxt.BadSymbol, ccxt.ExchangeError):
-            # Symbol does not have a futures contract
+        # Try multiple symbol variants — Binance futures are mostly USDT-quoted
+        base = symbol.split("/")[0]
+        candidates = [
+            f"{base}/USDT:USDT",  # Binance perpetual swap notation
+            f"{base}/USDT",
+            symbol,
+        ]
+
+        funding = None
+        for candidate in candidates:
+            try:
+                funding = await self.exchange.fetch_funding_rate(candidate)
+                if funding:
+                    break
+            except (ccxt.BadSymbol, ccxt.ExchangeError):
+                continue
+            except Exception:
+                continue
+
+        if funding is None:
             return None
 
         rate_raw = funding.get("fundingRate")
