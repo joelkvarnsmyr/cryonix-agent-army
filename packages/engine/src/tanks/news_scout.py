@@ -23,10 +23,21 @@ from src.core.config import get_toml
 
 # --- CONFIGURATION ---
 
-# RSS feeds from major crypto news sources
+# RSS feeds — crypto + macro news sources
+# Scanned every 15min. More feeds = better sentiment coverage.
+# All verified free, no auth, returning valid RSS as of 2026-03-20.
 RSS_FEEDS = {
+    # Tier 1: Core crypto news
     "Cointelegraph": "https://cointelegraph.com/rss",
-    "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "TheBlock": "https://www.theblock.co/rss.xml",
+    "Decrypt": "https://decrypt.co/feed",
+    "Blockworks": "https://blockworks.co/rss",
+    # Tier 2: Supplementary crypto
+    "CryptoSlate": "https://cryptoslate.com/feed/",
+    "BitcoinMagazine": "https://bitcoinmagazine.com/feed",
+    "DailyHodl": "https://dailyhodl.com/feed/",
+    # Tier 3: Macro (Fed, rates, geopolitics → crypto correlation)
+    "NYT_Business": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
 }
 
 # Map trading symbols to keywords for searching in news articles
@@ -51,11 +62,15 @@ SYMBOL_KEYWORDS = {
 # Simple keyword-based sentiment analysis
 POSITIVE_WORDS = {
     "bullish", "surge", "rally", "partnership", "upgrade", "launch", "adopt",
-    "integrate", "support", "growth", "optimism", "gain", "rise", "boom"
+    "integrate", "support", "growth", "optimism", "gain", "rise", "boom",
+    "approval", "recovery", "breakout", "accumulate", "institutional", "inflow",
+    "rate cut", "dovish", "stimulus", "easing",
 }
 NEGATIVE_WORDS = {
     "bearish", "crash", "hack", "exploit", "ban", "regulation", "vulnerability",
-    "lawsuit", "scam", "theft", "slump", "drop", "decline", "fear", "risk"
+    "lawsuit", "scam", "theft", "slump", "drop", "decline", "fear", "risk",
+    "rug pull", "liquidation", "outflow", "dumping", "sell-off", "recession",
+    "rate hike", "hawkish", "tariff", "sanction", "war", "inflation",
 }
 
 SENTIMENT_EXPIRATION_SECONDS = get_toml('sentiment', 'expiration_seconds', 3600)
