@@ -1,0 +1,11 @@
+export { ApexAgent } from './apex-agent';
+export { loadApexConfig, APEX_DEFAULTS } from './config';
+export type { ApexTomlConfig, ApexModeConfig } from './config';
+export { SignalAggregator } from './signal-aggregator';
+export type { NormalizedSignal, AggregatorSnapshot, SignalDirection } from './signal-aggregator';
+export { scoreOpportunities } from './confluence-scorer';
+export type { ScoredOpportunity } from './confluence-scorer';
+export { RiskGate } from './risk-gate';
+export type { RiskState } from './risk-gate';
+export { ExitMonitor } from './exit-monitor';
+export type { ApexPosition, ExitDecision } from './exit-monitor';

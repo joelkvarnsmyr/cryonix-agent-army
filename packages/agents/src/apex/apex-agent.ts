@@ -142,7 +142,7 @@ export class ApexAgent {
         // 2. Snapshot all signals from every instance
         const snapshot = await this.aggregator.snapshot();
 
-        // 3. Score opportunities
+        // 3. Score opportunities (reused in publishState to avoid double-scoring)
         const opportunities = scoreOpportunities(snapshot, this.config);
 
         // 4. Evaluate each opportunity (highest score first)
@@ -151,7 +151,7 @@ export class ApexAgent {
         }
 
         // 5. Publish state to Redis
-        await this.publishState(snapshot);
+        await this.publishState(snapshot, opportunities);
     }
 
     // -------------------------------------------------------------------------
@@ -323,10 +323,17 @@ export class ApexAgent {
         const quantity = size / currentPrice;
 
         // 9. Create ApexPosition
+        // Paper mode: shorts are simulated. In live mode, spot-only = long only.
+        const direction = opp.direction === 'bullish' ? 'long' as const : 'short' as const;
+        if (direction === 'short' && this.config.general.mode === 'live') {
+            console.log(`[APEX] Skipping short ${opp.symbol} — spot-only in live mode`);
+            return;
+        }
+
         const position: ApexPosition = {
             id: `apex-${opp.symbol}-${Date.now()}`,
             symbol: opp.symbol,
-            direction: opp.direction === 'bullish' ? 'long' : 'short',
+            direction,
             mode: opp.mode,
             entryPrice: currentPrice,
             currentPrice,
@@ -366,8 +373,9 @@ export class ApexAgent {
     // publishState — write full APEX state to Redis
     // -------------------------------------------------------------------------
 
-    private async publishState(snapshot: AggregatorSnapshot): Promise<void> {
+    private async publishState(snapshot: AggregatorSnapshot, scored?: ScoredOpportunity[]): Promise<void> {
         const riskState = this.riskGate.getState();
+        const opportunities = scored ?? scoreOpportunities(snapshot, this.config);
 
         const state = {
             status: this.running ? 'running' : 'stopped',
@@ -379,7 +387,7 @@ export class ApexAgent {
                 reserve: riskState.currentCapital * (this.config.risk.cash_reserve_pct / 100),
             },
             positions: this.positions,
-            confluenceBoard: scoreOpportunities(snapshot, this.config).map(o => ({
+            confluenceBoard: opportunities.map(o => ({
                 symbol: o.symbol,
                 score: o.score,
                 direction: o.direction,
@@ -397,7 +405,7 @@ export class ApexAgent {
             lastScan: new Date().toISOString(),
         };
 
-        await this.redis.set('apex:state', JSON.stringify(state), 'EX', 60);
+        await this.redis.set('apex:state', JSON.stringify(state), 'EX', 120);
         await this.persistAll();
     }
 

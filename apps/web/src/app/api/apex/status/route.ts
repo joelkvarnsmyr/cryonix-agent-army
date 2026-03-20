@@ -22,7 +22,16 @@ export async function GET() {
       positions,
       confluenceBoard: state?.confluenceBoard ?? [],
       performance: state?.performance ?? { totalPnl: 0, winRate: 0, trades: 0, maxDrawdown: 0 },
-      circuitBreaker: risk ?? { drawdown: 0, dailyLoss: 0, consecutiveLosses: 0 },
+      circuitBreaker: risk ? {
+        drawdown: risk.peakCapital > 0
+          ? ((risk.peakCapital - risk.currentCapital) / risk.peakCapital) * 100
+          : 0,
+        dailyLoss: risk.peakCapital > 0
+          ? (Math.abs(risk.dailyPnl ?? 0) / risk.peakCapital) * 100
+          : 0,
+        consecutiveLosses: risk.consecutiveLosses ?? 0,
+        isPaused: risk.isPaused ?? false,
+      } : { drawdown: 0, dailyLoss: 0, consecutiveLosses: 0, isPaused: false },
       staleness: state?.staleness ?? {},
       timestamp: new Date().toISOString(),
     });
