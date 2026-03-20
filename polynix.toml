@@ -6,7 +6,7 @@ gamma_api_url = "https://gamma-api.polymarket.com"
 [capital]
 starting_balance_usd = 1475
 max_bet_size_usd = 25
-max_concurrent_positions = 40
+max_concurrent_positions = 60
 max_exposure_pct = 95
 
 [strategy]
