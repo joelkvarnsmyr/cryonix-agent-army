@@ -283,6 +283,30 @@ async function fetchPsinix(): Promise<InstanceData> {
   };
 }
 
+async function fetchApex(): Promise<InstanceData> {
+  const data = await safeFetch(`${BASE_URL}/api/apex/status`);
+
+  const perf = data?.performance ?? {};
+  const capital = data?.capital ?? {};
+
+  return {
+    id: 'apex',
+    label: 'APEX',
+    accent: 'rose',
+    status: data?.status === 'running' ? 'online' : 'offline',
+    portfolioValue: capital.total ?? 0,
+    dailyPnl: 0,
+    dailyPnlPct: 0,
+    totalPnl: perf.totalPnl ?? 0,
+    winRate: perf.winRate ?? 0,
+    totalTrades: perf.trades ?? 0,
+    openPositions: (data?.positions ?? []).length,
+    maxPositions: 3,
+    recentTrades: [],
+    equityCurve: [],
+  };
+}
+
 export async function GET() {
   const instances = await Promise.all([
     fetchCryonix(),
@@ -292,6 +316,7 @@ export async function GET() {
     fetchPolynix(),
     fetchCopynix(),
     fetchPsinix(),
+    fetchApex(),
   ]);
 
   const totalPortfolioValue = instances.reduce((sum, i) => sum + i.portfolioValue, 0);
