@@ -122,23 +122,15 @@ class NewsScoutTank(BaseTank):
             f"- [{h['symbol']}] {h['text'][:100]}" for h in headlines[:10]
         )
 
-        prompt = f"""Analyze these crypto/macro news headlines for trading signals.
+        prompt = f"""Rate crypto news sentiment. Score -3 to +3. Add ! prefix if urgent (hack/exploit/emergency).
 
-Headlines:
 {headline_text}
 
-For each relevant symbol, return:
-- score: -3 (very bearish) to +3 (very bullish)
-- urgency: "immediate" (act now), "developing" (watch), "background" (context)
-- event_type: "hack/exploit", "regulation", "partnership", "macro/fed", "whale_move", "technical", "adoption", "other"
-
-Return JSON only:
-{{"BTC": {{"score": 1, "urgency": "developing", "event_type": "macro/fed"}}, "ETH": {{"score": -2, "urgency": "immediate", "event_type": "hack/exploit"}}}}
-
-Only include symbols with actionable signals. Ignore old/stale news."""
+JSON only: {{"BTC": 1, "ETH": "!-3"}}
+Use ! only for hacks, exploits, or emergencies happening NOW."""
 
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=20) as client:
                 resp = await client.post(
                     "https://api.x.ai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -149,45 +141,25 @@ Only include symbols with actionable signals. Ignore old/stale news."""
                             {"role": "user", "content": prompt},
                         ],
                         "temperature": 0.1,
-                        "max_tokens": 500,
+                        "max_tokens": 200,
                     }
                 )
                 data = resp.json()
                 content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
-                # Parse nested JSON response
-                # Try to find the outermost JSON object
-                brace_count = 0
-                start = -1
-                for i, c in enumerate(content):
-                    if c == '{':
-                        if start == -1:
-                            start = i
-                        brace_count += 1
-                    elif c == '}':
-                        brace_count -= 1
-                        if brace_count == 0 and start != -1:
-                            try:
-                                parsed = json.loads(content[start:i+1])
-                                result = {}
-                                for k, v in parsed.items():
-                                    if k not in SYMBOL_KEYWORDS:
-                                        continue
-                                    if isinstance(v, dict):
-                                        result[k] = v  # Full object with score, urgency, event_type
-                                    elif isinstance(v, (int, float)):
-                                        result[k] = {"score": int(v), "urgency": "background", "event_type": "other"}
-                                return result
-                            except json.JSONDecodeError:
-                                pass
-                            start = -1
-                # Fallback: simple score extraction
                 match = re.search(r'\{[^}]+\}', content)
                 if match:
-                    try:
-                        scores = json.loads(match.group())
-                        return {k: {"score": int(v), "urgency": "background", "event_type": "other"} for k, v in scores.items() if k in SYMBOL_KEYWORDS}
-                    except (json.JSONDecodeError, ValueError):
-                        pass
+                    scores = json.loads(match.group())
+                    result = {}
+                    for k, v in scores.items():
+                        if k not in SYMBOL_KEYWORDS:
+                            continue
+                        # Parse "!-3" as urgent score -3, or plain int
+                        if isinstance(v, str) and v.startswith('!'):
+                            score = int(v[1:])
+                            result[k] = {"score": score, "urgency": "immediate", "event_type": "alert"}
+                        else:
+                            result[k] = {"score": int(v), "urgency": "background", "event_type": "other"}
+                    return result
         except Exception as e:
             print(f"[{self.name}] AI sentiment failed: {type(e).__name__}: {e}")
             import traceback
