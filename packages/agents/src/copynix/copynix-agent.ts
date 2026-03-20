@@ -580,6 +580,32 @@ export class CopynixAgent extends BaseAgent {
                 metadata: { wallets: signal.wallets.map(w => w.slice(0, 8)), reasoning: signal.reasoning },
             });
 
+            // Publish to copynix:signals for APEX consumption
+            if (this.statePublisher) {
+                try {
+                    const redis = (this.statePublisher as any).redis;
+                    if (redis) {
+                        const signalEvent = {
+                            token: signal.tokenMint,
+                            symbol: signal.tokenSymbol,
+                            score: this.tomlConfig.wallets.scores[signal.wallets[0]] ?? 0,
+                            direction: 'buy',
+                            consensusLevel: signal.consensusLevel,
+                            walletCount: signal.walletCount,
+                            timestamp: Date.now(),
+                        };
+                        const existing = await redis.get('copynix:signals');
+                        const signals = existing ? JSON.parse(existing) : [];
+                        const fiveMinAgo = Date.now() - 300_000;
+                        signals.push(signalEvent);
+                        const filtered = signals.filter((s: any) => s.timestamp > fiveMinAgo);
+                        await redis.set('copynix:signals', JSON.stringify(filtered), 'EX', 600);
+                    }
+                } catch (err) {
+                    this.log('warn', `[APEX] Failed to publish copynix:signals: ${err}`);
+                }
+            }
+
             // Telegram alert
             await sendTelegramAlert(
                 `🟢 <b>COPYNIX BUY</b>\n` +
