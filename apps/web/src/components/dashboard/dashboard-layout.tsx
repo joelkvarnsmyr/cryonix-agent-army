@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import {
   Activity, Settings, Wifi, WifiOff,
-  TrendingUp, CircleDollarSign, ChevronRight, Target, Moon,
+  TrendingUp, CircleDollarSign, ChevronRight, Target, Moon, Zap,
 } from 'lucide-react';
 import { Button } from '@cryonix/ui';
 import { useSystemHealth } from '@/hooks/useSystemHealth';
@@ -95,6 +95,16 @@ export const NAV_GROUPS = [
     glow: 'shadow-[0_0_8px_rgba(139,92,246,0.5)]',
     items: [
       { href: '/psinix', label: 'Ψnix', icon: CircleDollarSign, desc: 'Phase convergence agent' },
+    ],
+  },
+  {
+    id: 'apex',
+    label: 'APEX',
+    accent: 'text-rose-400',
+    dot: 'bg-rose-400',
+    glow: 'shadow-[0_0_8px_rgba(251,113,133,0.5)]',
+    items: [
+      { href: '/apex', label: 'Apex', icon: Zap, desc: 'Meta-intelligence trader' },
     ],
   },
 ] as const;
