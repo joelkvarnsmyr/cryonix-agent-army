@@ -4046,6 +4046,46 @@ export async function POST() {
           }
         } catch { /* aktienix data unavailable */ }
 
+        // Liquidation cascade detection (Binance futures forceOrder stream)
+        try {
+          const liqRaw = await redis.get(`liquidation:cascade:${baseAsset}`) as string | null;
+          if (liqRaw) {
+            const liq = JSON.parse(liqRaw);
+            const isDipPattern = signal.patterns?.some((p: string) => ['DIP_BUY', 'DEEP_VALUE_CRASH'].includes(p));
+
+            if (liq.is_cascade && liq.longs_usd > 5_000_000) {
+              // Massive long liquidation cascade — don't buy during waterfall
+              groupB.push(-0.10);
+              console.log(`[LIQUIDATION] ${signal.symbol}: -10% penalty (long cascade $${(liq.longs_usd / 1e6).toFixed(1)}M)`);
+            } else if (liq.longs_usd > 2_000_000 && isDipPattern) {
+              // Moderate long liquidation + dip pattern = capitulation buy opportunity
+              groupB.push(0.06);
+              console.log(`[LIQUIDATION] ${signal.symbol}: +6% boost (capitulation dip, $${(liq.longs_usd / 1e6).toFixed(1)}M liquidated)`);
+            } else if (liq.shorts_usd > 2_000_000) {
+              // Short squeeze — momentum signal
+              groupB.push(0.04);
+              console.log(`[LIQUIDATION] ${signal.symbol}: +4% boost (short squeeze $${(liq.shorts_usd / 1e6).toFixed(1)}M)`);
+            }
+          }
+        } catch { /* liquidation data unavailable */ }
+
+        // CVD divergence (Binance aggTrades order flow)
+        try {
+          const cvdRaw = await redis.get(`cvd:${baseAsset}`) as string | null;
+          if (cvdRaw) {
+            const cvd = JSON.parse(cvdRaw);
+            if (cvd.divergence_5m === 'bullish') {
+              // Price down but buying volume up = hidden accumulation
+              groupA.push(0.08);
+              console.log(`[CVD] ${signal.symbol}: +8% boost (bullish divergence, price ${cvd.price_change_5m}% but CVD +$${Math.abs(cvd.cvd_5m).toLocaleString()})`);
+            } else if (cvd.divergence_5m === 'bearish') {
+              // Price up but selling volume up = distribution
+              groupA.push(-0.06);
+              console.log(`[CVD] ${signal.symbol}: -6% penalty (bearish divergence, hidden selling)`);
+            }
+          }
+        } catch { /* CVD data unavailable */ }
+
         // ── Group C: Historical Edge (independent) — Bayesian self-learning ──
         const groupC: number[] = [];
         try {
