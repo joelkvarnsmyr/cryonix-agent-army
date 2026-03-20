@@ -546,30 +546,33 @@ services:
         condition: service_healthy
 
   # ============================================================
-  # Predator Hunter — Counter-Exploitation Trading Agent
-  # Detects P&D campaigns and rides the wave with tight risk controls
+  # Huntrix — Manipulation Detection & Ride Trader
+  # Detects P&D campaigns, coordinated shills, whale games
+  # and profits by entering during early pump phases
   # ============================================================
 
-  predatorhunter:
+  huntrix:
     build:
       context: .
-      dockerfile: Dockerfile.predatorhunter
-    container_name: predatorhunter
+      dockerfile: Dockerfile.huntrix
+    container_name: huntrix
     restart: unless-stopped
     volumes:
-      - ./predatorhunter.toml:/app/predatorhunter.toml:ro
+      - ./huntrix.toml:/app/huntrix.toml:ro
     environment:
       - NODE_ENV=production
       - KV_URL=redis://redis:6379
-      - XAI_API_KEY=${XAI_API_KEY:-}
       - BINANCE_API_KEY=${BINANCE_API_KEY:-}
       - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
+      - XAI_API_KEY=${XAI_API_KEY:-}
+      - TELEGRAM_INTERACTIVE_BOT_TOKEN=${TELEGRAM_INTERACTIVE_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
-    networks:
-      - cryonix-net
     depends_on:
-      redis:
-        condition: service_healthy
+      - redis
+      - postgres
+    networks:
+      - cryonix
 
   # Caddy Reverse Proxy (Handles HTTPS and routing)
   # ============================================================

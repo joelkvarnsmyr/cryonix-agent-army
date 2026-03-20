@@ -1,0 +1,31 @@
+# Dockerfile.huntrix — Huntrix — Manipulation Detection & Ride Trader
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN npm install --no-save \
+    @iarna/toml@2 \
+    dotenv@16 \
+    ioredis@5 \
+    openai@4 \
+    ccxt@4 \
+    tsx@4 \
+    typescript@5
+
+# Stub for @cryonix/types — all imports are `import type` (erased by tsx at runtime)
+RUN mkdir -p node_modules/@cryonix/types && \
+    echo '{"name":"@cryonix/types","version":"1.0.0","main":"index.js"}' > node_modules/@cryonix/types/package.json && \
+    echo 'module.exports = {};' > node_modules/@cryonix/types/index.js
+
+# Copy agent source
+COPY packages/agents/src/ ./packages/agents/src/
+
+# Copy runner script
+COPY scripts/services/huntrix-runner.ts ./scripts/services/
+
+# Copy config
+COPY huntrix.toml ./
+
+USER node
+CMD ["npx", "tsx", "scripts/services/huntrix-runner.ts"]
