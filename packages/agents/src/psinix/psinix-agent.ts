@@ -129,6 +129,63 @@ class PsinixTradeLogger {
         }
     }
 
+    /**
+     * Restore historical stats from Postgres so we don't lose PnL/W/L on restart.
+     * Returns: { totalPnl, totalFees, wins, losses, recentPnls, balance }
+     */
+    async restoreStats(initialBalance: number): Promise<{
+        totalPnl: number; totalFees: number; wins: number; losses: number;
+        recentPnls: number[]; balance: number; consecutiveLosses: number;
+    } | null> {
+        if (!this.pg) return null;
+        try {
+            // Get all closed trades (SELL with realized_pnl)
+            const { rows } = await this.pg.query(
+                `SELECT realized_pnl, dollar_amount, side FROM psinix_trades
+                 WHERE side = 'SELL' AND realized_pnl IS NOT NULL
+                 ORDER BY timestamp ASC`,
+            );
+            if (rows.length === 0) return null;
+
+            let totalPnl = 0;
+            let wins = 0;
+            let losses = 0;
+            let consecutiveLosses = 0;
+            const recentPnls: number[] = [];
+
+            for (const row of rows) {
+                const pnl = parseFloat(row.realized_pnl);
+                totalPnl += pnl;
+                if (pnl > 0) { wins++; consecutiveLosses = 0; }
+                else { losses++; consecutiveLosses++; }
+                recentPnls.push(pnl);
+            }
+
+            // Keep only last 30 for rolling window
+            const rollingPnls = recentPnls.slice(-30);
+
+            // Estimate total fees from all trades (entry + exit)
+            const { rows: allRows } = await this.pg.query(
+                `SELECT dollar_amount FROM psinix_trades WHERE dollar_amount IS NOT NULL`,
+            );
+            const totalVolume = allRows.reduce((s: number, r: any) => s + parseFloat(r.dollar_amount || 0), 0);
+            const estimatedFees = totalVolume * 0.001; // 0.1% per fill
+
+            // Reconstruct balance: initial + totalPnl - fees
+            const balance = initialBalance + totalPnl - estimatedFees;
+
+            console.log(`[psinix] Restored from Postgres: ${wins}W/${losses}L | PnL: $${totalPnl.toFixed(2)} | Fees: ~$${estimatedFees.toFixed(2)} | Balance: $${balance.toFixed(2)}`);
+
+            return {
+                totalPnl, totalFees: estimatedFees, wins, losses,
+                recentPnls: rollingPnls, balance, consecutiveLosses,
+            };
+        } catch (err: any) {
+            console.warn('[PsinixTradeLogger] Restore failed:', err.message);
+            return null;
+        }
+    }
+
     async close(): Promise<void> {
         try { await this.pg?.end(); } catch { }
     }
@@ -217,10 +274,22 @@ export class PsinixAgent {
             console.error('[psinix] OHLCV fetcher init failed:', err.message);
         }
 
-        // Connect trade logger
+        // Connect trade logger + restore historical stats
         await this.logger.connect();
 
-        console.log(`[psinix] Paper trading: $${this.balance} USDC`);
+        const restored = await this.logger.restoreStats(this.config.broker.initial_balance_usd);
+        if (restored) {
+            this.totalPnl = restored.totalPnl;
+            this.totalFees = restored.totalFees;
+            this.wins = restored.wins;
+            this.losses = restored.losses;
+            this.recentTradePnls = restored.recentPnls;
+            this.consecutiveLosses = restored.consecutiveLosses;
+            this.balance = restored.balance;
+            this.peakEquity = Math.max(this.config.broker.initial_balance_usd, this.balance);
+        }
+
+        console.log(`[psinix] Paper trading: $${this.balance.toFixed(2)} USDC`);
         console.log(`[psinix] Symbols: ${this.config.trading.symbols.join(', ')}`);
         console.log(`[psinix] Phase transition threshold: C > ${this.config.psi.phase_transition_threshold}`);
         console.log(`[psinix] Min Ψ magnitude: ${this.config.trading.min_psi_magnitude}`);
