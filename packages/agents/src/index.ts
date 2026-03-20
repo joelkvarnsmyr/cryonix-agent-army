@@ -8,15 +8,17 @@ import { BacktesterAgent } from './backtester';
 import { SignalValidator } from './signal-validator';
 import { ExecutorAgent } from './executor';
 import { AktienixAgent, type AktienixAgentConfig } from './aktienix';
+import { HuntrixAgent } from './huntrix';
 
 // Re-export agents
-export { BaseAgent, OrchestratorAgent, MarketScoutAgent, ClaudeAssistantAgent, RiskManagerAgent, BacktesterAgent, SignalValidator, ExecutorAgent, AktienixAgent };
+export { BaseAgent, OrchestratorAgent, MarketScoutAgent, ClaudeAssistantAgent, RiskManagerAgent, BacktesterAgent, SignalValidator, ExecutorAgent, AktienixAgent, HuntrixAgent };
 export type { RiskCheckRequest, RiskCheckResult } from './risk-manager';
 export * from './backtester';
 export * from './signal-validator';
 export * from './executor';
 export * from './utils';
 export * from './aktienix/types';
+export * from './huntrix/types';
 
 // Agent factory
 export class AgentFactory {

@@ -307,6 +307,34 @@ async function fetchApex(): Promise<InstanceData> {
   };
 }
 
+async function fetchHuntrix(): Promise<InstanceData> {
+  const data = await safeFetch(`${BASE_URL}/api/huntrix/status`);
+
+  const perf = data?.performance ?? {};
+
+  return {
+    id: 'huntrix',
+    label: 'HUNTRIX',
+    accent: 'orange',
+    status: data?.status === 'scanning' || data?.status === 'hunting' || data?.status === 'in_position' ? 'online' : 'offline',
+    portfolioValue: data?.virtualBalance ?? 0,
+    dailyPnl: 0,
+    dailyPnlPct: 0,
+    totalPnl: perf.totalPnl ?? 0,
+    winRate: perf.winRate ?? 0,
+    totalTrades: perf.totalTrades ?? 0,
+    openPositions: (data?.positions ?? []).length,
+    maxPositions: 2,
+    recentTrades: (data?.recentTrades ?? []).slice(0, 5).map((t: any) => ({
+      symbol: t.symbol ?? '',
+      side: 'BUY',
+      pnl: t.unrealized_pnl ?? 0,
+      timestamp: t.exited_at ?? t.entered_at ?? '',
+    })),
+    equityCurve: [],
+  };
+}
+
 export async function GET() {
   const instances = await Promise.all([
     fetchCryonix(),
@@ -317,6 +345,7 @@ export async function GET() {
     fetchCopynix(),
     fetchPsinix(),
     fetchApex(),
+    fetchHuntrix(),
   ]);
 
   const totalPortfolioValue = instances.reduce((sum, i) => sum + i.portfolioValue, 0);
