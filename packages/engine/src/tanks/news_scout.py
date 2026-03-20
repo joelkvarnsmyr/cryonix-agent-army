@@ -119,7 +119,7 @@ class NewsScoutTank(BaseTank):
             return {}
 
         headline_text = "\n".join(
-            f"- [{h['symbol']}] {h['text'][:120]}" for h in headlines[:20]
+            f"- [{h['symbol']}] {h['text'][:100]}" for h in headlines[:10]
         )
 
         prompt = f"""Analyze these crypto/macro news headlines for trading signals.
@@ -138,7 +138,7 @@ Return JSON only:
 Only include symbols with actionable signals. Ignore old/stale news."""
 
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
                     "https://api.x.ai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
