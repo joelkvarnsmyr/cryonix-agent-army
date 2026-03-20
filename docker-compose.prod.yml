@@ -399,6 +399,36 @@ services:
         condition: service_healthy
 
   # ============================================================
+  # APEX — Meta-Intelligence Confluence Trader
+  # Consumes signals from all 7 instances, trades on confluence
+  # ============================================================
+
+  apex:
+    build:
+      context: .
+      dockerfile: Dockerfile.apex
+    container_name: apex
+    restart: unless-stopped
+    volumes:
+      - ./apex.toml:/app/apex.toml:ro
+    environment:
+      - NODE_ENV=production
+      - KV_URL=redis://redis:6379
+      - BINANCE_API_KEY=${BINANCE_API_KEY:-}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
+      - XAI_API_KEY=${XAI_API_KEY:-}
+      - TELEGRAM_INTERACTIVE_BOT_TOKEN=${TELEGRAM_INTERACTIVE_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ============================================================
   # Vedic BTD — Venus Rx Buy-The-Dip dedicated trader
   # Separate wallet ($500), only trades post-Venus-Rx recovery
   # ============================================================
@@ -495,6 +525,32 @@ services:
       redis:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+
+  # ============================================================
+  # Predator Hunter — Counter-Exploitation Trading Agent
+  # Detects P&D campaigns and rides the wave with tight risk controls
+  # ============================================================
+
+  predatorhunter:
+    build:
+      context: .
+      dockerfile: Dockerfile.predatorhunter
+    container_name: predatorhunter
+    restart: unless-stopped
+    volumes:
+      - ./predatorhunter.toml:/app/predatorhunter.toml:ro
+    environment:
+      - NODE_ENV=production
+      - KV_URL=redis://redis:6379
+      - XAI_API_KEY=${XAI_API_KEY:-}
+      - BINANCE_API_KEY=${BINANCE_API_KEY:-}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/cryonix
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
         condition: service_healthy
 
   # Caddy Reverse Proxy (Handles HTTPS and routing)
