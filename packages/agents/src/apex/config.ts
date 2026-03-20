@@ -178,14 +178,20 @@ export function loadApexConfig(filePath?: string): ApexTomlConfig {
             },
             risk: { ...APEX_DEFAULTS.risk, ...parsed.risk },
             modes: {
-                venus_rx: { ...APEX_DEFAULTS.modes.venus_rx, ...parsed.modes?.venus_rx },
+                venus_rx: {
+                    ...APEX_DEFAULTS.modes.venus_rx,
+                    ...parsed.modes?.venus_rx,
+                    symbols: parsed.modes?.venus_rx?.symbols?.length
+                        ? parsed.modes.venus_rx.symbols
+                        : APEX_DEFAULTS.modes.venus_rx.symbols,
+                },
                 dip_sniper: { ...APEX_DEFAULTS.modes.dip_sniper, ...parsed.modes?.dip_sniper },
                 confluence: { ...APEX_DEFAULTS.modes.confluence, ...parsed.modes?.confluence },
             },
             telegram: { ...APEX_DEFAULTS.telegram, ...parsed.telegram },
         };
-    } catch {
-        console.warn('[apex] Failed to parse apex.toml, using defaults');
+    } catch (err) {
+        console.warn('[apex] Failed to parse apex.toml, using defaults:', err instanceof Error ? err.message : err);
         return APEX_DEFAULTS;
     }
 }
