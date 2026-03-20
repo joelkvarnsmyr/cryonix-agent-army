@@ -357,7 +357,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   <span className="text-[9px] font-mono text-muted-foreground/60 uppercase tracking-wider">
                     {svc.name.replace(' Tank', '').replace('Python ', '')}
                   </span>
-                  {svc.latency !== undefined && (
+                  {svc.latency != null && !isNaN(svc.latency) && (
                     <span className="text-[9px] font-mono text-muted-foreground/30">{svc.latency}ms</span>
                   )}
                 </div>

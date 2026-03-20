@@ -12,7 +12,10 @@ import { DashboardLayout } from '@/components/dashboard/dashboard-layout';
 import { PositionTpSlBar } from '@/components/dashboard/position-tp-sl-bar';
 
 function timeAgo(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
+  // Handle Postgres timestamps like "2026-03-19 13:45:49" (space instead of T)
+  const parsed = new Date(iso?.includes('T') ? iso : iso?.replace(' ', 'T') + 'Z');
+  const diff = Date.now() - parsed.getTime();
+  if (isNaN(diff) || diff < 0) return 'now';
   const mins = Math.floor(diff / 60000);
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
@@ -239,9 +242,9 @@ export default function AktienixPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-3">
-                    {t.side === 'SELL' && (
-                      <span className={`text-xs font-mono ${(t.realizedPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {(t.realizedPnl ?? 0) >= 0 ? '+' : ''}${(t.realizedPnl ?? 0).toFixed(2)}
+                    {t.side === 'SELL' && t.realizedPnl != null && (
+                      <span className={`text-xs font-mono ${t.realizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {t.realizedPnl >= 0 ? '+' : ''}${t.realizedPnl.toFixed(2)}
                       </span>
                     )}
                     <span className="text-[10px] font-mono text-muted-foreground/40 w-14 text-right">
