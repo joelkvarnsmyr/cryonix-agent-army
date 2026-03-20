@@ -7,7 +7,7 @@ WORKDIR /app
 # satori + resvg for signal card image generation
 RUN npm install --no-save ws@8 pg@8 ioredis@5 dotenv@16 satori@0.12 @resvg/resvg-js@2
 
-COPY scripts/services/auto-trader.mjs scripts/services/ws-server.mjs scripts/services/telegram-interactive.mjs ./scripts/services/
+COPY scripts/services/auto-trader.mjs scripts/services/ws-server.mjs scripts/services/telegram-interactive.mjs scripts/services/cvd-monitor.mjs ./scripts/services/
 COPY scripts/lib/ ./scripts/lib/
 
 USER node

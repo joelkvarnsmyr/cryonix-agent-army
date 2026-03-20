@@ -178,6 +178,24 @@ services:
       - web
 
   # ============================================================
+  # CVD Monitor (Order Flow — Cumulative Volume Delta)
+  # ============================================================
+
+  cvd-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.scripts
+    restart: always
+    command: [ "node", "scripts/services/cvd-monitor.mjs" ]
+    environment:
+      - KV_URL=redis://redis:6379
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ============================================================
   # WebSocket Server (Real-time dashboard updates)
   # ============================================================
 

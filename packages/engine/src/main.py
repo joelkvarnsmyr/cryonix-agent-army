@@ -10,6 +10,7 @@ from src.tanks.gainer_scanner import GainerScanner
 from src.tanks.cmc_scout import CMCScout
 from src.tanks.coinglass_scout import CoinglassScout
 from src.tanks.vedic_scout import VedicScout
+from src.tanks.liquidation_scout import LiquidationScout
 from contextlib import asynccontextmanager
 
 # Get Redis URL from environment
@@ -22,6 +23,7 @@ gainer_scanner = GainerScanner(redis_client=state_manager.redis)
 cmc_scout = CMCScout(redis_client=state_manager.redis)
 coinglass_scout = CoinglassScout(redis_client=state_manager.redis)
 vedic_scout = VedicScout(redis_client=state_manager.redis)
+liquidation_scout = LiquidationScout(kv_url=kv_url)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -33,7 +35,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(cmc_scout.run_loop())
     asyncio.create_task(coinglass_scout.run_loop())
     asyncio.create_task(vedic_scout.run_loop())
-    
+    asyncio.create_task(liquidation_scout.start())
+
     yield
     
     # Shutdown: Clean up connections
