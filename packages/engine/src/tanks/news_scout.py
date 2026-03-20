@@ -122,12 +122,20 @@ class NewsScoutTank(BaseTank):
             f"- [{h['symbol']}] {h['text'][:120]}" for h in headlines[:20]
         )
 
-        prompt = f"""Analyze crypto news sentiment. For each symbol mentioned, give a score from -3 (very bearish) to +3 (very bullish).
+        prompt = f"""Analyze these crypto/macro news headlines for trading signals.
 
 Headlines:
 {headline_text}
 
-Return JSON only: {{"BTC": 1, "ETH": -2, ...}} — only include symbols with non-zero sentiment."""
+For each relevant symbol, return:
+- score: -3 (very bearish) to +3 (very bullish)
+- urgency: "immediate" (act now), "developing" (watch), "background" (context)
+- event_type: "hack/exploit", "regulation", "partnership", "macro/fed", "whale_move", "technical", "adoption", "other"
+
+Return JSON only:
+{{"BTC": {{"score": 1, "urgency": "developing", "event_type": "macro/fed"}}, "ETH": {{"score": -2, "urgency": "immediate", "event_type": "hack/exploit"}}}}
+
+Only include symbols with actionable signals. Ignore old/stale news."""
 
         try:
             async with httpx.AsyncClient(timeout=15) as client:
@@ -146,10 +154,40 @@ Return JSON only: {{"BTC": 1, "ETH": -2, ...}} — only include symbols with non
                 )
                 data = resp.json()
                 content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+                # Parse nested JSON response
+                # Try to find the outermost JSON object
+                brace_count = 0
+                start = -1
+                for i, c in enumerate(content):
+                    if c == '{':
+                        if start == -1:
+                            start = i
+                        brace_count += 1
+                    elif c == '}':
+                        brace_count -= 1
+                        if brace_count == 0 and start != -1:
+                            try:
+                                parsed = json.loads(content[start:i+1])
+                                result = {}
+                                for k, v in parsed.items():
+                                    if k not in SYMBOL_KEYWORDS:
+                                        continue
+                                    if isinstance(v, dict):
+                                        result[k] = v  # Full object with score, urgency, event_type
+                                    elif isinstance(v, (int, float)):
+                                        result[k] = {"score": int(v), "urgency": "background", "event_type": "other"}
+                                return result
+                            except json.JSONDecodeError:
+                                pass
+                            start = -1
+                # Fallback: simple score extraction
                 match = re.search(r'\{[^}]+\}', content)
                 if match:
-                    scores = json.loads(match.group())
-                    return {k: int(v) for k, v in scores.items() if k in SYMBOL_KEYWORDS}
+                    try:
+                        scores = json.loads(match.group())
+                        return {k: {"score": int(v), "urgency": "background", "event_type": "other"} for k, v in scores.items() if k in SYMBOL_KEYWORDS}
+                    except (json.JSONDecodeError, ValueError):
+                        pass
         except Exception as e:
             print(f"[{self.name}] AI sentiment failed: {e}")
         return {}
@@ -190,24 +228,51 @@ Return JSON only: {{"BTC": 1, "ETH": -2, ...}} — only include symbols with non
             except Exception as e:
                 print(f"[{self.name}] Error fetching or parsing {source}: {e}")
 
-        # Try AI sentiment (overrides keyword scores)
+        # Try AI sentiment (overrides keyword scores with richer data)
+        ai_enriched = {}
         if all_headlines:
             ai_scores = await self._ai_sentiment_batch(all_headlines)
             if ai_scores:
                 print(f"[{self.name}] AI sentiment: {ai_scores}")
-                for symbol, score in ai_scores.items():
-                    sentiment_scores[symbol] = score
+                for symbol, data in ai_scores.items():
+                    if isinstance(data, dict):
+                        sentiment_scores[symbol] = data.get("score", 0)
+                        ai_enriched[symbol] = data
+                    else:
+                        sentiment_scores[symbol] = int(data)
 
-        # Store the aggregated sentiment scores in Redis
+        # Store in Redis — both simple score and enriched AI data
         try:
             pipeline = self.redis_client.pipeline()
             for symbol, score in sentiment_scores.items():
+                # Simple score (backward compatible — auto-trade reads this)
                 redis_key = f"sentiment:{symbol}"
                 pipeline.setex(redis_key, SENTIMENT_EXPIRATION_SECONDS, str(score))
+
+                # Enriched AI data (urgency + event_type for advanced filtering)
+                if symbol in ai_enriched:
+                    enriched = ai_enriched[symbol]
+                    enriched_key = f"sentiment:enriched:{symbol}"
+                    pipeline.setex(enriched_key, SENTIMENT_EXPIRATION_SECONDS, json.dumps(enriched))
+
+                    # Immediate urgency alerts → separate key for fast detection
+                    if enriched.get("urgency") == "immediate":
+                        alert_key = f"sentiment:alert:{symbol}"
+                        alert_data = json.dumps({
+                            "severity": "critical" if enriched.get("event_type") in ("hack/exploit", "regulation") else "warning",
+                            "reason": f"News alert: {enriched.get('event_type', 'unknown')}",
+                            "score": enriched.get("score", 0),
+                            "confirmed_count": 1,
+                            "timestamp": time.time(),
+                        })
+                        pipeline.setex(alert_key, 1800, alert_data)  # 30 min TTL
+                        print(f"[{self.name}] ALERT {symbol}: {enriched.get('event_type')} (urgency=immediate, score={enriched.get('score')})")
+
                 if score != 0:
-                    print(f"[{self.name}] Stored sentiment for {symbol}: {score}")
+                    print(f"[{self.name}] {symbol}: score={score}" + (f" urgency={ai_enriched[symbol].get('urgency')} type={ai_enriched[symbol].get('event_type')}" if symbol in ai_enriched else ""))
+
             await pipeline.execute()
-            print(f"[{self.name}] Sentiment scores updated in Redis.")
+            print(f"[{self.name}] Sentiment updated: {sum(1 for s in sentiment_scores.values() if s != 0)} active, {len(ai_enriched)} AI-enriched.")
         except Exception as e:
             print(f"[{self.name}] Error storing sentiment in Redis: {e}")
             return {"status": "error", "error": str(e)}
