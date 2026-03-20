@@ -572,7 +572,7 @@ services:
       - redis
       - postgres
     networks:
-      - cryonix
+      - cryonix-net
 
   # Caddy Reverse Proxy (Handles HTTPS and routing)
   # ============================================================
