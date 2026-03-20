@@ -1,4 +1,4 @@
-import { ApexTomlConfig } from './config';
+import type { ApexTomlConfig } from './config';
 
 export interface ApexPosition {
     id: string;
