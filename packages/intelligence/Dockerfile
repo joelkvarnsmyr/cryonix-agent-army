@@ -1,30 +1,19 @@
 FROM python:3.11-slim
 
-WORKDIR /app
+RUN apt-get update && apt-get install -y curl gcc g++ python3-dev && rm -rf /var/lib/apt/lists/*
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Poetry
-RUN curl -sSL https://install.python-poetry.org | python3 -
-ENV PATH="/root/.local/bin:$PATH"
-
-# Configure Poetry to not use virtualenvs inside container
+RUN pip install poetry
 RUN poetry config virtualenvs.create false
 
-# Copy dependency definition
+WORKDIR /app
+
 COPY pyproject.toml poetry.lock* ./
+RUN poetry install --no-interaction --no-ansi --no-root || pip install fastapi uvicorn redis ccxt xgboost hmmlearn arch filterpy scikit-learn pandas numpy tomlkit httpx pydantic pydantic-settings
 
-# Install dependencies
-RUN poetry install --no-interaction --no-ansi --no-root
+COPY . .
 
-# Copy application code
-COPY src ./src
+RUN mkdir -p /app/models
 
-# Expose port
-EXPOSE 8000
+EXPOSE 8001
 
-# Run commands
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]

@@ -1,0 +1,38 @@
+[orakel]
+enabled = true
+symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC", "BNB/USDC"]
+hourly_interval_seconds = 3600
+daily_hour_utc = 0
+retrain_interval_days = 7
+
+[orakel.xgboost]
+max_depth = 4
+n_estimators = 200
+learning_rate = 0.05
+prediction_horizon_candles = 4
+train_days = 90
+test_days = 30
+purge_days = 2
+
+[orakel.regime]
+n_states = 3
+bull_multiplier = 1.0
+sideways_multiplier = 0.6
+bear_multiplier = 0.25
+
+[orakel.volatility]
+spike_threshold = 2.0
+forecast_horizon_days = 5
+
+[orakel.fusion]
+quantguild_reliability = 0.70
+grok_ai_reliability = 0.80
+xgboost_reliability = 0.75
+fear_greed_reliability = 0.40
+polymarket_reliability = 0.50
+funding_reliability = 0.60
+regime_reliability = 0.65
+
+[orakel.integration]
+weight_in_auto_trade = 0.20
+min_confidence_to_publish = 0.10

@@ -510,6 +510,17 @@ async function getCapitalBudget(): Promise<CapitalBudget> {
   try {
     const regimeRaw = await redis.get('market:regime');
     if (regimeRaw) regime = regimeRaw;
+
+    // Prefer orakel probabilistic regime over rule-based
+    const orakelRegime = await redis.get('orakel:regime');
+    if (orakelRegime) {
+      const parsed = JSON.parse(orakelRegime);
+      if (parsed.regime && ['bull', 'bear', 'sideways'].includes(parsed.regime)) {
+        const prevRegime = regime;
+        regime = parsed.regime === 'bear' ? 'volatile' : parsed.regime === 'bull' ? 'trending' : 'ranging';
+        console.log(`[ORAKEL-REGIME] Override ${prevRegime} -> ${regime} (orakel: ${parsed.regime}, prob: ${(parsed.probability ?? 0).toFixed(2)})`);
+      }
+    }
   } catch (e) { console.warn('[CAPITAL] Failed to read market regime:', e); }
 
   // Base allocation
@@ -3749,6 +3760,89 @@ export async function POST() {
       const taWeight = weightSum > 0 ? rawTaWeight / weightSum : 0.5;
       const aiWeight = weightSum > 0 ? rawAiWeight / weightSum : 0.5;
       signal.confidence = Math.round((signal.confidence * taWeight + aiResult.aiConfidence * aiWeight) * 10000) / 10000;
+
+      // ══════════════════════════════════════════════════════════════════════
+      // Phase 4.5: ORAKEL Forecast Integration
+      // ML-based directional forecast + fused confidence + volatility warning.
+      // Fail-silent: if orakel service is down, trading continues unaffected.
+      // Config: [orakel] weight_in_auto_trade (default 0.20)
+      // ══════════════════════════════════════════════════════════════════════
+      try {
+        const orakelEnabled = (TOML as any)?.orakel?.enabled ?? false;
+        if (orakelEnabled) {
+          const orakelWeight = (TOML as any)?.orakel?.weight_in_auto_trade ?? 0.20;
+          const baseAssetOrakel = signal.symbol.split('/')[0];
+          const orakelSymbol = signal.symbol.replace('/', '_');
+
+          // 1. Direction probability
+          const dirRaw = await redis.get(`orakel:${orakelSymbol}:direction`) as string | null;
+          if (dirRaw) {
+            const dir = JSON.parse(dirRaw);
+            const upProb = dir.up_probability ?? 0.5;
+            if (signal.action === 'BUY') {
+              if (upProb > 0.6) {
+                const boost = (upProb - 0.5) * orakelWeight;
+                signal.confidence += boost;
+                signal.reason += ` | orakel: direction UP ${(upProb * 100).toFixed(0)}% (+${(boost * 100).toFixed(1)}%)`;
+                console.log(`[ORAKEL] ${signal.symbol}: direction boost +${(boost * 100).toFixed(1)}% (upProb=${(upProb * 100).toFixed(0)}%)`);
+              } else if (upProb < 0.4) {
+                const penalty = (0.5 - upProb) * orakelWeight;
+                signal.confidence -= penalty;
+                signal.reason += ` | orakel: direction DOWN ${((1 - upProb) * 100).toFixed(0)}% (-${(penalty * 100).toFixed(1)}%)`;
+                console.log(`[ORAKEL] ${signal.symbol}: direction penalty -${(penalty * 100).toFixed(1)}% (upProb=${(upProb * 100).toFixed(0)}%)`);
+              }
+            }
+          }
+
+          // 2. Fused confidence blend
+          const fusedRaw = await redis.get(`orakel:${orakelSymbol}:fused`) as string | null;
+          if (fusedRaw) {
+            const fused = JSON.parse(fusedRaw);
+            const fusedConfidence = fused.confidence ?? null;
+            if (fusedConfidence !== null && typeof fusedConfidence === 'number') {
+              const before = signal.confidence;
+              signal.confidence = signal.confidence * (1 - orakelWeight) + fusedConfidence * orakelWeight;
+              signal.reason += ` | orakel: fused blend ${(fusedConfidence * 100).toFixed(0)}% (w=${orakelWeight})`;
+              console.log(`[ORAKEL] ${signal.symbol}: fused blend ${(before * 100).toFixed(0)}% -> ${(signal.confidence * 100).toFixed(0)}% (fused=${(fusedConfidence * 100).toFixed(0)}%, weight=${orakelWeight})`);
+            }
+          }
+
+          // 3. Regime multiplier (bear/sideways/bull)
+          const regimeRaw = await redis.get('orakel:regime') as string | null;
+          if (regimeRaw) {
+            const regimeData = JSON.parse(regimeRaw);
+            const orakelReg = regimeData.regime as string;
+            let regimeMultiplier = 1.0;
+            if (orakelReg === 'bear') regimeMultiplier = 0.25;
+            else if (orakelReg === 'sideways') regimeMultiplier = 0.6;
+            // bull = 1.0 (no change)
+
+            if (regimeMultiplier < 1.0) {
+              const before = signal.confidence;
+              signal.confidence *= regimeMultiplier;
+              signal.reason += ` | orakel: ${orakelReg} regime (x${regimeMultiplier})`;
+              console.log(`[ORAKEL] ${signal.symbol}: ${orakelReg} regime multiplier x${regimeMultiplier} (${(before * 100).toFixed(0)}% -> ${(signal.confidence * 100).toFixed(0)}%)`);
+            }
+          }
+
+          // 4. Volatility spike warning — halve position size
+          const volRaw = await redis.get('orakel:volatility') as string | null;
+          if (volRaw) {
+            const vol = JSON.parse(volRaw);
+            if (vol.spike_warning === true) {
+              (signal as any).orakel_vol_scale = 0.5;
+              signal.reason += ' | orakel: vol spike (pos size x0.5)';
+              console.log(`[ORAKEL] ${signal.symbol}: volatility spike warning — position size halved`);
+            }
+          }
+
+          // Clamp confidence after orakel adjustments
+          signal.confidence = Math.max(0, Math.min(0.95, signal.confidence));
+        }
+      } catch (orakelErr) {
+        // Fail-silent: orakel service down does not block trading
+        console.warn(`[ORAKEL] Failed to read orakel data for ${signal.symbol}:`, orakelErr);
+      }
 
       // ══════════════════════════════════════════════════════════════════════
       // POST-AI INTELLIGENCE ADJUSTMENTS (V2: Multiplicative Correlation Model)

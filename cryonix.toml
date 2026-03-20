@@ -1185,3 +1185,13 @@ max_vol_factor = 1.5
 [htf_filter]
 enabled = true
 bearish_penalty = 0.15
+
+# ── ORAKEL Forecast Engine ──────────────────────────────────
+[orakel]
+enabled = true
+symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC", "BNB/USDC"]
+hourly_interval_seconds = 3600
+daily_hour_utc = 0
+retrain_interval_days = 7
+weight_in_auto_trade = 0.20
+min_confidence_to_publish = 0.10

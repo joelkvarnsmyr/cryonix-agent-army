@@ -80,6 +80,33 @@ services:
       start_period: 15s
 
   # ============================================================
+  # ORAKEL Forecast Engine (ML predictions + regime)
+  # ============================================================
+
+  orakel:
+    build:
+      context: ./packages/intelligence
+      dockerfile: Dockerfile
+    container_name: cryonix-orakel
+    restart: always
+    volumes:
+      - ./cryonix.toml:/app/cryonix.toml:ro
+      - orakel-models:/app/models
+    environment:
+      - KV_URL=redis://redis:6379
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ============================================================
   # Next.js Web App (Dashboard + API)
   # ============================================================
 
@@ -491,6 +518,7 @@ volumes:
   postgres_data:
   redis_data:
   caddy_data:
+  orakel-models:
 
 
 networks:
