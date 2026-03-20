@@ -149,7 +149,7 @@ Only include symbols with actionable signals. Ignore old/stale news."""
                             {"role": "user", "content": prompt},
                         ],
                         "temperature": 0.1,
-                        "max_tokens": 150,
+                        "max_tokens": 500,
                     }
                 )
                 data = resp.json()
@@ -189,7 +189,9 @@ Only include symbols with actionable signals. Ignore old/stale news."""
                     except (json.JSONDecodeError, ValueError):
                         pass
         except Exception as e:
-            print(f"[{self.name}] AI sentiment failed: {e}")
+            print(f"[{self.name}] AI sentiment failed: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
         return {}
 
     async def process(self) -> Dict:
