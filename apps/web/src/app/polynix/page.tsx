@@ -43,6 +43,12 @@ const TYPE_BADGE: Record<string, { label: string; color: string; bg: string }> =
   directional: { label: 'DIR', color: 'text-blue-400', bg: 'text-blue-400 border-blue-400/30 bg-blue-400/5' },
 };
 
+const EXIT_BADGE: Record<string, { label: string; bg: string }> = {
+  take_profit: { label: 'TP', bg: 'text-emerald-400 border-emerald-400/30 bg-emerald-400/5' },
+  stop_loss: { label: 'SL', bg: 'text-red-400 border-red-400/30 bg-red-400/5' },
+  stagnation: { label: 'STAG', bg: 'text-amber-400 border-amber-400/30 bg-amber-400/5' },
+};
+
 const SIDE_COLOR: Record<string, string> = {
   YES: 'text-emerald-400',
   NO: 'text-red-400',
@@ -201,7 +207,7 @@ export default function PolynixPage() {
             </div>
           ) : (
             <div className="space-y-1.5">
-              {positions.map(pos => {
+              {[...positions].sort((a, b) => a.expiresAt - b.expiresAt).map(pos => {
                 const badge = TYPE_BADGE[pos.type] ?? TYPE_BADGE.directional;
                 const sideColor = SIDE_COLOR[pos.side] ?? 'text-foreground';
                 const isExpanded = expandedBet === pos.id;
@@ -360,6 +366,11 @@ export default function PolynixPage() {
                         <span className={`font-mono text-xs ${SIDE_COLOR[t.side] ?? 'text-foreground'}`}>
                           {t.side}
                         </span>
+                        {t.exitReason && (
+                          <span className={`text-[10px] font-mono px-1 rounded border ${EXIT_BADGE[t.exitReason]?.bg ?? ''}`}>
+                            {EXIT_BADGE[t.exitReason]?.label ?? t.exitReason}
+                          </span>
+                        )}
                         <span className="font-mono text-xs text-foreground/50 truncate max-w-[180px]">
                           {t.asset || t.marketTitle?.slice(0, 25)}
                         </span>
@@ -406,6 +417,20 @@ export default function PolynixPage() {
                             <span className="text-muted-foreground/50">Settled</span>
                             <span>{formatDate(t.settledAt)}</span>
                           </div>
+                          {t.exitReason && (
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground/50">Exit</span>
+                              <span className={EXIT_BADGE[t.exitReason]?.bg?.split(' ')[0] ?? 'text-foreground'}>
+                                {t.exitReason.replace('_', ' ')}
+                              </span>
+                            </div>
+                          )}
+                          {t.exitPrice != null && (
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground/50">Exit price</span>
+                              <span>${t.exitPrice.toFixed(4)}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}

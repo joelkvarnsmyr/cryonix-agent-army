@@ -13,9 +13,11 @@ export interface PolynixTrade {
   size: number;
   costBasis: number;
   pnl: number;
-  status: 'won' | 'lost' | 'settled';
+  status: 'won' | 'lost' | 'settled' | 'exited';
   enteredAt: number;
   settledAt: number;
+  exitReason?: 'take_profit' | 'stop_loss' | 'stagnation';
+  exitPrice?: number;
 }
 
 export async function GET() {
@@ -39,6 +41,8 @@ export async function GET() {
         status: t.status ?? 'settled',
         enteredAt: t.enteredAt ?? 0,
         settledAt: t.expiresAt ?? t.settledAt ?? Date.now(),
+        exitReason: t.exitReason,
+        exitPrice: t.exitPrice,
       }));
     }
   } catch (error) {
