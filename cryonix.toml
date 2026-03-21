@@ -224,7 +224,7 @@ min_confidence = 0.55
 # 1.3 means you need $1.30 potential profit for every $1 of risk.
 # When to change: raise to 1.5 for more selective entries, lower
 # to 1.1 if your win rate is high (>60%).
-min_risk_reward = 1.5
+min_risk_reward = 1.2
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
