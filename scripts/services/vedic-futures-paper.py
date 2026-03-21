@@ -65,7 +65,7 @@ SCAN_INTERVAL = 300               # 5 minutes
 REDIS_TTL = 86400 * 30
 
 # Entry thresholds (Bayesian probability)
-LONG_THRESHOLD = 0.55             # P(up) > 55% → go long (V4 aligned)
+LONG_THRESHOLD = 0.60             # P(up) > 60% → go long (raised from 55%)
 SHORT_THRESHOLD = 0.40            # P(up) < 40% → go short
 EXIT_NEUTRAL_ZONE = (0.45, 0.55)  # Close if signal fades to neutral
 
