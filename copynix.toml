@@ -131,9 +131,10 @@ max_consecutive_losses = 4
 [safety]
 # Lesson learned: 3 of 4 positions had $0 liquidity = unsellable.
 # Min $5K liquidity ensures we can actually exit positions.
-min_token_age_hours = 0
-min_liquidity_usd = 5000
-min_holders = 0
+min_token_age_hours = 12
+min_liquidity_usd = 50000
+min_holders = 100
+max_fdv_liquidity_ratio = 50
 min_lp_burnt_pct = 0
 require_immutable_supply = false
 

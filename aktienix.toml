@@ -176,7 +176,7 @@ max_day_trades_per_5d = 5
 # The real gate is min_confidence (0.40) in evaluateSignal(), applied
 # AFTER Grok and Polymarket overlays. Net-score filter (|buy-sell| >= 0.15)
 # eliminates ambiguous signals where both directions score similarly.
-min_signal_score = 0.10
+min_signal_score = 0.35
 
 # --- Factor Weights ---
 # Stocks are more momentum-driven and mean-reverting than crypto.
@@ -273,15 +273,15 @@ take_profit_pct = 8.0
 
 # Fixed stop-loss percentage. Cut losses at this level.
 # 3.0 = -3%. Risk:Reward = 5.0 / 3.0 = 1.67 R:R (healthy).
-stop_loss_pct = 3.0
+stop_loss_pct = 5.0
 
 # Trailing stop: follows price this % below the high watermark.
 # 2.0 = 2%. Tightened from 4% to lock in gains faster once trailing activates.
-trailing_stop_pct = 2.0
+trailing_stop_pct = 3.0
 
 # Activate trailing stop only after this % profit.
 # 3.0 = 3%. Raised from 2% so trailing only kicks in after meaningful gains.
-trailing_activation_pct = 3.0
+trailing_activation_pct = 4.0
 
 # Stagnation exit: sell if position barely moved after N trading days.
 # 10 trading days = 2 calendar weeks.

@@ -12,6 +12,7 @@ export class CopyRiskGate {
     private minHolders: number;
     private minLpBurntPct: number;
     private requireImmutableSupply: boolean;
+    private maxFdvLiquidityRatio: number;
 
     constructor(config: {
         min_token_age_hours: number;
@@ -19,12 +20,14 @@ export class CopyRiskGate {
         min_holders: number;
         min_lp_burnt_pct: number;
         require_immutable_supply: boolean;
+        max_fdv_liquidity_ratio?: number;
     }) {
         this.minTokenAgeHours = config.min_token_age_hours;
         this.minLiquidityUsd = config.min_liquidity_usd;
         this.minHolders = config.min_holders;
         this.minLpBurntPct = config.min_lp_burnt_pct;
         this.requireImmutableSupply = config.require_immutable_supply;
+        this.maxFdvLiquidityRatio = config.max_fdv_liquidity_ratio ?? 50;
     }
 
     async checkToken(tokenMint: string): Promise<TokenSafetyCheck> {
@@ -79,9 +82,9 @@ export class CopyRiskGate {
             const fdv = pair.fdv ?? 0;
             if (fdv > 0 && liquidityUsd > 0) {
                 const ratio = fdv / liquidityUsd;
-                if (ratio > 100) {
+                if (ratio > this.maxFdvLiquidityRatio) {
                     safe = false;
-                    reasons.push(`FDV/Liq ratio suspicious: ${ratio.toFixed(0)}x`);
+                    reasons.push(`FDV/Liq ratio suspicious: ${ratio.toFixed(0)}x (max ${this.maxFdvLiquidityRatio}x)`);
                 }
             }
 

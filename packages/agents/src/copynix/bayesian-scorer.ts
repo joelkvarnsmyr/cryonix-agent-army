@@ -60,8 +60,8 @@ const PRIOR_BETA = 2;
 // Thresholds
 const DEMOTION_SCORE = 35;    // Below this → lose single-whale, flagged for review
 const PROMOTION_SCORE = 75;   // Above this → single-whale privileges
-const MIN_TRADES_PROMOTE = 8; // Need 8+ trades to promote (avoid lucky streaks)
-const MIN_TRADES_DEMOTE = 20; // Need 20+ trades to demote (avoid unlucky streaks)
+const MIN_TRADES_PROMOTE = 10; // Need 10+ trades to promote (avoid lucky streaks)
+const MIN_TRADES_DEMOTE = 10; // Need 10+ trades to demote (catch bad wallets faster)
 
 // PnL-weighted update: trades with large PnL move beliefs more
 const PNL_WEIGHT_THRESHOLD = 10; // $10 — trades above this get extra weight

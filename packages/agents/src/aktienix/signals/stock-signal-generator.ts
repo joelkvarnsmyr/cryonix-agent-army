@@ -149,8 +149,9 @@ export class StockSignalGenerator {
         const approachingOverbought = structure.trend === 'uptrend' ? 60 + trendShift : 60;
 
         if (indicators.rsi14 < oversold) {
-            buyScore += 0.25;
-            reasoning.push(`RSI oversold (${indicators.rsi14.toFixed(1)}, threshold ${oversold})`);
+            const downtrendPenalty = structure.trend === 'downtrend' ? 0.5 : 1.0;
+            buyScore += 0.25 * downtrendPenalty;
+            reasoning.push(`RSI oversold (${indicators.rsi14.toFixed(1)}, threshold ${oversold})${structure.trend === 'downtrend' ? ' [downtrend: half credit]' : ''}`);
         } else if (indicators.rsi14 < approachingOversold) {
             buyScore += 0.10;
             reasoning.push(`RSI approaching oversold (${indicators.rsi14.toFixed(1)})`);
@@ -160,6 +161,12 @@ export class StockSignalGenerator {
         } else if (indicators.rsi14 > approachingOverbought) {
             sellScore += 0.10;
             reasoning.push(`RSI approaching overbought (${indicators.rsi14.toFixed(1)})`);
+        }
+
+        // Require volume confirmation for single-factor RSI signals
+        if (buyScore > 0 && buyScore <= 0.25 && structure.volumeState !== 'high') {
+            buyScore = 0;
+            reasoning.push('RSI signal cancelled: no volume confirmation (volumeState=' + structure.volumeState + ')');
         }
 
         // --- Factor 2: MACD Cross (weight: 25%) ---

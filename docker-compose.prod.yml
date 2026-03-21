@@ -223,7 +223,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.scripts
-    restart: always
+    restart: "no"
     command: [ "node", "scripts/services/telegram-interactive.mjs" ]
     volumes:
       - ./cryonix.toml:/app/cryonix.toml:ro
@@ -252,7 +252,7 @@ services:
     build:
       context: ./scripts/telegram-scraper
       dockerfile: Dockerfile
-    restart: always
+    restart: "no"
     environment:
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}

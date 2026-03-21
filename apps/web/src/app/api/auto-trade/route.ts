@@ -2175,6 +2175,7 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
   const risk = Math.abs(signal.entry_price - signal.stop_loss);
   const reward = Math.abs(signal.target_price - signal.entry_price);
   const minRR = TOML?.risk.min_risk_reward ?? 1.3;
+  console.log(`[R/R] ${signal.symbol}: reward=${reward.toFixed(6)} risk=${risk.toFixed(6)} R/R=${risk > 0 ? (reward/risk).toFixed(2) : 'N/A'} threshold=${minRR}`);
   if (risk > 0 && reward / risk < minRR) {
     return { pass: false, reason: `R/R ${(reward / risk).toFixed(2)} < ${minRR}` };
   }
