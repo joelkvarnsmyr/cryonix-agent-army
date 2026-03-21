@@ -112,70 +112,70 @@ def discretize_signals(raw: Dict[str, Any]) -> Dict[str, str]:
 RESEARCH_PRIORS: Dict[str, Dict[str, Tuple[int, int]]] = {
     "venus_rx": {
         # Venus Rx: 100% regime-consistent, p<0.0001
-        "True":  (5, 30),
-        "False": (55, 45),
+        "True":  (1, 6),
+        "False": (6, 5),
     },
     "mercury_rx": {
         # Mercury Rx: mild (p=0.04)
-        "True":  (45, 55),
-        "False": (55, 45),
+        "True":  (5, 6),
+        "False": (6, 5),
     },
     "n_retro": {
         # 0 retro = best, 100% regime-consistent, p<0.0001
-        "0": (60, 40),
-        "1": (52, 48),
-        "2": (50, 50),
-        "3": (40, 60),
+        "0": (6, 4),
+        "1": (5, 5),
+        "2": (5, 5),
+        "3": (4, 6),
     },
     "jup_sat_tight": {
         # Jupiter-Saturn <10 deg: 100%, p<0.0001
-        "True":  (70, 30),
-        "False": (48, 52),
+        "True":  (7, 3),
+        "False": (5, 5),
     },
     "mars_rahu_tight": {
         # Mars-Rahu <10 deg: 100%, p<0.001
-        "True":  (65, 35),
-        "False": (48, 52),
+        "True":  (7, 4),
+        "False": (5, 5),
     },
     "merc_venus_tight": {
         # Mercury-Venus <10 deg: 100% bearish, p<0.0001
-        "True":  (30, 70),
-        "False": (55, 45),
+        "True":  (3, 7),
+        "False": (6, 5),
     },
     "merc_speed_fast": {
         # Mercury speed >1.5: 100%, p<0.01
-        "True":  (58, 42),
-        "False": (45, 55),
+        "True":  (6, 4),
+        "False": (5, 6),
     },
     "venus_speed_fast": {
         # Venus speed >1.0: 80%, p<0.001
-        "True":  (57, 43),
-        "False": (47, 53),
+        "True":  (6, 4),
+        "False": (5, 5),
     },
     "venus_near_sun": {
         # Venus <15 deg from Sun: 100% bearish, p<0.001
-        "True":  (35, 65),
-        "False": (55, 45),
+        "True":  (4, 7),
+        "False": (6, 5),
     },
     "eclipse_near": {
         # Moon near Rahu <15 deg: 100% bearish, p<0.01
-        "True":  (40, 60),
-        "False": (52, 48),
+        "True":  (4, 6),
+        "False": (5, 5),
     },
     "v4_bin": {
         # V4 score self-calibration
-        "strong_buy": (65, 35),
-        "buy":        (55, 45),
-        "neutral":    (50, 50),
-        "avoid":      (40, 60),
+        "strong_buy": (7, 4),
+        "buy":        (6, 5),
+        "neutral":    (5, 5),
+        "avoid":      (4, 6),
     },
     "polymarket_crypto": {
         # External: prediction market sentiment (contrarian edges)
-        "very_bearish": (45, 55),  # Contrarian caution — may bottom but risky
-        "bearish":      (48, 52),
-        "neutral":      (50, 50),
-        "bullish":      (52, 48),
-        "euphoria":     (45, 55),  # FOMO = crowded = slightly negative
+        "very_bearish": (5, 6),  # Contrarian caution — may bottom but risky
+        "bearish":      (5, 5),
+        "neutral":      (5, 5),
+        "bullish":      (5, 5),
+        "euphoria":     (5, 6),  # FOMO = crowded = slightly negative
     },
 }
 
@@ -225,9 +225,9 @@ class BayesianVedic:
                 self.state.counts[signal_name][state_val] = [wins, losses]
 
         # Base rate: crypto is slightly bullish over time (~55%)
-        self.state.total_wins = 550
-        self.state.total_losses = 450
-        self.state.total_trades = 1000
+        self.state.total_wins = 6
+        self.state.total_losses = 5
+        self.state.total_trades = 11
         self.state.last_updated = datetime.now(timezone.utc).isoformat()
         self._initialized = True
 
