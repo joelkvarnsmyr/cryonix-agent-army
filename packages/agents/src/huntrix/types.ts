@@ -164,6 +164,22 @@ export interface HuntrixState {
   updated_at: string;
 }
 
+// ── GoPlus Security ─────────────────────────────────────────────
+
+export interface GoPlusTokenSecurity {
+  contract: string;
+  chain: 'eth' | 'bsc';
+  is_honeypot: boolean;
+  is_mintable: boolean;
+  sell_tax: number;      // 0-100%
+  buy_tax: number;       // 0-100%
+  holder_count: number;
+  lp_holder_count: number;
+  is_open_source: boolean;
+  risk_score: number;    // 0-100, higher = riskier
+  checked_at: string;
+}
+
 // ── Config ──────────────────────────────────────────────────────
 
 export interface HuntrixConfig {
