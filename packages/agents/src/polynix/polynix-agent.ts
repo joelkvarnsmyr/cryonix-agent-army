@@ -13,6 +13,8 @@ import { BayesianLearner } from './bayesian-learner';
 import { MicroMarketScanner } from './micro-market-scanner';
 import { PolynixExitMonitor } from './exit-monitor';
 import { CopyTracker } from './copy-tracker';
+import { WhaleDetector } from './whale-detector';
+import type { WhaleSignal } from './whale-detector';
 import type { PolynixConfig, PolynixAccountState, CryptoMicroMarket } from './types';
 
 export class PolynixAgent extends BaseAgent {
@@ -31,6 +33,8 @@ export class PolynixAgent extends BaseAgent {
     private microScanner: MicroMarketScanner;
     private exitMonitor: PolynixExitMonitor;
     private copyTracker: CopyTracker;
+    private whaleDetector: WhaleDetector;
+    private lastWhaleSignals: WhaleSignal[] = [];
 
     private accountState: PolynixAccountState;
     private lastHeartbeatLog = 0;
@@ -51,6 +55,7 @@ export class PolynixAgent extends BaseAgent {
         this.microScanner = new MicroMarketScanner();
         this.exitMonitor = new PolynixExitMonitor();
         this.copyTracker = new CopyTracker(this.tomlConfig);
+        this.whaleDetector = new WhaleDetector(this.tomlConfig.broker.clob_api_url);
 
         this.accountState = {
             balance: this.tomlConfig.capital.starting_balance_usd,
@@ -285,9 +290,32 @@ export class PolynixAgent extends BaseAgent {
                 const signal = await this.directionalEngine.evaluate(market, this.spreadDetector, this.tomlConfig);
                 if (signal && signal.edge > this.tomlConfig.strategy.min_edge_pct / 100) {
                     signalsFound++;
+
+                    // Whale detection: check orderbook asymmetry
+                    let whaleBoost = 0;
+                    try {
+                        const whale = await this.whaleDetector.detect(market);
+                        if (whale && whale.confidence >= 40) {
+                            this.lastWhaleSignals = this.lastWhaleSignals
+                                .filter(w => w.conditionId !== whale.conditionId);
+                            this.lastWhaleSignals.push(whale);
+                            if (this.lastWhaleSignals.length > 20) {
+                                this.lastWhaleSignals = this.lastWhaleSignals.slice(-20);
+                            }
+                            if (whale.realBet === signal.direction) {
+                                whaleBoost = Math.min(15, whale.confidence * 0.15);
+                                this.log('info', `[WHALE] ${market.title}: +${whaleBoost.toFixed(0)}% boost (whale real bet=${whale.realBet}, asymmetry=${whale.asymmetryRatio}x)`);
+                            } else {
+                                whaleBoost = -Math.min(10, whale.confidence * 0.10);
+                                this.log('info', `[WHALE] ${market.title}: ${whaleBoost.toFixed(0)}% penalty (whale opposes, real bet=${whale.realBet})`);
+                            }
+                        }
+                    } catch { /* whale detection non-critical */ }
+                    const adjustedConfidence = Math.max(5, Math.min(95, signal.confidence + whaleBoost));
+
                     const risk = this.riskManager.check(
                         signal.edge,
-                        signal.confidence / 100,
+                        adjustedConfidence / 100,
                         this.tomlConfig,
                         this.positionTracker.getOpenCount(),
                         this.positionTracker.getExposure(),
@@ -318,7 +346,8 @@ export class PolynixAgent extends BaseAgent {
                             this.accountState.balance -= costBasis;
                             await this.dbLogger.logOpen(this.positionTracker.getLastAdded()!);
                             signalsExecuted++;
-                            this.log('info', `DIRECTIONAL ${signal.direction}: ${market.title} | edge=${(signal.edge * 100).toFixed(2)}% | price=$${signal.currentPrice.toFixed(2)} | conf=${signal.confidence} | size=$${risk.suggestedSize.toFixed(2)}`);
+                            const whaleTag = whaleBoost !== 0 ? ` | whale=${whaleBoost > 0 ? '+' : ''}${whaleBoost.toFixed(0)}%` : '';
+                            this.log('info', `DIRECTIONAL ${signal.direction}: ${market.title} | edge=${(signal.edge * 100).toFixed(2)}% | price=$${signal.currentPrice.toFixed(2)} | conf=${adjustedConfidence.toFixed(0)}${whaleTag} | size=$${risk.suggestedSize.toFixed(2)}`);
                             await this.logSignal('directional', market.title, signal.edge, signal.direction, true);
                         }
                     } else {
@@ -498,6 +527,12 @@ export class PolynixAgent extends BaseAgent {
                 'polynix:priors',
                 JSON.stringify(this.bayesian.getSummary()),
             );
+            if (this.lastWhaleSignals.length > 0) {
+                await this.statePublisher.set(
+                    'polynix:whale_signals',
+                    JSON.stringify(this.lastWhaleSignals),
+                );
+            }
             if (this.copyTracker.isEnabled()) {
                 await this.statePublisher.set(
                     'polynix:copy_leaderboard',
