@@ -14,7 +14,8 @@ async function main() {
     const symbol = args[args.indexOf('--symbol') + 1] ?? 'BTC/USDC';
     const days = parseInt(args[args.indexOf('--days') + 1] ?? '30');
     const jsonOutput = args.includes('--json');
-    const timeframe = args[args.indexOf('--tf') + 1] ?? '15m';
+    const tfIdx = args.indexOf('--tf');
+    const timeframe = tfIdx >= 0 ? args[tfIdx + 1] : '15m';
 
     console.log(`\n  Psinix Backtest — ${symbol} — ${days} days — ${timeframe}\n`);
 

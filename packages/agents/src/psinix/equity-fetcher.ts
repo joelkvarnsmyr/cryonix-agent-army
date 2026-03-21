@@ -64,7 +64,7 @@ export class EquityFetcher {
         const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
         if (!res.ok) return null;
 
-        const data = await res.json();
+        const data = (await res.json()) as Record<string, any>;
         if (!data.c || data.c === 0) return null;
 
         return {

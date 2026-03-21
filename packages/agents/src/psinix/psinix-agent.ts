@@ -504,28 +504,26 @@ export class PsinixAgent {
 
         // ── Dynamic exit levels from Ψ state ──
         // ATR as % of price (from recent prices)
-        let atrPct = 0.5; // Fallback: 0.5% per bar
+        let atrPct = 0.15; // Fallback: 0.15% per bar (BTC average)
         if (recentPrices.length >= 10) {
             let sumAbsRet = 0;
             for (let i = 1; i < recentPrices.length; i++) {
                 sumAbsRet += Math.abs(recentPrices[i] - recentPrices[i - 1]) / recentPrices[i - 1];
             }
-            atrPct = (sumAbsRet / (recentPrices.length - 1)) * 100; // Convert to %
+            atrPct = (sumAbsRet / (recentPrices.length - 1)) * 100;
         }
+        // ATR floor: never let ATR collapse below 0.10% (prevents micro-trades)
+        atrPct = Math.max(0.10, atrPct);
 
         // Normalize β to [0.5, 2.0] range for exit scaling
-        // High β (ordered market) → tighter exits (trend will reverse cleanly)
-        // Low β (chaotic market) → wider exits (more noise to survive)
         const betaNorm = Math.max(0.5, Math.min(2.0, psi.beta / 3.0));
 
         // TP scales with: coherence (wider when signals agree) + ATR (wider in volatile markets)
-        // High C → let profit run, low C → take quick profit
         const baseTp = this.config.exits.take_profit_pct;
         const baseSl = this.config.exits.stop_loss_pct;
 
-        const dynamicTpPct = Math.max(1.0, baseTp * (0.5 + psi.coherence * 0.8) * (atrPct / 0.3));
-        // SL scales inversely with β: chaotic market → wider SL to avoid whipsaws
-        const dynamicSlPct = Math.max(0.5, baseSl * (1 / betaNorm) * (atrPct / 0.3));
+        const dynamicTpPct = Math.max(2.0, baseTp * (0.5 + psi.coherence * 0.8) * (atrPct / 0.3));
+        const dynamicSlPct = Math.max(1.0, baseSl * (1 / betaNorm) * (atrPct / 0.3));
         const dynamicTrailActivation = dynamicTpPct * 0.5;
         const dynamicTrailDistance = dynamicSlPct * 0.67;
 
@@ -609,8 +607,14 @@ export class PsinixAgent {
 
             let exitReason: string | null = null;
 
+            // Stagnation exit: if position hasn't moved ±1% in 24h, close it
+            const hoursHeld = (Date.now() - pos.entryTime) / (60 * 60 * 1000);
+            if (hoursHeld >= 24 && Math.abs(pnlPct) < 1.0) {
+                exitReason = `Stagnation (${hoursHeld.toFixed(0)}h, ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)`;
+            }
+
             // Stop loss (dynamic)
-            if (pnlPct <= -sl) {
+            if (!exitReason && pnlPct <= -sl) {
                 exitReason = `SL hit (${pnlPct.toFixed(1)}% / limit -${sl.toFixed(1)}%)`;
             }
             // Take profit (dynamic)
