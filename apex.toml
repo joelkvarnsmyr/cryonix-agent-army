@@ -4,7 +4,7 @@ description = "Adaptive Profit EXtraction — Meta-Intelligence Trader"
 mode = "paper"
 capital = 950.0
 currency = "USDC"
-scan_interval_seconds = 15
+scan_interval_seconds = 30
 
 [confluence]
 min_score_full_kelly = 60
@@ -27,6 +27,10 @@ cryonix_macd_bearish = 20
 polymarket_sentiment_falling = 15
 cmc_fear_greed_dropping = 10
 cmc_btc_dom_rising = 10
+# ORAKEL weights
+orakel_direction = 15
+orakel_regime = 10
+orakel_fused = 10
 
 [confluence.thresholds]
 cryonix_min_confidence = 70
@@ -48,8 +52,6 @@ cash_reserve_pct = 20.0
 
 [modes.venus_rx]
 enabled = true
-leverage = 2
-max_leverage = 3
 symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC", "BNB/USDC"]
 sizing_pct = 24.0
 tp_pct = 8.0
@@ -75,6 +77,22 @@ sl_pct = 3.0
 trailing_pct = 2.5
 trailing_activation_pct = 3.0
 max_hold_hours = 72
+
+[orakel]
+enabled = true
+direction_weight = 15
+regime_weight = 10
+vol_spike_veto = true
+
+[staleness]
+momentary_seconds = 300
+ambient_seconds = 86400
+
+[grok]
+enabled = true
+model = "grok-3-mini"
+cache_ttl_seconds = 300
+max_calls_per_minute = 4
 
 [telegram]
 enabled = true

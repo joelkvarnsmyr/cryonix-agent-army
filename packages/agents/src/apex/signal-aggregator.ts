@@ -1,86 +1,72 @@
 /**
- * APEX Signal Aggregator — reads all 7 trading instances from Redis.
+ * APEX Signal Aggregator — reads all 7 trading instances + ORAKEL from Redis.
  *
- * Uses a single pipeline() call to batch-read all keys, then parses
- * each source independently (wrapped in try/catch so one failure does
- * not affect the rest).
+ * Corrections from code review:
+ * - aktienix:signals LIST doesn't exist → read aktienix:positions for sentiment proxy
+ * - psinix:positions doesn't exist → read psinix:state (already done)
+ * - polymarket:crypto has no delta field → compute from crypto vs crypto:prev
+ * - vedic:planets path: data.planets.Venus.is_retrograde (extra nesting)
+ * - Signals classified as "momentary" (5min window) or "ambient" (always-on)
+ * - ORAKEL forecast signals added
  *
- * Redis key layout:
- *   trades:pending       — Cryonix pending signals (JSON string, GET)
- *   copynix:signals      — Copynix whale events (JSON string, GET)
- *   psinix:positions     — Ψnix positions (JSON string, GET)
- *   psinix:state         — Ψnix full state with positions+coherence (JSON, GET)
- *   polymarket:crypto    — Polymarket crypto sentiment (JSON string, GET)
- *   aktienix:signals     — Aktienix signals (Redis LIST, LRANGE 0 -1)
- *   solanix:status       — Solanix status (JSON string, GET)
- *   vedic:planets        — Vedic planetary data (JSON string, GET)
- *   cmc:fear_greed       — CMC Fear & Greed index (JSON or plain number, GET)
- *   cmc:global           — CMC global metrics (JSON string, GET)
+ * Uses a single pipeline() call to batch-read all keys.
  */
 
 import type Redis from 'ioredis';
+import type { ApexTomlConfig } from './config';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type SignalDirection = 'bullish' | 'bearish';
+export type SignalTemporality = 'momentary' | 'ambient';
 
 export interface NormalizedSignal {
-    /** Normalized base symbol: 'BTC', 'ETH', 'SOL', etc. */
     symbol: string;
     direction: SignalDirection;
-    /** Which instance produced this signal */
-    source: 'cryonix' | 'copynix' | 'psinix' | 'polymarket' | 'aktienix' | 'solanix' | 'vedic' | 'cmc';
-    /** e.g. 'DEEP_VALUE_CRASH', 'whale_buy', 'venus_rx', 'extreme_fear' */
+    source: 'cryonix' | 'copynix' | 'psinix' | 'polymarket' | 'aktienix' | 'solanix' | 'vedic' | 'cmc' | 'orakel';
     signalType: string;
-    /** 0-100 */
     confidence: number;
-    /** 0-100 (whale score, sentiment score, etc.) */
     score: number;
-    /** Unix ms */
     timestamp: number;
-    /** Original raw data for debugging */
+    temporality: SignalTemporality;
     raw?: unknown;
 }
 
 export interface AggregatorSnapshot {
     signals: NormalizedSignal[];
-    /** source → is_stale */
     staleness: Record<string, boolean>;
     timestamp: number;
 }
 
 // ---------------------------------------------------------------------------
-// Internal pipeline result slot indices
+// Pipeline slot indices
 // ---------------------------------------------------------------------------
 
-const SLOT_CRYONIX         = 0;
-const SLOT_COPYNIX         = 1;
-const SLOT_PSINIX_POS      = 2;
-const SLOT_PSINIX_STATE    = 3;
-const SLOT_POLY_CRYPTO     = 4;
-const SLOT_AKTIENIX        = 5;   // LRANGE — returns string[]
-const SLOT_SOLANIX         = 6;
-const SLOT_VEDIC           = 7;
-const SLOT_CMC_FG          = 8;
-const SLOT_CMC_GLOBAL      = 9;
+const SLOT = {
+    CRYONIX: 0,
+    COPYNIX: 1,
+    PSINIX_STATE: 2,
+    POLY_CRYPTO: 3,
+    POLY_CRYPTO_PREV: 4,
+    POLY_SUMMARY: 5,
+    SOLANIX_POSITIONS: 6,
+    SOLANIX_STATUS: 7,
+    VEDIC: 8,
+    CMC_FG: 9,
+    CMC_GLOBAL: 10,
+    AKTIENIX_POSITIONS: 11,
+    ORAKEL_REGIME: 12,
+    ORAKEL_VOLATILITY: 13,
+} as const;
+
+// Per-symbol ORAKEL keys are fetched in a second pipeline pass
 
 // ---------------------------------------------------------------------------
-// Staleness thresholds
+// Symbol normalisation
 // ---------------------------------------------------------------------------
 
-const STALE_MS_DEFAULT = 5 * 60 * 1000;          // 5 minutes
-const STALE_MS_VEDIC   = 24 * 60 * 60 * 1000;    // 24 hours (planetary data changes slowly)
-
-// ---------------------------------------------------------------------------
-// Symbol normalisation helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Strip exchange pair suffixes — 'BTC/USDC' → 'BTC', 'ETH/USDT' → 'ETH'.
- * If the symbol has no slash, return as-is (already a base symbol).
- */
 function normalizeSymbol(raw: string): string {
     if (!raw) return 'UNKNOWN';
     return raw.split('/')[0].toUpperCase();
@@ -91,121 +77,102 @@ function normalizeSymbol(raw: string): string {
 // ---------------------------------------------------------------------------
 
 export class SignalAggregator {
-    constructor(private readonly redis: Redis) {}
+    constructor(
+        private readonly redis: Redis,
+        private readonly config: ApexTomlConfig,
+    ) {}
 
-    /**
-     * Take a snapshot of all instances. Reads all Redis keys in a single
-     * pipeline call, then parses each source independently.
-     */
     async snapshot(): Promise<AggregatorSnapshot> {
         const now = Date.now();
         const signals: NormalizedSignal[] = [];
         const staleness: Record<string, boolean> = {};
+        const momentaryMs = this.config.staleness.momentary_seconds * 1000;
+        const ambientMs = this.config.staleness.ambient_seconds * 1000;
 
-        // ── Build pipeline ───────────────────────────────────────────────────
+        // ── Build pipeline ─────────────────────────────────────────────
         const pipe = this.redis.pipeline();
-        pipe.get('trades:pending');       // SLOT_CRYONIX
-        pipe.get('copynix:signals');      // SLOT_COPYNIX
-        pipe.get('psinix:positions');     // SLOT_PSINIX_POS
-        pipe.get('psinix:state');        // SLOT_PSINIX_STATE
-        pipe.get('polymarket:crypto');   // SLOT_POLY_CRYPTO
-        pipe.lrange('aktienix:signals', 0, -1); // SLOT_AKTIENIX — LIST!
-        pipe.get('solanix:status');       // SLOT_SOLANIX
-        pipe.get('vedic:planets');        // SLOT_VEDIC
-        pipe.get('cmc:fear_greed');       // SLOT_CMC_FG
-        pipe.get('cmc:global');           // SLOT_CMC_GLOBAL
+        pipe.get('trades:pending');           // 0: CRYONIX
+        pipe.get('copynix:signals');          // 1: COPYNIX
+        pipe.get('psinix:state');             // 2: PSINIX_STATE
+        pipe.get('polymarket:crypto');        // 3: POLY_CRYPTO
+        pipe.get('polymarket:crypto:prev');   // 4: POLY_CRYPTO_PREV (for delta)
+        pipe.get('polymarket:summary');       // 5: POLY_SUMMARY
+        pipe.get('solanix:positions');        // 6: SOLANIX_POSITIONS
+        pipe.get('solanix:status');           // 7: SOLANIX_STATUS
+        pipe.get('vedic:planets');            // 8: VEDIC
+        pipe.get('cmc:fear_greed');           // 9: CMC_FG
+        pipe.get('cmc:global');               // 10: CMC_GLOBAL
+        pipe.get('aktienix:state');           // 11: AKTIENIX (state, not signals list)
+        pipe.get('orakel:regime');            // 12: ORAKEL regime
+        pipe.get('orakel:volatility');        // 13: ORAKEL volatility
 
         const results = await pipe.exec();
-        if (!results) {
-            return { signals: [], staleness: {}, timestamp: now };
-        }
+        if (!results) return { signals: [], staleness: {}, timestamp: now };
 
-        // Helper to extract the value from a pipeline result entry.
-        // Each entry is [error, value].
         const val = <T>(slot: number): T | null => {
             const entry = results[slot];
             if (!entry || entry[0]) return null;
             return entry[1] as T | null;
         };
 
-        // ── Parse each source ────────────────────────────────────────────────
-
-        // 1. Cryonix — trades:pending
+        // ── 1. Cryonix — trades:pending (momentary) ───────────────────
         try {
-            const raw = val<string>(SLOT_CRYONIX);
+            const raw = val<string>(SLOT.CRYONIX);
             if (raw) {
                 const parsed = JSON.parse(raw);
                 const entries: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
-                let isStale = false;
+                let hasStale = false;
 
                 for (const entry of entries) {
                     if (!entry || typeof entry !== 'object') continue;
                     const e = entry as Record<string, unknown>;
                     const ts = (e.timestamp as number) ?? now;
-                    if (now - ts > STALE_MS_DEFAULT) { isStale = true; continue; }
+                    if (now - ts > momentaryMs) { hasStale = true; continue; }
 
                     const symbol = normalizeSymbol((e.symbol as string) ?? '');
                     const confidence = (e.confidence as number) ?? 0;
                     const patterns: string[] = Array.isArray(e.patterns) ? e.patterns as string[] : [];
 
                     for (const pattern of patterns) {
-                        const patternStr = String(pattern).toUpperCase();
-                        // All patterns from trades:pending are bullish BUY signals
                         signals.push({
-                            symbol,
-                            direction: 'bullish',
-                            source: 'cryonix',
-                            signalType: patternStr,
-                            confidence,
-                            score: confidence,
-                            timestamp: ts,
-                            raw: entry,
+                            symbol, direction: 'bullish', source: 'cryonix',
+                            signalType: String(pattern).toUpperCase(),
+                            confidence, score: confidence, timestamp: ts,
+                            temporality: 'momentary', raw: entry,
                         });
                     }
                 }
-
-                staleness['cryonix'] = isStale && signals.filter(s => s.source === 'cryonix').length === 0;
+                staleness['cryonix'] = hasStale && signals.filter(s => s.source === 'cryonix').length === 0;
             } else {
-                staleness['cryonix'] = false; // No data — not stale, just quiet
+                staleness['cryonix'] = false;
             }
         } catch (err) {
             console.warn('[apex/aggregator] Cryonix parse error:', err instanceof Error ? err.message : err);
             staleness['cryonix'] = true;
         }
 
-        // 2. Copynix — copynix:signals
+        // ── 2. Copynix — copynix:signals (momentary) ──────────────────
         try {
-            const raw = val<string>(SLOT_COPYNIX);
+            const raw = val<string>(SLOT.COPYNIX);
             if (raw) {
                 const entries: unknown[] = JSON.parse(raw);
                 if (Array.isArray(entries)) {
-                    let isStale = false;
+                    let hasStale = false;
                     for (const entry of entries) {
                         if (!entry || typeof entry !== 'object') continue;
                         const e = entry as Record<string, unknown>;
                         const ts = (e.timestamp as number) ?? now;
-                        if (now - ts > STALE_MS_DEFAULT) { isStale = true; continue; }
-
+                        if (now - ts > momentaryMs) { hasStale = true; continue; }
                         const score = (e.score as number) ?? 0;
-                        if (score < 80) continue; // Filter: only strong whale signals
-
-                        // symbol field preferred; fall back to token field
+                        if (score < 80) continue;
                         const rawSym = (e.symbol as string) ?? (e.token as string) ?? '';
-                        const symbol = normalizeSymbol(rawSym);
-                        const direction: SignalDirection = 'bullish'; // Buys are always bullish
-
                         signals.push({
-                            symbol,
-                            direction,
-                            source: 'copynix',
-                            signalType: 'whale_buy',
-                            confidence: Math.min(100, score),
-                            score,
-                            timestamp: ts,
-                            raw: entry,
+                            symbol: normalizeSymbol(rawSym), direction: 'bullish', source: 'copynix',
+                            signalType: 'whale_buy', confidence: Math.min(100, score), score,
+                            timestamp: ts, temporality: 'momentary', raw: entry,
                         });
                     }
-                    staleness['copynix'] = isStale;
+                    staleness['copynix'] = hasStale;
                 }
             } else {
                 staleness['copynix'] = false;
@@ -215,72 +182,33 @@ export class SignalAggregator {
             staleness['copynix'] = true;
         }
 
-        // 3. Ψnix — psinix:state (preferred) + psinix:positions + psinix:status
-        // Note: psinix:status is a plain string 'running', not JSON.
-        //       psinix:state is a full JSON state object with positions + updatedAt.
-        //       psinix:positions may be null (not published by current implementation).
+        // ── 3. Ψnix — psinix:state (ambient — coherence is ongoing) ──
         try {
-            // Prefer psinix:state (the actual full state object)
-            const stateRaw = val<string>(SLOT_PSINIX_STATE);
-            const posRaw   = val<string>(SLOT_PSINIX_POS);
-
-            const stateObj = stateRaw ? (JSON.parse(stateRaw) as Record<string, unknown>) : null;
-            const posObj   = posRaw ? (JSON.parse(posRaw) as Record<string, unknown>) : null;
-
-            // Determine staleness from updatedAt
-            const updatedAt = (stateObj?.updatedAt as number) ?? (posObj?.updatedAt as number) ?? null;
-            const isStale = updatedAt !== null ? (now - updatedAt > STALE_MS_DEFAULT) : false;
+            const stateRaw = val<string>(SLOT.PSINIX_STATE);
+            const stateObj = stateRaw ? JSON.parse(stateRaw) as Record<string, unknown> : null;
+            const updatedAt = (stateObj?.updatedAt as number) ?? null;
+            const isStale = updatedAt !== null ? (now - updatedAt > ambientMs) : false;
             staleness['psinix'] = isStale;
 
-            if (!isStale) {
-                // Extract coherence and regime from state object
-                // psinix:state has: { status, positions, ... updatedAt }
-                // positions array items have: { coherenceAtEntry, psiAtEntry, ... }
-                // We emit a signal per active position if coherence is high enough
-                const positions: unknown[] = Array.isArray(stateObj?.positions)
-                    ? stateObj!.positions as unknown[]
-                    : Array.isArray(posObj?.positions)
-                        ? posObj!.positions as unknown[]
-                        : [];
+            if (!isStale && stateObj) {
+                const positions: unknown[] = Array.isArray(stateObj.positions)
+                    ? stateObj.positions as unknown[] : [];
 
                 for (const pos of positions) {
                     if (!pos || typeof pos !== 'object') continue;
                     const p = pos as Record<string, unknown>;
                     const coherence = (p.coherenceAtEntry as number) ?? (p.coherence as number) ?? 0;
-                    if (coherence < 0.7) continue; // Threshold: only high-coherence positions
-
+                    if (coherence < 0.7) continue;
                     const psi = (p.psiAtEntry as number) ?? (p.psi as number) ?? 0;
                     const side = (p.side as string) ?? '';
-                    // psi > 0 = LONG (bullish), psi < 0 = SHORT (bearish)
                     const direction: SignalDirection = psi >= 0 || side === 'LONG' ? 'bullish' : 'bearish';
-                    const symbol = normalizeSymbol((p.symbol as string) ?? '');
-                    const ts = (p.entryTime as number) ?? updatedAt ?? now;
-
                     signals.push({
-                        symbol,
-                        direction,
-                        source: 'psinix',
-                        signalType: 'phase_convergence',
+                        symbol: normalizeSymbol((p.symbol as string) ?? ''),
+                        direction, source: 'psinix', signalType: 'phase_convergence',
                         confidence: Math.round(coherence * 100),
                         score: Math.round(Math.abs(psi) * 100),
-                        timestamp: ts,
-                        raw: pos,
-                    });
-                }
-
-                // If no positions but state exists, emit a global regime signal
-                // based on the overall Ψnix status (running + last coherence)
-                if (positions.length === 0 && stateObj) {
-                    // Emit a low-weight market-regime signal indicating Ψnix is live
-                    signals.push({
-                        symbol: 'MARKET',
-                        direction: 'bullish',
-                        source: 'psinix',
-                        signalType: 'psinix_online',
-                        confidence: 50,
-                        score: 50,
-                        timestamp: updatedAt ?? now,
-                        raw: { status: stateObj.status },
+                        timestamp: (p.entryTime as number) ?? updatedAt ?? now,
+                        temporality: 'ambient', raw: pos,
                     });
                 }
             }
@@ -289,40 +217,38 @@ export class SignalAggregator {
             staleness['psinix'] = true;
         }
 
-        // 4. Polymarket — polymarket:crypto
+        // ── 4. Polymarket — compute delta from crypto vs crypto:prev (ambient) ──
         try {
-            const raw = val<string>(SLOT_POLY_CRYPTO);
-            if (raw) {
-                const data = JSON.parse(raw) as Record<string, unknown>;
-                const updatedAt = (data.updated_at as number) ?? (data.timestamp as number) ?? null;
-                const isStale = updatedAt !== null ? (now - updatedAt > STALE_MS_DEFAULT) : false;
+            const cryptoRaw = val<string>(SLOT.POLY_CRYPTO);
+            const prevRaw = val<string>(SLOT.POLY_CRYPTO_PREV);
+            if (cryptoRaw) {
+                const current = JSON.parse(cryptoRaw) as Record<string, unknown>;
+                const currentScore = (current.score as number) ?? 50;
+                const ts = (current.updated_at as number) ?? (current.timestamp as number) ?? now;
+                const isStale = now - ts > ambientMs;
                 staleness['polymarket'] = isStale;
 
                 if (!isStale) {
-                    const sentiment = (data.sentiment as number) ?? 50;
-                    const delta = (data.delta as number) ?? 0;
+                    let delta = 0;
+                    if (prevRaw) {
+                        const prev = JSON.parse(prevRaw) as Record<string, unknown>;
+                        const prevScore = (prev.score as number) ?? 50;
+                        delta = currentScore - prevScore;
+                    }
 
                     if (delta >= 20) {
                         signals.push({
-                            symbol: 'CRYPTO',
-                            direction: 'bullish',
-                            source: 'polymarket',
+                            symbol: 'CRYPTO', direction: 'bullish', source: 'polymarket',
                             signalType: 'sentiment_shift_bullish',
-                            confidence: Math.min(100, 50 + delta),
-                            score: sentiment,
-                            timestamp: updatedAt ?? now,
-                            raw: data,
+                            confidence: Math.min(100, 50 + delta), score: currentScore,
+                            timestamp: ts, temporality: 'ambient', raw: { currentScore, delta },
                         });
                     } else if (delta <= -15) {
                         signals.push({
-                            symbol: 'CRYPTO',
-                            direction: 'bearish',
-                            source: 'polymarket',
+                            symbol: 'CRYPTO', direction: 'bearish', source: 'polymarket',
                             signalType: 'sentiment_shift_bearish',
-                            confidence: Math.min(100, 50 + Math.abs(delta)),
-                            score: 100 - sentiment,
-                            timestamp: updatedAt ?? now,
-                            raw: data,
+                            confidence: Math.min(100, 50 + Math.abs(delta)), score: 100 - currentScore,
+                            timestamp: ts, temporality: 'ambient', raw: { currentScore, delta },
                         });
                     }
                 }
@@ -334,63 +260,47 @@ export class SignalAggregator {
             staleness['polymarket'] = true;
         }
 
-        // 5. Vedic — vedic:planets
-        // Structure: { planets: { Venus: { is_retrograde: bool, ... }, Mercury: { ... }, ... }, timestamp: ..., ayanamsa: ... }
+        // ── 5. Vedic — vedic:planets (ambient) ────────────────────────
         try {
-            const raw = val<string>(SLOT_VEDIC);
+            const raw = val<string>(SLOT.VEDIC);
             if (raw) {
                 const data = JSON.parse(raw) as Record<string, unknown>;
                 const ts = (data.timestamp as number) ?? null;
-                const isStale = ts !== null ? (now - ts > STALE_MS_VEDIC) : false;
+                const isStale = ts !== null ? (now - ts > ambientMs) : false;
                 staleness['vedic'] = isStale;
 
                 if (!isStale) {
-                    const planets = data.planets as Record<string, Record<string, unknown>> | undefined;
+                    // Handle both { planets: { Venus: ... } } and { data: { planets: { Venus: ... } } }
+                    let planets = data.planets as Record<string, Record<string, unknown>> | undefined;
+                    if (!planets && data.data && typeof data.data === 'object') {
+                        planets = (data.data as Record<string, unknown>).planets as Record<string, Record<string, unknown>> | undefined;
+                    }
+
                     if (planets && typeof planets === 'object') {
-                        // Venus Rx — primary APEX bearish gate
                         const venus = planets['Venus'];
                         if (venus && venus.is_retrograde === true) {
                             signals.push({
-                                symbol: 'MARKET',
-                                direction: 'bearish',
-                                source: 'vedic',
-                                signalType: 'venus_rx',
-                                confidence: 90,
-                                score: 90,
-                                timestamp: ts ?? now,
-                                raw: venus,
+                                symbol: 'MARKET', direction: 'bearish', source: 'vedic',
+                                signalType: 'venus_rx', confidence: 90, score: 90,
+                                timestamp: ts ?? now, temporality: 'ambient', raw: venus,
                             });
                         }
-
-                        // Mercury Rx — additional bearish signal (tech/comms disruption)
                         const mercury = planets['Mercury'];
                         if (mercury && mercury.is_retrograde === true) {
                             signals.push({
-                                symbol: 'MARKET',
-                                direction: 'bearish',
-                                source: 'vedic',
-                                signalType: 'mercury_rx',
-                                confidence: 60,
-                                score: 60,
-                                timestamp: ts ?? now,
-                                raw: mercury,
+                                symbol: 'MARKET', direction: 'bearish', source: 'vedic',
+                                signalType: 'mercury_rx', confidence: 60, score: 60,
+                                timestamp: ts ?? now, temporality: 'ambient', raw: mercury,
                             });
                         }
-
-                        // Count total retrograde planets — more retrogrades = more bearish pressure
-                        const retrogradeCount = Object.values(planets).filter(
-                            p => p && p.is_retrograde === true,
-                        ).length;
+                        const retrogradeCount = Object.values(planets).filter(p => p && p.is_retrograde === true).length;
                         if (retrogradeCount >= 3) {
                             signals.push({
-                                symbol: 'MARKET',
-                                direction: 'bearish',
-                                source: 'vedic',
+                                symbol: 'MARKET', direction: 'bearish', source: 'vedic',
                                 signalType: 'multi_retrograde',
                                 confidence: Math.min(100, retrogradeCount * 15),
                                 score: Math.min(100, retrogradeCount * 15),
-                                timestamp: ts ?? now,
-                                raw: { retrogradeCount },
+                                timestamp: ts ?? now, temporality: 'ambient', raw: { retrogradeCount },
                             });
                         }
                     }
@@ -403,80 +313,55 @@ export class SignalAggregator {
             staleness['vedic'] = true;
         }
 
-        // 6. CMC Fear & Greed — cmc:fear_greed
+        // ── 6. CMC Fear & Greed (ambient) ──────────────────────────────
         try {
-            const raw = val<string>(SLOT_CMC_FG);
+            const raw = val<string>(SLOT.CMC_FG);
             if (raw) {
-                // Can be a plain number string or JSON: { value: 25, label: 'Extreme Fear', timestamp: ... }
                 let value: number | null = null;
                 let ts: number | null = null;
-
                 const num = parseFloat(raw);
-                if (!isNaN(num)) {
+                if (!isNaN(num) && raw.trim() === String(num)) {
                     value = num;
                 } else {
                     const parsed = JSON.parse(raw) as Record<string, unknown>;
                     value = (parsed.value as number) ?? null;
                     ts = (parsed.timestamp as number) ?? (parsed.updated_at as number) ?? null;
                 }
-
-                const isStale = ts !== null ? (now - ts > STALE_MS_DEFAULT) : false;
-                staleness['cmc'] = isStale;
-
-                if (!isStale && value !== null) {
-                    if (value <= 25) {
-                        // Extreme fear — contrarian bullish signal
-                        signals.push({
-                            symbol: 'MARKET',
-                            direction: 'bullish',
-                            source: 'cmc',
-                            signalType: 'extreme_fear',
-                            confidence: Math.round((25 - value) * 2 + 50), // 50-100 range
-                            score: Math.round(100 - value),
-                            timestamp: ts ?? now,
-                            raw: { fearGreed: value },
-                        });
-                    }
-                    // Also emit btc_dom context signal from cmc:global (handled below)
+                staleness['cmc'] = ts !== null ? (now - ts > ambientMs) : false;
+                if (!staleness['cmc'] && value !== null && value <= 25) {
+                    signals.push({
+                        symbol: 'MARKET', direction: 'bullish', source: 'cmc',
+                        signalType: 'extreme_fear',
+                        confidence: Math.round((25 - value) * 2 + 50),
+                        score: Math.round(100 - value),
+                        timestamp: ts ?? now, temporality: 'ambient', raw: { fearGreed: value },
+                    });
                 }
             } else {
                 staleness['cmc'] = false;
             }
         } catch (err) {
-            console.warn('[apex/aggregator] CMC Fear&Greed parse error:', err instanceof Error ? err.message : err);
+            console.warn('[apex/aggregator] CMC F&G parse error:', err instanceof Error ? err.message : err);
             staleness['cmc'] = true;
         }
 
-        // 7. CMC Global — cmc:global (BTC dominance context signal)
+        // ── 7. CMC Global — BTC dominance (ambient) ────────────────────
         try {
-            const raw = val<string>(SLOT_CMC_GLOBAL);
+            const raw = val<string>(SLOT.CMC_GLOBAL);
             if (raw) {
                 const data = JSON.parse(raw) as Record<string, unknown>;
-                const btcDominance = (data.btc_dominance as number) ?? null;
+                const btcDom = (data.btc_dominance as number) ?? null;
                 const ts = (data.timestamp as number) ?? (data.updated_at as number) ?? null;
-                const isStale = ts !== null ? (now - ts > STALE_MS_DEFAULT) : false;
+                const isStale = ts !== null ? (now - ts > ambientMs) : false;
+                if (staleness['cmc'] === false || staleness['cmc'] === undefined) staleness['cmc'] = isStale;
 
-                // Merge cmc staleness (don't override if already set from fear_greed)
-                if (staleness['cmc'] === false || staleness['cmc'] === undefined) {
-                    staleness['cmc'] = isStale;
-                }
-
-                if (!isStale && btcDominance !== null) {
-                    // Emit BTC dominance as a context signal
-                    // High BTC dom (>55%) → BTC strong, alts weak (bearish for alts)
-                    // Low BTC dom (<40%) → altcoin season (bullish for alts)
-                    const direction: SignalDirection = btcDominance < 40 ? 'bullish' : 'bearish';
+                if (!isStale && btcDom !== null) {
+                    const direction: SignalDirection = btcDom < 40 ? 'bullish' : 'bearish';
                     signals.push({
-                        symbol: 'MARKET',
-                        direction,
-                        source: 'cmc',
-                        signalType: 'btc_dom',
-                        confidence: 50, // Context signal — moderate confidence
-                        score: direction === 'bullish'
-                            ? Math.round((40 - btcDominance) * 2.5)   // 0-25 range
-                            : Math.round((btcDominance - 40) * 2.5),  // 0-38 range
-                        timestamp: ts ?? now,
-                        raw: { btcDominance },
+                        symbol: 'MARKET', direction, source: 'cmc', signalType: 'btc_dom',
+                        confidence: 50,
+                        score: direction === 'bullish' ? Math.round((40 - btcDom) * 2.5) : Math.round((btcDom - 40) * 2.5),
+                        timestamp: ts ?? now, temporality: 'ambient', raw: { btcDominance: btcDom },
                     });
                 }
             }
@@ -485,50 +370,26 @@ export class SignalAggregator {
             staleness['cmc'] = true;
         }
 
-        // 8. Aktienix — aktienix:signals (Redis LIST)
-        // Each list entry is a JSON string of PublishableSignal:
-        //   { symbol, action, confidence, reasoning, timestamp }
+        // ── 8. Aktienix — aktienix:state (ambient, sentiment proxy) ────
+        // Note: aktienix:signals LIST doesn't exist. We read aktienix:state
+        // and use open positions as a macro sentiment proxy.
         try {
-            const entries = val<string[]>(SLOT_AKTIENIX);
-            if (entries && entries.length > 0) {
-                let latestTs: number | null = null;
+            const raw = val<string>(SLOT.AKTIENIX_POSITIONS);
+            if (raw) {
+                const data = JSON.parse(raw) as Record<string, unknown>;
+                const positions: unknown[] = Array.isArray(data.positions) ? data.positions as unknown[] : [];
+                const ts = (data.updatedAt as number) ?? (data.timestamp as number) ?? now;
+                staleness['aktienix'] = now - ts > ambientMs;
 
-                for (const entry of entries) {
-                    if (!entry) continue;
-                    try {
-                        const sig = JSON.parse(entry) as Record<string, unknown>;
-                        const ts = (sig.timestamp as number) ?? now;
-                        if (now - ts > STALE_MS_DEFAULT) continue; // Skip stale individual entries
-
-                        if (!latestTs || ts > latestTs) latestTs = ts;
-
-                        const action = String(sig.action ?? '').toUpperCase();
-                        if (action !== 'BUY') continue; // Only interested in bullish macro signals
-
-                        const symbol = normalizeSymbol(String(sig.symbol ?? ''));
-                        const confidence = (sig.confidence as number) ?? 0;
-
-                        // Filter: only signals with meaningful confidence
-                        if (confidence < 50) continue;
-
-                        signals.push({
-                            symbol,
-                            direction: 'bullish',
-                            source: 'aktienix',
-                            signalType: 'macro_bullish',
-                            confidence,
-                            score: confidence,
-                            timestamp: ts,
-                            raw: sig,
-                        });
-                    } catch {
-                        // Malformed entry — skip
-                    }
+                if (!staleness['aktienix'] && positions.length > 0) {
+                    // Aktienix has open positions → macro bullish sentiment (5pts)
+                    signals.push({
+                        symbol: 'MARKET', direction: 'bullish', source: 'aktienix',
+                        signalType: 'macro_bullish', confidence: 50, score: 50,
+                        timestamp: ts, temporality: 'ambient',
+                        raw: { openPositions: positions.length },
+                    });
                 }
-
-                // Determine staleness from the most recent entry's timestamp
-                const isStale = latestTs !== null ? (now - latestTs > STALE_MS_DEFAULT) : false;
-                staleness['aktienix'] = isStale;
             } else {
                 staleness['aktienix'] = false;
             }
@@ -537,91 +398,179 @@ export class SignalAggregator {
             staleness['aktienix'] = true;
         }
 
-        // 9. Solanix — solanix:status
-        // Structure varies: may be a plain string ('running') or a JSON status object.
+        // ── 9. Solanix — solanix:positions + solanix:status (momentary) ──
         try {
-            const raw = val<string>(SLOT_SOLANIX);
-            if (raw) {
-                // Try to parse as JSON first
-                let data: Record<string, unknown> | null = null;
-                try {
-                    data = JSON.parse(raw) as Record<string, unknown>;
-                } catch {
-                    // Plain string status — e.g. 'running'
-                    data = null;
-                }
+            const posRaw = val<string>(SLOT.SOLANIX_POSITIONS);
+            const statusRaw = val<string>(SLOT.SOLANIX_STATUS);
 
-                const updatedAt = data
-                    ? ((data.updated_at as number) ?? (data.updatedAt as number) ?? (data.timestamp as number) ?? null)
-                    : null;
-                const isStale = updatedAt !== null ? (now - updatedAt > STALE_MS_DEFAULT) : false;
-                staleness['solanix'] = isStale;
+            const posData = posRaw ? JSON.parse(posRaw) as unknown[] : null;
+            let statusData: Record<string, unknown> | null = null;
+            try { if (statusRaw) statusData = JSON.parse(statusRaw) as Record<string, unknown>; } catch { /* plain string */ }
 
-                if (!isStale && data) {
-                    // Look for volume spike indicators in positions or signals arrays
-                    const positions: unknown[] = Array.isArray(data.positions) ? data.positions as unknown[] : [];
-                    const signalsArr: unknown[] = Array.isArray(data.signals) ? data.signals as unknown[] : [];
+            const ts = statusData
+                ? ((statusData.updated_at as number) ?? (statusData.updatedAt as number) ?? now)
+                : now;
+            staleness['solanix'] = now - ts > momentaryMs;
 
-                    // Check active positions for volume-spike entries
-                    for (const pos of positions) {
-                        if (!pos || typeof pos !== 'object') continue;
-                        const p = pos as Record<string, unknown>;
-                        const symbol = normalizeSymbol(String(p.symbol ?? ''));
-                        const confidence = (p.confidence as number) ?? 0;
-                        const ts = (p.openedAt as number) ?? (p.entryTime as number) ?? now;
-
-                        if (confidence > 0) {
-                            signals.push({
-                                symbol,
-                                direction: 'bullish',
-                                source: 'solanix',
-                                signalType: 'dex_momentum',
-                                confidence: Math.min(100, Math.round(confidence > 1 ? confidence : confidence * 100)),
-                                score: Math.min(100, Math.round(confidence > 1 ? confidence : confidence * 100)),
-                                timestamp: ts,
-                                raw: pos,
-                            });
-                        }
-                    }
-
-                    // Check signals array for volume spike entries
-                    for (const sig of signalsArr) {
-                        if (!sig || typeof sig !== 'object') continue;
-                        const s = sig as Record<string, unknown>;
-                        const action = String(s.action ?? s.direction ?? '').toUpperCase();
-                        if (action !== 'BUY' && action !== 'BULLISH') continue;
-
-                        const symbol = normalizeSymbol(String(s.symbol ?? ''));
-                        const confidence = (s.confidence as number) ?? 50;
-                        const ts = (s.timestamp as number) ?? now;
-
+            if (!staleness['solanix']) {
+                // Active positions as momentum signals
+                const positions = Array.isArray(posData) ? posData : [];
+                for (const pos of positions) {
+                    if (!pos || typeof pos !== 'object') continue;
+                    const p = pos as Record<string, unknown>;
+                    const symbol = normalizeSymbol(String(p.symbol ?? ''));
+                    const confidence = (p.confidence as number) ?? 0;
+                    if (confidence > 0) {
                         signals.push({
-                            symbol,
-                            direction: 'bullish',
-                            source: 'solanix',
-                            signalType: 'volume_spike',
-                            confidence,
-                            score: confidence,
-                            timestamp: ts,
-                            raw: sig,
+                            symbol, direction: 'bullish', source: 'solanix',
+                            signalType: 'dex_momentum',
+                            confidence: Math.min(100, Math.round(confidence > 1 ? confidence : confidence * 100)),
+                            score: Math.min(100, Math.round(confidence > 1 ? confidence : confidence * 100)),
+                            timestamp: (p.openedAt as number) ?? (p.entryTime as number) ?? now,
+                            temporality: 'momentary', raw: pos,
                         });
                     }
                 }
-            } else {
-                staleness['solanix'] = false;
             }
         } catch (err) {
             console.warn('[apex/aggregator] Solanix parse error:', err instanceof Error ? err.message : err);
             staleness['solanix'] = true;
         }
 
-        // ── Remove signals from stale sources ───────────────────────────────
+        // ── 10. ORAKEL — regime + volatility (ambient) ─────────────────
+        try {
+            if (this.config.orakel.enabled) {
+                const regimeRaw = val<string>(SLOT.ORAKEL_REGIME);
+                const volRaw = val<string>(SLOT.ORAKEL_VOLATILITY);
+
+                if (regimeRaw) {
+                    const regime = JSON.parse(regimeRaw) as Record<string, unknown>;
+                    const regimeLabel = (regime.regime as string) ?? (regime.label as string) ?? '';
+                    const ts = (regime.timestamp as number) ?? now;
+                    staleness['orakel'] = now - ts > ambientMs;
+
+                    if (!staleness['orakel']) {
+                        if (regimeLabel === 'bull') {
+                            signals.push({
+                                symbol: 'MARKET', direction: 'bullish', source: 'orakel',
+                                signalType: 'orakel_regime_bull', confidence: 70, score: 70,
+                                timestamp: ts, temporality: 'ambient', raw: regime,
+                            });
+                        } else if (regimeLabel === 'bear') {
+                            signals.push({
+                                symbol: 'MARKET', direction: 'bearish', source: 'orakel',
+                                signalType: 'orakel_regime_bear', confidence: 70, score: 70,
+                                timestamp: ts, temporality: 'ambient', raw: regime,
+                            });
+                        }
+                    }
+                } else {
+                    staleness['orakel'] = false;
+                }
+
+                // Vol spike veto
+                if (volRaw && this.config.orakel.vol_spike_veto) {
+                    const vol = JSON.parse(volRaw) as Record<string, unknown>;
+                    if (vol.spike_warning === true) {
+                        signals.push({
+                            symbol: 'MARKET', direction: 'bearish', source: 'orakel',
+                            signalType: 'orakel_vol_spike', confidence: 90, score: -20,
+                            timestamp: (vol.timestamp as number) ?? now, temporality: 'ambient',
+                            raw: vol,
+                        });
+                    }
+                }
+
+                // Per-symbol ORAKEL direction + fused confidence (second pipeline)
+                await this.fetchOrakelPerSymbol(signals, staleness, now);
+            }
+        } catch (err) {
+            console.warn('[apex/aggregator] ORAKEL parse error:', err instanceof Error ? err.message : err);
+            staleness['orakel'] = true;
+        }
+
+        // ── Filter stale signals ───────────────────────────────────────
         const freshSignals = signals.filter(sig => !staleness[sig.source]);
 
-        return {
-            signals: freshSignals,
-            staleness,
-            timestamp: now,
-        };
+        return { signals: freshSignals, staleness, timestamp: now };
+    }
+
+    /**
+     * Fetch per-symbol ORAKEL direction and fused confidence.
+     * Symbols come from the existing signals + venus_rx symbols.
+     */
+    private async fetchOrakelPerSymbol(
+        signals: NormalizedSignal[],
+        staleness: Record<string, boolean>,
+        now: number,
+    ): Promise<void> {
+        const symbolSet = new Set<string>();
+        for (const s of signals) {
+            if (s.symbol !== 'MARKET' && s.symbol !== 'CRYPTO') symbolSet.add(s.symbol);
+        }
+        for (const sym of this.config.modes.venus_rx.symbols) {
+            symbolSet.add(normalizeSymbol(sym));
+        }
+
+        if (symbolSet.size === 0) return;
+
+        const symbols = [...symbolSet];
+        const pipe = this.redis.pipeline();
+        for (const sym of symbols) {
+            pipe.get(`orakel:${sym}:direction`);
+            pipe.get(`orakel:${sym}:fused`);
+        }
+
+        const results = await pipe.exec();
+        if (!results) return;
+
+        for (let i = 0; i < symbols.length; i++) {
+            const sym = symbols[i];
+            const dirEntry = results[i * 2];
+            const fusedEntry = results[i * 2 + 1];
+
+            // Direction
+            if (dirEntry && !dirEntry[0] && dirEntry[1]) {
+                try {
+                    const dir = JSON.parse(dirEntry[1] as string) as Record<string, unknown>;
+                    const prob = (dir.probability as number) ?? 0.5;
+                    if (prob > 0.6) {
+                        signals.push({
+                            symbol: sym, direction: 'bullish', source: 'orakel',
+                            signalType: 'orakel_direction_up', confidence: Math.round(prob * 100),
+                            score: Math.round(prob * 100),
+                            timestamp: (dir.timestamp as number) ?? now,
+                            temporality: 'ambient', raw: dir,
+                        });
+                    } else if (prob < 0.4) {
+                        signals.push({
+                            symbol: sym, direction: 'bearish', source: 'orakel',
+                            signalType: 'orakel_direction_down', confidence: Math.round((1 - prob) * 100),
+                            score: Math.round((1 - prob) * 100),
+                            timestamp: (dir.timestamp as number) ?? now,
+                            temporality: 'ambient', raw: dir,
+                        });
+                    }
+                } catch { /* skip malformed */ }
+            }
+
+            // Fused confidence
+            if (fusedEntry && !fusedEntry[0] && fusedEntry[1]) {
+                try {
+                    const fused = JSON.parse(fusedEntry[1] as string) as Record<string, unknown>;
+                    const conf = (fused.confidence as number) ?? (fused.fused as number) ?? 0;
+                    if (conf > 0.7) {
+                        const dir: SignalDirection = (fused.direction as string) === 'down' ? 'bearish' : 'bullish';
+                        signals.push({
+                            symbol: sym, direction: dir, source: 'orakel',
+                            signalType: 'orakel_fused_high', confidence: Math.round(conf * 100),
+                            score: Math.round(conf * 100),
+                            timestamp: (fused.timestamp as number) ?? now,
+                            temporality: 'ambient', raw: fused,
+                        });
+                    }
+                } catch { /* skip malformed */ }
+            }
+        }
     }
 }
