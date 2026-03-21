@@ -30,6 +30,7 @@ from src.vedic.aspects import detect_aspects, detect_retrogrades
 from src.vedic.natal import CRYPTO_GENESIS
 from src.vedic.dasha import compute_all_dashas
 from src.vedic.bayesian import BayesianVedic
+from src.vedic.coherence import compute_coherence
 
 # Symbols we trade that have natal charts
 TRACKED_SYMBOLS = [
@@ -97,6 +98,22 @@ class VedicScout:
         except Exception:
             pass
         bayes_prob, bayes_details = self.bayes.predict(bayes_signals)
+
+        # ── 4a. Kuramoto coherence (position sizing) ──
+        from src.vedic.ephemeris import get_angular_distance as _gad
+        signal_points = {
+            "venus_rx": -40 if p["Venus"].is_retrograde else 0,
+            "jup_sat": 15 if _gad(p["Jupiter"].longitude, p["Saturn"].longitude) < 10 else 0,
+            "mars_rahu": 10 if _gad(p["Mars"].longitude, p["Rahu"].longitude) < 10 else 0,
+            "merc_venus": -10 if _gad(p["Mercury"].longitude, p["Venus"].longitude) < 10 else 0,
+            "merc_speed": 8 if abs(p["Mercury"].speed) > 1.5 else 0,
+            "venus_speed": 8 if abs(p["Venus"].speed) > 1.0 else 0,
+            "retro": 5 if len(vedic_score.retrogrades) == 0 else (-5 if len(vedic_score.retrogrades) >= 3 else 0),
+            "venus_sun": -10 if _gad(p["Sun"].longitude, p["Venus"].longitude) < 15 else 0,
+            "eclipse": -5 if _gad(p["Moon"].longitude, p["Rahu"].longitude) < 15 else 0,
+            "spread": 0,  # Compute from planetary spread if available
+        }
+        coherence = compute_coherence(signal_points)
 
         # ── 4b. Forecast: compute V4 score for next 60 days ──
         # Planetary positions are deterministic — we can predict future scores
@@ -250,6 +267,15 @@ class VedicScout:
 
         pipe.set("vedic:forecast", json.dumps(forecast), ex=REDIS_TTL)
 
+        # Kuramoto coherence
+        pipe.set("vedic:coherence", json.dumps({
+            "coherence": coherence.coherence,
+            "size_multiplier": coherence.size_multiplier,
+            "phase_transition": coherence.phase_transition,
+            "net_direction": coherence.net_direction,
+            "timestamp": vedic_score.timestamp,
+        }), ex=REDIS_TTL)
+
         await pipe.execute()
 
         scan_duration = round(time.time() - scan_start, 2)
@@ -261,6 +287,7 @@ class VedicScout:
         print(
             f"[{self.name}] V3={vedic_score.overall_score} ({vedic_score.label}) | "
             f"Bayes={bayes_details['score']} P={bayes_prob:.1%} | "
+            f"Coherence={coherence.coherence:.2f} x{coherence.size_multiplier} | "
             f"Moon={vedic_score.moon_nakshatra} | "
             f"Tithi={vedic_score.tithi_name} #{vedic_score.tithi_number} | "
             f"Retro=[{retro_str}] | MercRx={vedic_score.is_mercury_retrograde} | "
