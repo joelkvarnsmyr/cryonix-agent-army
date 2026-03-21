@@ -125,6 +125,10 @@ export interface PolynixConfig {
         scan_all_for_arb: boolean;
         min_liquidity_usd: number;
         max_markets_per_scan: number;
+        arb_max_bet_size_usd: number;       // Separate max bet for arb (lower = faster rotation)
+        arb_max_positions: number;           // Max arb position slots (rest reserved for directional)
+        arb_max_exposure_pct: number;        // Max % of bankroll in arb
+        arb_max_expiry_s: number;            // Max expiry for arb (skip long-duration arbs)
     };
     risk: {
         kelly_fraction: number;

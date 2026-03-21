@@ -18,6 +18,10 @@ max_time_to_expiry_s = 1209600     # 14 days max (faster settlement = more data)
 scan_all_for_arb = true            # Scan all high-liquidity markets for YES+NO arb
 min_liquidity_usd = 200            # Min $200 liquidity (was 500 — include more markets)
 max_markets_per_scan = 150         # Max markets per arb scan cycle (was 80)
+arb_max_bet_size_usd = 10          # Arb bets capped at $10 (was $25 — faster capital rotation)
+arb_max_positions = 30             # Max 30 arb slots (rest reserved for directional/micro)
+arb_max_exposure_pct = 50          # Max 50% of bankroll locked in arb
+arb_max_expiry_s = 259200          # Skip arbs expiring in > 3 days (72h)
 
 [risk]
 kelly_fraction = 0.25

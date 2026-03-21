@@ -19,11 +19,15 @@ export const POLYNIX_DEFAULTS: PolynixConfig = {
         arb_threshold: 0.96,
         min_edge_pct: 2.0,
         momentum_lookback_seconds: 60,
-        min_time_to_expiry_s: 3600,         // 1 hour minimum (avoid nearly-expired)
-        max_time_to_expiry_s: 14 * 86400,   // 14 days max (faster settlement)
-        scan_all_for_arb: true,             // Scan all markets for spread arb
-        min_liquidity_usd: 500,             // Min $500 liquidity
-        max_markets_per_scan: 80,           // Max markets per cycle
+        min_time_to_expiry_s: 3600,
+        max_time_to_expiry_s: 14 * 86400,
+        scan_all_for_arb: true,
+        min_liquidity_usd: 500,
+        max_markets_per_scan: 80,
+        arb_max_bet_size_usd: 10,           // Smaller arb bets = faster capital rotation
+        arb_max_positions: 30,              // Reserve half of slots for directional
+        arb_max_exposure_pct: 50,           // Max 50% of bankroll in arb
+        arb_max_expiry_s: 3 * 86400,        // Skip arbs expiring in > 3 days
     },
     risk: {
         kelly_fraction: 0.25,

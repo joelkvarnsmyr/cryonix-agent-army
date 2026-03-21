@@ -419,6 +419,19 @@ export class PolynixAgent extends BaseAgent {
                 .some(p => p.market.conditionId === market.conditionId);
             if (alreadyHolding) return null;
 
+            // Arb position cap: reserve slots for directional/micro
+            const arbMaxPositions = this.tomlConfig.strategy.arb_max_positions ?? 30;
+            if (this.positionTracker.getArbCount() >= arbMaxPositions) return null;
+
+            // Arb exposure cap: max % of bankroll in arb
+            const arbMaxExposurePct = this.tomlConfig.strategy.arb_max_exposure_pct ?? 50;
+            const bankroll = this.tomlConfig.capital.starting_balance_usd;
+            if (this.positionTracker.getArbExposure() >= bankroll * (arbMaxExposurePct / 100)) return null;
+
+            // Arb expiry cap: skip long-duration arbs
+            const arbMaxExpiry = this.tomlConfig.strategy.arb_max_expiry_s ?? 3 * 86400;
+            if (market.timeToExpiry > arbMaxExpiry) return null;
+
             const arb = await this.spreadDetector.check(market, this.tomlConfig);
             if (!arb || arb.netEdge <= 0) return null;
 
@@ -431,7 +444,9 @@ export class PolynixAgent extends BaseAgent {
             );
 
             if (risk.canTrade) {
-                const size = Math.min(risk.suggestedSize, arb.maxSize);
+                // Use arb-specific max bet size (smaller than directional)
+                const arbMaxBet = this.tomlConfig.strategy.arb_max_bet_size_usd ?? 10;
+                const size = Math.min(risk.suggestedSize, arb.maxSize, arbMaxBet);
                 const orders = await this.orderManager.placeArbOrders(arb, size);
 
                 if (orders.yesOrder.status === 'filled' && orders.noOrder.status === 'filled') {
@@ -442,7 +457,7 @@ export class PolynixAgent extends BaseAgent {
                     );
                     this.accountState.balance -= costBasis;
                     await this.dbLogger.logOpen(this.positionTracker.getLastAdded()!);
-                    this.log('info', `ARB ENTRY: ${market.title} | cost=$${arb.combinedCost.toFixed(4)} | net=${(arb.netEdge * 100).toFixed(2)}% | size=$${size.toFixed(2)} | liq=$${market.liquidity.toFixed(0)}`);
+                    this.log('info', `ARB ENTRY: ${market.title} | cost=$${arb.combinedCost.toFixed(4)} | net=${(arb.netEdge * 100).toFixed(2)}% | size=$${size.toFixed(2)} | liq=$${market.liquidity.toFixed(0)} | ttl=${(market.timeToExpiry / 3600).toFixed(0)}h`);
                     await this.logSignal('arb', market.title, arb.netEdge, 'BOTH', true);
                     return 'executed';
                 }

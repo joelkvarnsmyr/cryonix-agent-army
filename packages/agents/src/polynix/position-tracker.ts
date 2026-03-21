@@ -161,6 +161,14 @@ export class PositionTracker {
         return this.getOpen().reduce((sum, p) => sum + p.costBasis, 0);
     }
 
+    getArbCount(): number {
+        return this.getOpen().filter(p => p.type === 'arb').length;
+    }
+
+    getArbExposure(): number {
+        return this.getOpen().filter(p => p.type === 'arb').reduce((sum, p) => sum + p.costBasis, 0);
+    }
+
     /** Get total cost basis of open micro-market positions (timeToExpiry <= 300s at entry). */
     getMicroExposure(): number {
         return this.getOpen()
