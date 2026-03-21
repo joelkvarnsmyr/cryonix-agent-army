@@ -1,5 +1,6 @@
 import type { ManipulationSignal, HuntrixConfig } from './types';
 import type Redis from 'ioredis';
+import { GoPlusScanner } from './scanners/goplus';
 
 export interface EntryValidation {
     approved: boolean;
@@ -22,16 +23,34 @@ export class EntryValidator {
     private config: HuntrixConfig;
     private exchange: any;
     private redis: Redis;
+    private goplusScanner: GoPlusScanner;
 
     constructor(config: HuntrixConfig, exchange: any, redis: Redis) {
         this.config = config;
         this.exchange = exchange;
         this.redis = redis;
+        this.goplusScanner = new GoPlusScanner(redis);
     }
 
     async validate(signal: ManipulationSignal): Promise<EntryValidation> {
         const reasons: string[] = [];
         let approved = true;
+
+        // Defensive blacklist check
+        try {
+            const baseSymbol = signal.symbol.split('/')[0];
+            const blacklisted = await this.redis.get(`huntrix:blacklist:${baseSymbol}`);
+            if (blacklisted) {
+                const data = JSON.parse(blacklisted);
+                reasons.push(`BLACKLISTED: ${data.reason}`);
+                approved = false;
+                // Early return — no point checking further
+                console.log(`[HUNTRIX] Entry validation for ${signal.symbol}: REJECTED (blacklisted)`);
+                return { approved: false, reasons, signal, live_price: 0, live_volume: 0 };
+            }
+        } catch {
+            // Blacklist check is best-effort
+        }
 
         // Phase check
         if (signal.phase === 'peak' || signal.phase === 'dump' || signal.phase === 'post_dump') {
@@ -138,6 +157,34 @@ export class EntryValidator {
             }
         } catch {
             // CMC data optional
+        }
+
+        // GoPlus token safety check
+        if (this.goplusScanner.hasMapping(signal.symbol)) {
+            try {
+                const safety = await this.goplusScanner.checkSymbol(signal.symbol);
+                if (safety) {
+                    if (safety.is_honeypot) {
+                        reasons.push(`GoPlus: honeypot detected — cannot sell`);
+                        approved = false;
+                    }
+                    if (safety.is_mintable) {
+                        reasons.push(`GoPlus: mintable token — supply can be inflated`);
+                        approved = false;
+                    }
+                    if (safety.sell_tax > 10) {
+                        reasons.push(`GoPlus: sell tax ${safety.sell_tax.toFixed(1)}% > 10%`);
+                        approved = false;
+                    }
+                    if (safety.risk_score >= 60) {
+                        reasons.push(`GoPlus: risk score ${safety.risk_score}/100 >= 60`);
+                        approved = false;
+                    }
+                }
+            } catch (err) {
+                reasons.push(`GoPlus check failed: ${err instanceof Error ? err.message : err}`);
+                // Fail-open for GoPlus — don't block entry on API failures
+            }
         }
 
         // No recent exit guard — check huntrix:exits:recent sorted set
