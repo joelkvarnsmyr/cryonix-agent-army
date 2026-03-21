@@ -11,6 +11,8 @@ export { BayesianLearner } from './bayesian-learner';
 export { MicroMarketScanner } from './micro-market-scanner';
 export { PolynixExitMonitor } from './exit-monitor';
 export { CopyTracker } from './copy-tracker';
+export { WhaleDetector } from './whale-detector';
+export type { WhaleSignal } from './whale-detector';
 export type {
     CryptoMicroMarket,
     ArbOpportunity,

@@ -13,7 +13,7 @@
 
 import type { CryptoMicroMarket } from './types';
 
-interface WhaleSignal {
+export interface WhaleSignal {
     conditionId: string;
     title: string;
     dominantSide: 'YES' | 'NO';
