@@ -52,7 +52,7 @@ export class MarketSentimentScanner {
                 },
             );
             if (!res.ok) return;
-            const data = await res.json();
+            const data = (await res.json()) as Record<string, any>;
             const score = data?.fear_and_greed?.score ?? null;
             const rating = data?.fear_and_greed?.rating ?? null;
             // Extract sub-indicators (CNN includes Put/Call ratio!)
@@ -116,7 +116,7 @@ export class MarketSentimentScanner {
                     { signal: AbortSignal.timeout(5000) },
                 );
                 if (!res.ok) continue;
-                const data = await res.json();
+                const data = (await res.json()) as Record<string, any>;
                 const transactions = data?.data ?? [];
 
                 const thirtyDaysAgo = new Date();

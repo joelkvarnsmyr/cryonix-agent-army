@@ -708,7 +708,7 @@ export class AktienixAgent extends BaseAgent {
                 },
             );
             if (!res.ok) return;
-            const orders: any[] = await res.json();
+            const orders = (await res.json()) as any[];
 
             let synced = 0;
             for (const order of orders) {

@@ -6,6 +6,7 @@ describe('PositionSizer', () => {
         max_position_size_usd: 1000,
         max_capital_per_trade_pct: 0.95,
         min_order_value: 5,
+        max_single_position_pct: 0.20,
     };
 
     it('calculates fractional qty for a high-priced stock', () => {

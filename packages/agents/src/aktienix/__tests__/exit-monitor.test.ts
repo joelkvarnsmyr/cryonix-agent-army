@@ -10,6 +10,7 @@ describe('ExitMonitor', () => {
         trailing_activation_pct: 2.0,
         stagnation_timeout_days: 10,
         stagnation_min_pnl_pct: 0.5,
+        min_holding_minutes: 0,
     };
 
     let monitor: ExitMonitor;
