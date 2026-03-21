@@ -518,7 +518,7 @@ async function getCapitalBudget(): Promise<CapitalBudget> {
       if (parsed.regime && ['bull', 'bear', 'sideways'].includes(parsed.regime)) {
         const prevRegime = regime;
         regime = parsed.regime === 'bear' ? 'volatile' : parsed.regime === 'bull' ? 'trending' : 'ranging';
-        console.log(`[ORAKEL-REGIME] Override ${prevRegime} -> ${regime} (orakel: ${parsed.regime}, prob: ${(parsed.probability ?? 0).toFixed(2)})`);
+        console.log(`[ORAKEL-REGIME] Override ${prevRegime} -> ${regime} (orakel: ${parsed.regime}, prob: ${(parsed.probabilities?.[parsed.regime] ?? 0).toFixed(2)})`);
       }
     }
   } catch (e) { console.warn('[CAPITAL] Failed to read market regime:', e); }
@@ -2681,6 +2681,15 @@ async function calculatePositionSize(signal: Signal): Promise<number> {
     }
   }
 
+  // ORAKEL regime + volatility scaling (regime = how much to risk, vol = spike protection)
+  const regimeScale = (signal as any).orakel_regime_scale ?? 1.0;
+  const volScale = (signal as any).orakel_vol_scale ?? 1.0;
+  if (regimeScale < 1.0 || volScale < 1.0) {
+    const combined = regimeScale * volScale;
+    console.log(`[SIZING] ${signal.symbol}: orakel scale x${combined.toFixed(2)} (regime=${regimeScale}, vol=${volScale}) $${positionValue.toFixed(2)} → $${(positionValue * combined).toFixed(2)}`);
+    positionValue *= combined;
+  }
+
   // Ensure position clears NOTIONAL minimum.
   if (positionValue < CONFIG.MIN_ORDER_VALUE && availableBudget >= CONFIG.MIN_ORDER_VALUE) {
     positionValue = CONFIG.MIN_ORDER_VALUE;
@@ -3818,10 +3827,11 @@ export async function POST() {
             // bull = 1.0 (no change)
 
             if (regimeMultiplier < 1.0) {
-              const before = signal.confidence;
-              signal.confidence *= regimeMultiplier;
-              signal.reason += ` | orakel: ${orakelReg} regime (x${regimeMultiplier})`;
-              console.log(`[ORAKEL] ${signal.symbol}: ${orakelReg} regime multiplier x${regimeMultiplier} (${(before * 100).toFixed(0)}% -> ${(signal.confidence * 100).toFixed(0)}%)`);
+              // Regime affects position SIZING, not confidence.
+              // Confidence = signal quality. Regime = how much to risk.
+              (signal as any).orakel_regime_scale = regimeMultiplier;
+              signal.reason += ` | orakel: ${orakelReg} regime (size x${regimeMultiplier})`;
+              console.log(`[ORAKEL] ${signal.symbol}: ${orakelReg} regime — position size x${regimeMultiplier} (confidence unchanged at ${(signal.confidence * 100).toFixed(0)}%)`);
             }
           }
 
@@ -4224,6 +4234,23 @@ export async function POST() {
           console.error('[BUDGET-CHECK] Re-verification failed:', budgetErr);
           // Proceed — don't block trading on budget check errors
         }
+      }
+
+      // ── FINAL CONFIDENCE GATE ──────────────────────────────────────
+      // All adjustments (ORAKEL, V2 model, macro, equity) can reduce
+      // confidence below threshold. This last-resort check prevents
+      // execution of low-confidence trades.
+      if (signal.confidence < CONFIG.MIN_CONFIDENCE) {
+        await redis.lrem('trades:pending', 1, raw);
+        await redis.del(dedupKey);
+        rejected++;
+        console.log(`[FINAL-GATE] ${signal.symbol} REJECTED: confidence ${(signal.confidence * 100).toFixed(1)}% < ${(CONFIG.MIN_CONFIDENCE * 100).toFixed(0)}% min after all adjustments`);
+        buyResults.push({
+          symbol: signal.symbol,
+          status: 'POST_ADJUSTMENT_REJECTED',
+          reason: `Final confidence ${(signal.confidence * 100).toFixed(1)}% < ${(CONFIG.MIN_CONFIDENCE * 100).toFixed(0)}% after ORAKEL/V2/macro adjustments`,
+        });
+        continue;
       }
 
       // Execute based on signal action
