@@ -356,6 +356,12 @@ export class WalletMonitor {
         const shyftKey = process.env.SHYFT_API_KEY;
         if (!shyftKey) return [];
 
+        const STABLECOINS = new Set([
+            'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+            'So11111111111111111111111111111111111111112',      // SOL (wrapped)
+            'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',   // USDT
+        ]);
+
         try {
             // Shyft transaction history API — similar to Helius enhanced
             const url = `https://api.shyft.to/sol/v1/transaction/history?network=mainnet-beta&tx_num=10&account=${walletAddress}&enable_raw=false`;
