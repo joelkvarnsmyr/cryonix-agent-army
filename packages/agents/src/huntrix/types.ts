@@ -40,7 +40,7 @@ export interface ManipulationSignal {
   reasoning: string;
   estimated_peak_minutes: number | null;
   detected_at: string;
-  source: 'x_scan' | 'telegram_cluster' | 'trending_anomaly' | 'combined';
+  source: 'x_scan' | 'telegram_cluster' | 'trending_anomaly' | 'combined' | 'goplus' | 'defi_llama' | 'rss_alert' | 'orderbook_spoof';
 }
 
 // ── Position Management ─────────────────────────────────────────
@@ -101,6 +101,52 @@ export interface TelegramClusterResult {
   }>;
 }
 
+// ── New Scanner Result Types ────────────────────────────────────
+
+export interface GoPlusTokenSecurity {
+  contract: string;
+  chain: 'eth' | 'bsc';
+  is_honeypot: boolean;
+  is_mintable: boolean;
+  sell_tax: number;      // 0-100%
+  buy_tax: number;       // 0-100%
+  holder_count: number;
+  lp_holder_count: number;
+  is_open_source: boolean;
+  risk_score: number;    // 0-100, higher = riskier
+  checked_at: string;
+}
+
+export interface DefiLlamaHack {
+  id: string;
+  name: string;           // Protocol name
+  chains: string[];
+  amount: number;         // USD lost
+  technique: string;
+  date: string;           // ISO date
+  symbols: string[];      // Extracted affected symbols
+}
+
+export interface RSSAlert {
+  feedName: string;       // Which feed it came from
+  title: string;
+  link: string;
+  published: string;
+  category: 'exploit' | 'enforcement' | 'vulnerability' | 'scam' | 'general';
+  symbols: string[];      // Extracted from title/description
+  severity: 'high' | 'medium' | 'low';
+}
+
+export interface SpoofDetection {
+  symbol: string;
+  side: 'bid' | 'ask';
+  wall_size_usd: number;
+  wall_price: number;
+  disappeared_pct: number;  // How much of the wall vanished (0-100)
+  snapshot_interval_ms: number;
+  detected_at: string;
+}
+
 // ── Agent State ─────────────────────────────────────────────────
 
 export interface HuntrixState {
@@ -135,6 +181,13 @@ export interface HuntrixConfig {
     min_coordination_score: number;
     min_channels_for_cluster: number;
     cluster_window_minutes: number;
+    sources: {
+      goplus_enabled: boolean;
+      defi_llama_enabled: boolean;
+      rss_enabled: boolean;
+      orderbook_spoof_enabled: boolean;
+      rss_poll_interval_minutes: number;
+    };
   };
   detection: {
     min_volume_spike_multiplier: number;
