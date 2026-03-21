@@ -296,12 +296,14 @@ export class ManipulationScanner {
     /**
      * Scan defensive sources and write blacklist entries.
      * DeFi Llama hacks + RSS alerts → Redis blacklist keys.
+     * Returns list of newly blacklisted symbols with reasons.
      */
-    async scanDefensiveBlacklist(): Promise<void> {
+    async scanDefensiveBlacklist(): Promise<Array<{ symbol: string; reason: string }>> {
         const sources = this.config.scanner.sources;
+        const blacklisted: Array<{ symbol: string; reason: string }> = [];
 
         try {
-            const promises: Promise<void>[] = [];
+            const promises: Promise<Array<{ symbol: string; reason: string }>>[] = [];
 
             if (sources.defi_llama_enabled) {
                 promises.push(this.scanDefiLlamaBlacklist());
@@ -310,44 +312,57 @@ export class ManipulationScanner {
                 promises.push(this.scanRSSBlacklist());
             }
 
-            await Promise.all(promises);
+            const results = await Promise.all(promises);
+            for (const result of results) {
+                blacklisted.push(...result);
+            }
         } catch (err) {
             console.error('[HUNTRIX] Defensive blacklist scan failed:', err);
         }
+
+        return blacklisted;
     }
 
-    private async scanDefiLlamaBlacklist(): Promise<void> {
+    private async scanDefiLlamaBlacklist(): Promise<Array<{ symbol: string; reason: string }>> {
+        const blacklisted: Array<{ symbol: string; reason: string }> = [];
         const hacks = await this.defiLlamaScanner.scan();
         for (const hack of hacks) {
             for (const symbol of hack.symbols) {
                 const key = `huntrix:blacklist:${symbol}`;
+                const reason = `DeFi Llama: ${hack.name} hack ($${(hack.amount / 1e6).toFixed(1)}M) — ${hack.technique}`;
                 await this.redis.setex(key, 86400, JSON.stringify({
-                    reason: `DeFi Llama: ${hack.name} hack ($${(hack.amount / 1e6).toFixed(1)}M) — ${hack.technique}`,
+                    reason,
                     source: 'defi_llama',
                     date: hack.date,
                     added_at: new Date().toISOString(),
                 }));
+                blacklisted.push({ symbol, reason });
                 console.log(`[HUNTRIX] Blacklisted ${symbol} — ${hack.name} hack`);
             }
         }
+        return blacklisted;
     }
 
-    private async scanRSSBlacklist(): Promise<void> {
+    private async scanRSSBlacklist(): Promise<Array<{ symbol: string; reason: string }>> {
+        const blacklisted: Array<{ symbol: string; reason: string }> = [];
         const alerts = await this.rssScanner.scan();
         for (const alert of alerts) {
             for (const symbol of alert.symbols) {
                 const key = `huntrix:blacklist:${symbol}`;
                 const ttl = alert.severity === 'high' ? 86400 : 43200; // 24h or 12h
+                const reason = `RSS (${alert.feedName}): ${alert.title}`;
                 await this.redis.setex(key, ttl, JSON.stringify({
-                    reason: `RSS (${alert.feedName}): ${alert.title}`,
+                    reason,
                     source: 'rss_alert',
                     category: alert.category,
                     severity: alert.severity,
                     added_at: new Date().toISOString(),
                 }));
+                blacklisted.push({ symbol, reason });
                 console.log(`[HUNTRIX] Blacklisted ${symbol} — RSS: ${alert.title.slice(0, 60)}`);
             }
         }
+        return blacklisted;
     }
 
     /**
@@ -409,7 +424,11 @@ export class ManipulationScanner {
         ]);
 
         // Run defensive scans in background (don't block trade signals)
-        this.scanDefensiveBlacklist().catch(err =>
+        this.scanDefensiveBlacklist().then(entries => {
+            if (entries.length > 0) {
+                this.redis.setex('huntrix:blacklist:recent', 3600, JSON.stringify(entries));
+            }
+        }).catch(err =>
             console.error('[HUNTRIX] Background blacklist scan error:', err)
         );
 

@@ -139,8 +139,31 @@ export class HuntrixAgent {
         console.log('[HUNTRIX] Scanning for manipulation campaigns...');
         const watchlist = this.positions.map(p => p.symbol.split('/')[0]);
         const signals = await this.scanner.fullScan(watchlist);
+
+        // 5b. Order book spoofing scan (uses CCXT exchange instance)
+        if (this.config.scanner.sources.orderbook_spoof_enabled) {
+            const spoofSymbols = this.positions.map(p => p.symbol);
+            const spoofSignals = await this.scanner.scanOrderBook(this.ccxt, spoofSymbols);
+            signals.push(...spoofSignals);
+        }
+
         this.activeSignals = signals;
         this.lastScanAt = new Date().toISOString();
+
+        // 5c. Check for new blacklist entries and alert
+        try {
+            const recentBlacklist = await this.redis.get('huntrix:blacklist:recent');
+            if (recentBlacklist) {
+                const entries: Array<{ symbol: string; reason: string }> = JSON.parse(recentBlacklist);
+                if (entries.length > 0 && this.config.telegram.alert_on_detection) {
+                    const lines = entries.slice(0, 5).map(e => `• ${e.symbol}: ${e.reason}`).join('\n');
+                    await this.sendTelegramAlert(
+                        `<b>🛡 HUNTRIX BLACKLIST</b>\n${entries.length} symbol(s) blocked:\n${lines}`,
+                    );
+                }
+                await this.redis.del('huntrix:blacklist:recent');
+            }
+        } catch { /* best effort */ }
 
         if (signals.length === 0) {
             await this.saveState();
