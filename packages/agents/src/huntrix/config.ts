@@ -23,6 +23,13 @@ export const HUNTRIX_DEFAULTS: HuntrixConfig = {
     min_coordination_score: 60,
     min_channels_for_cluster: 3,
     cluster_window_minutes: 5,
+    sources: {
+      goplus_enabled: true,
+      defi_llama_enabled: true,
+      rss_enabled: true,
+      orderbook_spoof_enabled: true,
+      rss_poll_interval_minutes: 30,
+    },
   },
   detection: {
     min_volume_spike_multiplier: 3.0,
@@ -81,7 +88,11 @@ export function loadHuntrixConfig(filePath?: string): HuntrixConfig {
     const parsed = parse(raw) as Partial<HuntrixConfig>;
     return {
       general: { ...HUNTRIX_DEFAULTS.general, ...parsed.general },
-      scanner: { ...HUNTRIX_DEFAULTS.scanner, ...parsed.scanner },
+      scanner: {
+        ...HUNTRIX_DEFAULTS.scanner,
+        ...parsed.scanner,
+        sources: { ...HUNTRIX_DEFAULTS.scanner.sources, ...(parsed.scanner as any)?.sources },
+      },
       detection: { ...HUNTRIX_DEFAULTS.detection, ...parsed.detection },
       capital: { ...HUNTRIX_DEFAULTS.capital, ...parsed.capital },
       limits: { ...HUNTRIX_DEFAULTS.limits, ...parsed.limits },

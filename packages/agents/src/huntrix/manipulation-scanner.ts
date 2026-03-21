@@ -15,6 +15,10 @@ import type {
     TelegramClusterResult,
     HuntrixConfig,
 } from './types';
+import { GoPlusScanner } from './scanners/goplus';
+import { DefiLlamaHacksScanner } from './scanners/defi-llama-hacks';
+import { RSSFeedScanner } from './scanners/rss-feeds';
+import { OrderBookSpoofDetector } from './scanners/orderbook';
 
 const SYSTEM_PROMPT = `You are a crypto market manipulation detector. Your job is to identify
 coordinated pump & dump campaigns, shill operations, and fake news pumps by analyzing
@@ -82,6 +86,11 @@ export class ManipulationScanner {
     private redis: Redis;
     private openai: any; // OpenAI client (xAI endpoint)
     private recentSymbols: Map<string, number> = new Map(); // symbol -> last scan timestamp
+    private goplusScanner: GoPlusScanner;
+    private defiLlamaScanner: DefiLlamaHacksScanner;
+    private rssScanner: RSSFeedScanner;
+    private orderbookDetector: OrderBookSpoofDetector;
+    private lastOrderbooks: Map<string, any>; // Previous orderbook snapshots
 
     constructor(config: HuntrixConfig, redis: Redis) {
         this.config = config;
@@ -94,6 +103,12 @@ export class ManipulationScanner {
             throw new Error('[HUNTRIX] XAI_API_KEY required for manipulation scanning');
         }
         this.openai = new OpenAI({ apiKey, baseURL: 'https://api.x.ai/v1' });
+
+        this.goplusScanner = new GoPlusScanner(redis);
+        this.defiLlamaScanner = new DefiLlamaHacksScanner(redis);
+        this.rssScanner = new RSSFeedScanner(redis);
+        this.orderbookDetector = new OrderBookSpoofDetector();
+        this.lastOrderbooks = new Map();
     }
 
     /**
@@ -279,6 +294,111 @@ export class ManipulationScanner {
     }
 
     /**
+     * Scan defensive sources and write blacklist entries.
+     * DeFi Llama hacks + RSS alerts → Redis blacklist keys.
+     */
+    async scanDefensiveBlacklist(): Promise<void> {
+        const sources = this.config.scanner.sources;
+
+        try {
+            const promises: Promise<void>[] = [];
+
+            if (sources.defi_llama_enabled) {
+                promises.push(this.scanDefiLlamaBlacklist());
+            }
+            if (sources.rss_enabled) {
+                promises.push(this.scanRSSBlacklist());
+            }
+
+            await Promise.all(promises);
+        } catch (err) {
+            console.error('[HUNTRIX] Defensive blacklist scan failed:', err);
+        }
+    }
+
+    private async scanDefiLlamaBlacklist(): Promise<void> {
+        const hacks = await this.defiLlamaScanner.scan();
+        for (const hack of hacks) {
+            for (const symbol of hack.symbols) {
+                const key = `huntrix:blacklist:${symbol}`;
+                await this.redis.setex(key, 86400, JSON.stringify({
+                    reason: `DeFi Llama: ${hack.name} hack ($${(hack.amount / 1e6).toFixed(1)}M) — ${hack.technique}`,
+                    source: 'defi_llama',
+                    date: hack.date,
+                    added_at: new Date().toISOString(),
+                }));
+                console.log(`[HUNTRIX] Blacklisted ${symbol} — ${hack.name} hack`);
+            }
+        }
+    }
+
+    private async scanRSSBlacklist(): Promise<void> {
+        const alerts = await this.rssScanner.scan();
+        for (const alert of alerts) {
+            for (const symbol of alert.symbols) {
+                const key = `huntrix:blacklist:${symbol}`;
+                const ttl = alert.severity === 'high' ? 86400 : 43200; // 24h or 12h
+                await this.redis.setex(key, ttl, JSON.stringify({
+                    reason: `RSS (${alert.feedName}): ${alert.title}`,
+                    source: 'rss_alert',
+                    category: alert.category,
+                    severity: alert.severity,
+                    added_at: new Date().toISOString(),
+                }));
+                console.log(`[HUNTRIX] Blacklisted ${symbol} — RSS: ${alert.title.slice(0, 60)}`);
+            }
+        }
+    }
+
+    /**
+     * Scan order books for spoofing. Requires two calls (snapshot comparison).
+     */
+    async scanOrderBook(exchange: any, symbols: string[]): Promise<ManipulationSignal[]> {
+        if (!this.config.scanner.sources.orderbook_spoof_enabled) return [];
+
+        const signals: ManipulationSignal[] = [];
+
+        for (const symbol of symbols) {
+            try {
+                const orderbook = await exchange.fetchOrderBook(symbol, 20);
+                const current = OrderBookSpoofDetector.fromCCXT(orderbook);
+                const previous = this.lastOrderbooks.get(symbol);
+
+                if (previous) {
+                    const midPrice = (current.bids[0]?.price + current.asks[0]?.price) / 2 || 0;
+                    const detections = this.orderbookDetector.detect(previous, current, symbol, midPrice);
+
+                    for (const detection of detections) {
+                        signals.push({
+                            id: `spoof-${symbol}-${Date.now()}`,
+                            type: 'wash_trading_pump',
+                            symbol,
+                            confidence: Math.min(85, 55 + detection.disappeared_pct / 5),
+                            phase: detection.side === 'bid' ? 'early_pump' : 'mid_pump',
+                            shill_activity: [],
+                            total_shill_accounts: 0,
+                            price_at_detection: midPrice,
+                            volume_24h: 0,
+                            volume_spike_ratio: 0,
+                            price_velocity: 0,
+                            reasoning: `${detection.side} wall of $${(detection.wall_size_usd / 1000).toFixed(0)}K at ${detection.wall_price} disappeared ${detection.disappeared_pct.toFixed(0)}% — likely spoofing`,
+                            estimated_peak_minutes: null,
+                            detected_at: new Date().toISOString(),
+                            source: 'orderbook_spoof',
+                        });
+                    }
+                }
+
+                this.lastOrderbooks.set(symbol, current);
+            } catch (err) {
+                // Skip symbols with orderbook fetch errors
+            }
+        }
+
+        return signals;
+    }
+
+    /**
      * Run full scan across all sources
      */
     async fullScan(watchlist: string[] = []): Promise<ManipulationSignal[]> {
@@ -287,6 +407,11 @@ export class ManipulationScanner {
             this.scanTelegramClusters(),
             this.scanTrendingAnomalies(),
         ]);
+
+        // Run defensive scans in background (don't block trade signals)
+        this.scanDefensiveBlacklist().catch(err =>
+            console.error('[HUNTRIX] Background blacklist scan error:', err)
+        );
 
         const allSignals: ManipulationSignal[] = [...xResult.signals, ...trendingSignals];
 
