@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from src.models.analysis import AnalysisRequest, AnalysisResponse
@@ -6,6 +6,7 @@ from src.core.state_sync import state_manager
 from src.backtest.engine import backtest_engine
 import json
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 api_router = APIRouter()
 
@@ -313,4 +314,74 @@ async def reset_circuit_breaker():
         return {"reset": result, "message": "Circuit breaker reset" if result else "Failed to reset"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ VEDIC HISTORICAL ENDPOINTS ============
+
+@api_router.get("/vedic/historical")
+async def vedic_historical(
+    symbol: str = "BTC",
+    days: int = 365,
+    interval: str = "daily",
+):
+    """Compute historical vedic scores for a symbol.
+
+    interval: 'daily' (1 point/day) or 'weekly' (1 point/week).
+    Returns arrays of {date, score, label, muhurta, nakshatra, tithi,
+    paksha, mercury_rx, transit_score, lagna_sign, bhava_score, dasha_lord}.
+    """
+    from src.vedic.ephemeris import get_sky_state
+    from src.vedic.scoring import compute_vedic_score, compute_symbol_transits
+    from src.vedic.dasha import compute_dasha_for_symbol
+
+    max_days = 730  # 2 years max
+    days = min(days, max_days)
+
+    step = timedelta(days=7) if interval == "weekly" else timedelta(days=1)
+    now = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+    start = now - timedelta(days=days)
+
+    points = []
+    cursor = start
+    while cursor <= now:
+        try:
+            sky = get_sky_state(cursor)
+            vs = compute_vedic_score(sky)
+            ts = compute_symbol_transits([symbol.upper()], sky)
+            sym_transit = ts.get(symbol.upper())
+            ds = compute_dasha_for_symbol(symbol.upper(), cursor)
+
+            points.append({
+                "date": cursor.strftime("%Y-%m-%d"),
+                "score": vs.overall_score,
+                "label": vs.label,
+                "muhurta": vs.muhurta_label,
+                "muhurta_score": vs.muhurta_score,
+                "nakshatra": vs.moon_nakshatra,
+                "nakshatra_score": vs.nakshatra_score,
+                "tithi": vs.tithi_name,
+                "tithi_number": vs.tithi_number,
+                "paksha": vs.lunar_paksha,
+                "moon_phase": vs.moon_phase_pct,
+                "mercury_rx": vs.is_mercury_retrograde,
+                "aspect_score": vs.aspect_score,
+                "retrogrades": vs.retrogrades,
+                "transit_score": sym_transit.score if sym_transit else 0,
+                "lagna_sign": sym_transit.lagna_sign if sym_transit else "",
+                "bhava_score": sym_transit.bhava_score if sym_transit else 0.0,
+                "dasha_lord": ds.maha_dasha_lord if ds else "",
+                "dasha_bias": ds.combined_bias if ds else 0.0,
+            })
+        except Exception:
+            pass
+
+        cursor += step
+
+    return {
+        "symbol": symbol.upper(),
+        "days": days,
+        "interval": interval,
+        "points": len(points),
+        "data": points,
+    }
 
