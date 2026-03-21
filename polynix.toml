@@ -57,3 +57,9 @@ poll_interval_ms = 300000         # Poll every 5 minutes
 min_wallet_pnl = 100             # Min $100 PnL to follow
 min_wallet_trades = 10           # Min 10 trades to qualify
 max_copy_size_usd = 15           # Max $15 per copy trade
+
+[whale_detection]
+enabled = true
+min_confidence = 40
+max_boost_pct = 15
+max_penalty_pct = 10
