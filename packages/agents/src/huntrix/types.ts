@@ -1,3 +1,15 @@
+// ── RSS Alerts ───────────────────────────────────────────────────
+
+export interface RSSAlert {
+  feedName: string;       // Which feed it came from
+  title: string;
+  link: string;
+  published: string;
+  category: 'exploit' | 'enforcement' | 'vulnerability' | 'scam' | 'general';
+  symbols: string[];      // Extracted from title/description
+  severity: 'high' | 'medium' | 'low';
+}
+
 // ── Manipulation Detection ──────────────────────────────────────
 
 export type ManipulationType =
