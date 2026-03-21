@@ -612,6 +612,16 @@ export class SolanaAgent extends BaseAgent {
             return;
         }
 
+        // Bayesian permanent block — extend cooldown for consistently losing tokens
+        const bayesStats = this.bayesian.getSymbolStats(symbol);
+        if (bayesStats && bayesStats.total >= 5 && bayesStats.winRate < 0.20) {
+            // Block for 24h instead of 4h — stop throwing money at losers
+            const blockUntil = Date.now() + 24 * 60 * 60 * 1000;
+            this.symbolCooldowns.set(symbol, blockUntil);
+            this.log('info', `${symbol} BLOCKED 24h: Bayesian WR ${(bayesStats.winRate * 100).toFixed(0)}% (${bayesStats.wins}W/${bayesStats.losses}L) after ${bayesStats.total} trades.`);
+            return;
+        }
+
         // Symbol cooldown — prevent re-entry after recent exit
         const cooldownUntil = this.symbolCooldowns.get(symbol);
         if (cooldownUntil && Date.now() < cooldownUntil) {

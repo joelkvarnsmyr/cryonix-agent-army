@@ -227,6 +227,18 @@ export class BayesianLearner {
         }
     }
 
+    /** Get win/loss stats for a specific symbol (for permanent block logic). */
+    getSymbolStats(symbol: string): { total: number; wins: number; losses: number; winRate: number } | null {
+        const p = this.symbolPosteriors.get(symbol);
+        if (!p || p.sampleSize === 0) return null;
+        return {
+            total: p.sampleSize,
+            wins: p.wins,
+            losses: p.losses,
+            winRate: p.expectedWinRate,
+        };
+    }
+
     /** Get summary of all learned posteriors (for logging/debugging) */
     getSummary(): string {
         const lines: string[] = [];

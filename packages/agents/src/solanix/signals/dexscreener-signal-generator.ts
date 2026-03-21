@@ -8,12 +8,12 @@ import { MINT_ADDRESS_MAP } from './solana-signal-generator';
  * that includes real-time price changes (1h/6h/24h), volume, and transaction
  * counts. Much more responsive to intraday moves.
  *
- * Scoring model:
- *   - Short-term momentum (h1 price change)      weight 0.30
- *   - Medium-term momentum (h6 price change)      weight 0.20
+ * Scoring model (v2 — h1-dominant, anti-FOMO):
+ *   - Short-term momentum (h1 price change)      weight 0.40
+ *   - Medium-term context (h6 price change)       weight 0.15
  *   - Volume surge (h1 vs avg hourly)             weight 0.20
  *   - Buy pressure (buy txns vs sell txns in h1)  weight 0.15
- *   - Trend alignment (h1 and h6 same direction)  weight 0.15
+ *   - Trend alignment (h1 and h6 same direction)  weight 0.10
  */
 
 interface DexPairData {
@@ -151,51 +151,54 @@ export class DexScreenerSignalGenerator {
         let score = 0;
         const reasoning: string[] = [];
 
-        // 1. Short-term momentum (weight 0.25)
-        if (h1Change >= 2) {
-            score += 0.25;
-            reasoning.push(`h1 +${h1Change.toFixed(1)}% strong momentum`);
-        } else if (h1Change >= 0.8) {
-            score += 0.15;
-            reasoning.push(`h1 +${h1Change.toFixed(1)}% momentum`);
-        } else if (h1Change >= 0.2) {
-            score += 0.08;
-            reasoning.push(`h1 +${h1Change.toFixed(1)}% mild up`);
-        } else if (h1Change <= -2) {
-            score -= 0.25;
-            reasoning.push(`h1 ${h1Change.toFixed(1)}% strong sell-off`);
-        } else if (h1Change <= -0.8) {
-            score -= 0.15;
-            reasoning.push(`h1 ${h1Change.toFixed(1)}% declining`);
-        } else if (h1Change <= -0.2) {
-            score -= 0.08;
-            reasoning.push(`h1 ${h1Change.toFixed(1)}% mild down`);
+        // -- Anti-FOMO filter: reject tokens already pumped too much --
+        if (h1Change >= 10) {
+            reasoning.push(`FOMO rejected: h1 +${h1Change.toFixed(1)}% (pump tail)`);
+            return { symbol, mintAddress, action: 'WAIT', confidence: 0, reasoning, currentPrice: priceUsd, source: 'dexscreener', timestamp: Date.now() };
+        }
+        if (h6Change >= 15) {
+            reasoning.push(`FOMO rejected: h6 +${h6Change.toFixed(1)}% (extended run)`);
+            return { symbol, mintAddress, action: 'WAIT', confidence: 0, reasoning, currentPrice: priceUsd, source: 'dexscreener', timestamp: Date.now() };
         }
 
-        // 2. Medium-term momentum (weight 0.30 — primary trend signal)
-        //    h6 is the strongest predictor of near-term direction
-        if (h6Change >= 4) {
+        // 1. Short-term momentum (weight 0.40 — primary entry signal)
+        if (h1Change >= 3) {
+            score += 0.40;
+            reasoning.push(`h1 +${h1Change.toFixed(1)}% strong momentum`);
+        } else if (h1Change >= 1.5) {
             score += 0.30;
-            reasoning.push(`h6 +${h6Change.toFixed(1)}% strong uptrend`);
-        } else if (h6Change >= 2) {
-            score += 0.20;
-            reasoning.push(`h6 +${h6Change.toFixed(1)}% uptrend`);
-        } else if (h6Change >= 0.5) {
-            score += 0.10;
+            reasoning.push(`h1 +${h1Change.toFixed(1)}% momentum`);
+        } else if (h1Change >= 0.5) {
+            score += 0.15;
+            reasoning.push(`h1 +${h1Change.toFixed(1)}% mild up`);
+        } else if (h1Change <= -3) {
+            score -= 0.30;
+            reasoning.push(`h1 ${h1Change.toFixed(1)}% strong sell-off`);
+        } else if (h1Change <= -1) {
+            score -= 0.15;
+            reasoning.push(`h1 ${h1Change.toFixed(1)}% declining`);
+        }
+
+        // 2. Medium-term context (weight 0.15 — confirmation, not driver)
+        if (h6Change >= 3) {
+            score += 0.15;
+            reasoning.push(`h6 +${h6Change.toFixed(1)}% confirms uptrend`);
+        } else if (h6Change >= 1) {
+            score += 0.08;
             reasoning.push(`h6 +${h6Change.toFixed(1)}% rising`);
+        } else if (h6Change <= -8 && h1Change > 2) {
+            // Deep dip with strong 1h reversal — best dip-buy signal
+            score += 0.35;
+            reasoning.push(`DEEP DIP REVERSAL: h6 ${h6Change.toFixed(1)}% + h1 +${h1Change.toFixed(1)}% bounce`);
+        } else if (h6Change <= -5 && h1Change > 1) {
+            // Moderate dip with reversal confirmation
+            score += 0.25;
+            reasoning.push(`dip reversal: h6 ${h6Change.toFixed(1)}% + h1 +${h1Change.toFixed(1)}% bounce`);
         } else if (h6Change <= -5) {
-            // Deep dip — only a dip buy if h1 shows reversal (positive)
-            if (h1Change > 0) {
-                score += 0.15;
-                reasoning.push(`h6 ${h6Change.toFixed(1)}% dip buy (h1 +${h1Change.toFixed(1)}% reversal)`);
-            } else {
-                score -= 0.10;
-                reasoning.push(`h6 ${h6Change.toFixed(1)}% freefall (h1 ${h1Change.toFixed(1)}% no reversal)`);
-            }
+            // Dip but no reversal — freefall, avoid
+            score -= 0.15;
+            reasoning.push(`h6 ${h6Change.toFixed(1)}% freefall (no h1 reversal)`);
         } else if (h6Change <= -2) {
-            score -= 0.20;
-            reasoning.push(`h6 ${h6Change.toFixed(1)}% downtrend`);
-        } else if (h6Change <= -0.5) {
             score -= 0.10;
             reasoning.push(`h6 ${h6Change.toFixed(1)}% declining`);
         }
@@ -216,55 +219,42 @@ export class DexScreenerSignalGenerator {
             }
         }
 
-        // 4. Buy pressure (weight 0.10)
+        // 4. Buy pressure (weight 0.15)
         const totalTxns = buysH1 + sellsH1;
         const buyRatio = totalTxns > 0 ? buysH1 / totalTxns : 0.5;
         if (totalTxns >= 10) {
             if (buyRatio >= 0.65) {
-                score += 0.10;
-                reasoning.push(`buy pressure ${(buyRatio * 100).toFixed(0)}%`);
+                score += 0.15;
+                reasoning.push(`strong buy pressure ${(buyRatio * 100).toFixed(0)}%`);
             } else if (buyRatio >= 0.55) {
-                score += 0.05;
-                reasoning.push(`slight buy bias ${(buyRatio * 100).toFixed(0)}%`);
+                score += 0.08;
+                reasoning.push(`buy bias ${(buyRatio * 100).toFixed(0)}%`);
             } else if (buyRatio <= 0.35) {
-                score -= 0.08;
+                score -= 0.10;
                 reasoning.push(`sell pressure ${((1 - buyRatio) * 100).toFixed(0)}%`);
             } else if (buyRatio <= 0.45) {
-                score -= 0.03;
+                score -= 0.05;
                 reasoning.push(`slight sell bias ${((1 - buyRatio) * 100).toFixed(0)}%`);
             }
         }
 
-        // 5. Trend alignment bonus (weight 0.15) — strict thresholds
-        if (h1Change > 1.0 && h6Change > 2.0) {
-            score += 0.15;
+        // 5. Trend alignment (weight 0.10)
+        if (h1Change > 1.0 && h6Change > 1.0) {
+            score += 0.10;
             reasoning.push('trend alignment (h1+h6 bullish)');
-        } else if (h1Change > 0.5 && h6Change < -1) {
-            score += 0.10;
-            reasoning.push('dip reversal (h1 recovering from h6 dip)');
-        } else if (h1Change <= 0 && h6Change >= 2) {
-            // h6 uptrend with h1 pullback — dip entry on established trend
-            score += 0.10;
-            reasoning.push(`h1 pullback on h6 uptrend (dip entry)`);
-        } else if (h1Change < -0.2 && h6Change < -0.5) {
-            score -= 0.15;
+        } else if (h1Change > 0.5 && h6Change < -2) {
+            score += 0.08;
+            reasoning.push('dip reversal alignment');
+        } else if (h1Change < -0.5 && h6Change < -1) {
+            score -= 0.10;
             reasoning.push('trend alignment (h1+h6 bearish)');
         }
 
-        // 6. 24h context bonus (weight 0.10)
-        //    Strong 24h move adds conviction
-        if (h24Change >= 5) {
-            score += 0.10;
-            reasoning.push(`h24 +${h24Change.toFixed(1)}% strong daily trend`);
-        } else if (h24Change <= -5) {
-            score += 0.05;
-            reasoning.push(`h24 ${h24Change.toFixed(1)}% oversold bounce candidate`);
-        }
-
         // Buy pressure gate — reject BUY when sellers dominate
-        if (totalTxns >= 20 && buyRatio < 0.45 && score > 0) {
+        // Lowered threshold: 10 txns (was 20), 50% buy ratio (was 45%)
+        if (totalTxns >= 10 && buyRatio < 0.50 && score > 0) {
             score = 0;
-            reasoning.push(`buy pressure gate: ${(buyRatio * 100).toFixed(0)}% buy rejected`);
+            reasoning.push(`buy pressure gate: ${(buyRatio * 100).toFixed(0)}% buy at ${totalTxns} txns — rejected`);
         }
 
         // Determine action

@@ -16,14 +16,14 @@ max_open_positions = 5
 max_trades_per_day = 20
 
 [risk]
-min_confidence = 0.40
+min_confidence = 0.55                  # Raised from 0.40 — reject weak signals
 max_daily_loss_pct = 0.05
 max_weekly_loss_pct = 0.10
 max_consecutive_losses = 3
 
 [exits]
 take_profit_pct = 8.0
-stop_loss_pct = 4.0
+stop_loss_pct = 6.0                    # Widened from 4.0 — avoid whipsaw on Solana volatility
 trailing_stop_pct = 5.0
 trailing_activation_pct = 3.0
 stagnation_timeout_days = 3
@@ -31,8 +31,8 @@ stagnation_min_pnl_pct = 0.5
 
 [timing]
 poll_interval_ms = 60000
-signal_scan_interval_ms = 900000
-dexscreener_scan_interval_ms = 300000
+signal_scan_interval_ms = 300000       # 5 min (was 15 min — catch moves earlier)
+dexscreener_scan_interval_ms = 180000  # 3 min (was 5 min — faster discovery)
 
 [rotation]
 enabled = true
@@ -40,8 +40,8 @@ min_score_advantage = 30
 min_hold_minutes = 120
 
 [signals]
-min_signal_score = 0.40
+min_signal_score = 0.50                # Raised from 0.40 — higher signal quality bar
 dexscreener_enabled = true
-dexscreener_min_liquidity_usd = 50000
+dexscreener_min_liquidity_usd = 100000 # Raised from 50k — avoid thin-liquidity traps
 dexscreener_volume_spike_multiplier = 3.0
 dexscreener_dynamic_ttl_ms = 7200000
