@@ -4,9 +4,9 @@ clob_api_url = "https://clob.polymarket.com"
 gamma_api_url = "https://gamma-api.polymarket.com"
 
 [capital]
-starting_balance_usd = 1475
+starting_balance_usd = 2000
 max_bet_size_usd = 25
-max_concurrent_positions = 60
+max_concurrent_positions = 80
 max_exposure_pct = 95
 
 [strategy]
@@ -21,7 +21,7 @@ max_markets_per_scan = 150         # Max markets per arb scan cycle (was 80)
 
 [risk]
 kelly_fraction = 0.25
-max_daily_loss_usd = 25
+max_daily_loss_usd = 50             # Increased with larger bankroll
 max_consecutive_losses = 5
 fee_rate = 0.0156
 

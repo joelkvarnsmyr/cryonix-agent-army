@@ -72,6 +72,16 @@ export class DirectionalEngine {
 
         const latestPrice = history[history.length - 1].price;
 
+        // Filter: skip "dip to $X" markets for standard (non-micro) evaluation.
+        // Audit showed 32% WR and -$29 total P&L on these. They're essentially
+        // lottery tickets — extreme tail events that almost never happen.
+        // Micro 5-min "up or down" markets are NOT filtered (different question type).
+        if (market.priceTarget && market.targetDirection === 'below') {
+            const distancePct = Math.abs(latestPrice - market.priceTarget) / latestPrice;
+            // Skip if target is >15% away from current price (extreme dip bets)
+            if (distancePct > 0.15) return null;
+        }
+
         // Get Polymarket YES midpoint
         const polyProb = await spreadDetector.getYesMidpoint(market);
         if (polyProb === null) return null;
