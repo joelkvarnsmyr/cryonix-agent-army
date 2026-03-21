@@ -55,7 +55,7 @@ export class GoPlusScanner {
       throw new Error(`GoPlus API error: ${response.status} ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data: any = await response.json();
     const result = data?.result?.[address.toLowerCase()];
     if (!result) {
       throw new Error(`No GoPlus data for ${address} on ${chain}`);

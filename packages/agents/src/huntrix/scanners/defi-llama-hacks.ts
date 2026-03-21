@@ -48,7 +48,7 @@ export class DefiLlamaHacksScanner {
       throw new Error(`DeFi Llama API error: ${response.status} ${response.statusText}`);
     }
 
-    const rawHacks: any[] = await response.json();
+    const rawHacks: any[] = await response.json() as any[];
 
     // Filter to last 7 days
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
