@@ -308,7 +308,12 @@ export class ApexAgent {
             highWatermark: currentPrice,
             trailingActive: false,
             confluenceScore: opp.score,
-            contributingSignals: opp.contributingSignals.map(s => s.source),
+            contributingSignals: opp.contributingSignals.map(s => ({
+                source: s.source,
+                signalType: s.signalType,
+                confidence: s.confidence,
+                score: s.score,
+            })),
         };
 
         this.riskGate.recordEntry(size);

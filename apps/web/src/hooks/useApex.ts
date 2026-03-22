@@ -9,9 +9,13 @@ export interface ApexStatus {
         id: string; symbol: string; direction: string; mode: string;
         entryPrice: number; currentPrice: number; quantity: number;
         entryTime: number; highWatermark: number; trailingActive: boolean;
-        confluenceScore: number; contributingSignals: string[];
+        confluenceScore: number;
+        contributingSignals: Array<{ source: string; signalType: string; confidence: number; score: number }>;
     }>;
-    confluenceBoard: Array<{ symbol: string; score: number; direction: string; mode: string; signals: string[] }>;
+    confluenceBoard: Array<{
+        symbol: string; score: number; direction: string; mode: string; signals: string[];
+        signalDetails?: Array<{ source: string; signalType: string; confidence: number; score: number }>;
+    }>;
     performance: { totalPnl: number; winRate: number; trades: number; maxDrawdown: number };
     circuitBreaker: { drawdown: number; dailyLoss: number; consecutiveLosses: number };
     staleness: Record<string, boolean>;

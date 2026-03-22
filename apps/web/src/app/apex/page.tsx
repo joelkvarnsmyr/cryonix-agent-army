@@ -1,7 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { useApexStatus } from '@/hooks/useApex';
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout';
+import { TradeExplainer } from '@/components/dashboard/trade-explainer';
+import { generateThesis } from '@/lib/thesis-generator';
 
 function timeAgo(ts: number) {
   const diff = Date.now() - ts;
@@ -23,8 +26,19 @@ const DIR_COLOR: Record<string, string> = {
   bearish: 'text-red-400',
 };
 
+// Exit rules per mode (from apex.toml config)
+const MODE_EXIT_RULES: Record<string, {
+  tpPct: number; slPct: number; trailingPct: number;
+  trailingActivationPct: number; maxHoldHours: number;
+}> = {
+  confluence: { tpPct: 6, slPct: 3, trailingPct: 2.5, trailingActivationPct: 3, maxHoldHours: 72 },
+  dip_sniper: { tpPct: 5, slPct: 2.5, trailingPct: 2, trailingActivationPct: 2.5, maxHoldHours: 48 },
+  venus_rx: { tpPct: 8, slPct: 3, trailingPct: 3, trailingActivationPct: 4, maxHoldHours: 360 },
+};
+
 export default function ApexPage() {
   const { data, error } = useApexStatus(15_000);
+  const [expandedPosition, setExpandedPosition] = useState<string | null>(null);
 
   const isLoading = data === null;
   const agentRunning = data?.status === 'running';
@@ -138,30 +152,70 @@ export default function ApexPage() {
                 const pnlPct = pos.direction === 'long'
                   ? ((pos.currentPrice - pos.entryPrice) / pos.entryPrice) * 100
                   : ((pos.entryPrice - pos.currentPrice) / pos.entryPrice) * 100;
+                const isExpanded = expandedPosition === pos.id;
+                const exitRules = MODE_EXIT_RULES[pos.mode] ?? MODE_EXIT_RULES.confluence;
+                const positionSize = pos.entryPrice * (pos.quantity ?? 0);
+                const signals = Array.isArray(pos.contributingSignals)
+                  ? pos.contributingSignals.map(s =>
+                      typeof s === 'string'
+                        ? { source: s, signalType: s, confidence: 0, score: 0 }
+                        : s
+                    )
+                  : [];
+                const thesis = generateThesis({
+                  agent: 'APEX',
+                  symbol: pos.symbol,
+                  direction: pos.direction,
+                  mode: pos.mode,
+                  signals,
+                  exitRules,
+                });
                 return (
-                  <div key={pos.id} className="px-4 py-3 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono font-bold text-sm">{pos.symbol}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${MODE_COLOR[pos.mode] ?? ''}`}>
-                        {pos.mode}
-                      </span>
-                      <span className={`text-xs font-mono ${pos.direction === 'long' ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {pos.direction.toUpperCase()}
-                      </span>
-                      {pos.trailingActive && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-amber-400/10 text-amber-400 border border-amber-400/20 font-mono">
-                          TRAIL
+                  <div
+                    key={pos.id}
+                    className="cursor-pointer transition-colors hover:bg-white/[0.02]"
+                    onClick={() => setExpandedPosition(isExpanded ? null : pos.id)}
+                  >
+                    <div className="px-4 py-3 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono font-bold text-sm">{pos.symbol}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${MODE_COLOR[pos.mode] ?? ''}`}>
+                          {pos.mode}
                         </span>
-                      )}
-                    </div>
-                    <div className="text-right">
-                      <span className={`text-sm font-mono font-bold ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
-                      </span>
-                      <div className="text-[10px] text-muted-foreground/40 font-mono">
-                        {timeAgo(pos.entryTime)} | score {pos.confluenceScore}
+                        <span className={`text-xs font-mono ${pos.direction === 'long' ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {pos.direction.toUpperCase()}
+                        </span>
+                        {pos.trailingActive && (
+                          <span className="text-[10px] px-1 py-0.5 rounded bg-amber-400/10 text-amber-400 border border-amber-400/20 font-mono">
+                            TRAIL
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className={`text-sm font-mono font-bold ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
+                        </span>
+                        <div className="text-[10px] text-muted-foreground/40 font-mono">
+                          {timeAgo(pos.entryTime)} | score {pos.confluenceScore}
+                        </div>
                       </div>
                     </div>
+                    {isExpanded && (
+                      <TradeExplainer
+                        symbol={pos.symbol}
+                        direction={pos.direction}
+                        mode={pos.mode}
+                        entryPrice={pos.entryPrice}
+                        positionSize={positionSize}
+                        quantity={pos.quantity}
+                        signals={signals}
+                        totalScore={pos.confluenceScore}
+                        exitRules={exitRules}
+                        capital={capital?.total ?? 0}
+                        thesis={thesis}
+                        agentColor="text-rose-400"
+                      />
+                    )}
                   </div>
                 );
               })}
