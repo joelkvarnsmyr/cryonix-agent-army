@@ -727,9 +727,12 @@ async function addPosition(pos: OpenPosition): Promise<void> {
     if (await acquirePositionLock()) {
       try {
         const positions = await getOpenPositions();
-        // Prevent duplicate
-        if (positions.some(p => p.symbol === pos.symbol)) {
-          console.warn(`[POSITIONS] Duplicate prevented: ${pos.symbol} already open`);
+        // Prevent duplicate — unless DCA is enabled (allows max_entries_per_symbol)
+        const dcaEnabled = (TOML as any)?.dca?.enabled ?? false;
+        const maxEntries = (TOML as any)?.dca?.max_entries_per_symbol ?? 1;
+        const existingCount = positions.filter(p => p.symbol === pos.symbol).length;
+        if (existingCount >= maxEntries) {
+          console.warn(`[POSITIONS] Duplicate prevented: ${pos.symbol} already ${existingCount}/${maxEntries} entries`);
           return;
         }
         positions.push(pos);
@@ -744,7 +747,8 @@ async function addPosition(pos: OpenPosition): Promise<void> {
   // Fallback without lock if retries exhausted
   console.warn('[POSITIONS] Lock acquisition failed, proceeding without lock');
   const positions = await getOpenPositions();
-  if (!positions.some(p => p.symbol === pos.symbol)) {
+  const dcaMax = (TOML as any)?.dca?.max_entries_per_symbol ?? 1;
+  if (positions.filter(p => p.symbol === pos.symbol).length < dcaMax) {
     positions.push(pos);
     await saveOpenPositions(positions);
   }
@@ -2656,6 +2660,8 @@ async function checkPhantomResults(): Promise<void> {
 
     const ex = getExchange();
     let checked = 0;
+    let failed = 0;
+    let tooRecent = 0;
     const toKeep: string[] = [];
 
     for (const raw of phantoms) {
@@ -2664,6 +2670,7 @@ async function checkPhantomResults(): Promise<void> {
 
       if (age < 4 * 3600_000) {
         toKeep.push(raw); // Too recent, keep for later
+        tooRecent++;
         continue;
       }
 
@@ -2688,7 +2695,9 @@ async function checkPhantomResults(): Promise<void> {
         }));
         await redis.ltrim('phantom:results', 0, 499);
         checked++;
-      } catch {
+      } catch (fetchErr) {
+        failed++;
+        if (failed <= 3) console.warn(`[KILL-RATE] fetchTicker failed for ${phantom.symbol}:`, fetchErr instanceof Error ? fetchErr.message : fetchErr);
         toKeep.push(raw); // Price fetch failed, retry later
       }
 
@@ -2735,6 +2744,8 @@ async function checkPhantomResults(): Promise<void> {
 
       if (checked > 0) {
         console.log(`[KILL-RATE] Checked ${checked} phantoms. KR=${killRate.toFixed(1)}% (${profitable}/${parsed.length} profitable). Queue: ${toKeep.length} remaining.`);
+      } else if (phantoms.length > 0) {
+        console.log(`[KILL-RATE] Queue: ${phantoms.length} phantoms (${tooRecent} recent, ${failed} fetch-failed, ${checked} checked). No new results this cycle.`);
       }
 
       // Kill Rate Action Framework — advisory for AI Brain
@@ -3379,6 +3390,9 @@ async function checkGridTriggers(): Promise<GridResult[]> {
 
 export async function POST() {
   try {
+    // Kill Rate checker runs regardless of instance lock (read-only, no trading)
+    await checkPhantomResults();
+
     // INSTANCE LOCK: ensure only one environment trades this Binance account
     const lock = await acquireInstanceLock();
     if (!lock.acquired) {
@@ -3785,22 +3799,7 @@ export async function POST() {
 
     for (const { signal, raw } of topSignals) {
 
-      // ── Bayesian confidence adjustment ──
-      // Blend learned win probability with TA confidence
-      try {
-        const bayesAdj = await getBayesianAdjustment(
-          redis, 'cryonix', signal.patterns?.[0] || 'UNKNOWN', signal.symbol,
-          new Date().getUTCHours(), (await redis.get('market:regime')) || undefined,
-        );
-        if (bayesAdj.sampleSize >= 10) {
-          const modifier = bayesAdj.confidenceModifier / 100; // e.g., +0.10
-          const oldConf = signal.confidence;
-          signal.confidence = Math.max(0, Math.min(0.95, signal.confidence + modifier));
-          if (Math.abs(modifier) > 0.01) {
-            console.log(`[BAYES] ${signal.symbol} confidence ${(oldConf * 100).toFixed(0)}% → ${(signal.confidence * 100).toFixed(0)}% (${modifier >= 0 ? '+' : ''}${(modifier * 100).toFixed(1)}%, n=${bayesAdj.sampleSize})`);
-          }
-        }
-      } catch { /* Bayesian read failed — use original confidence */ }
+      // Bayesian adjustment moved to CONF-V2 groupC (multiplicative model) — no additive pre-adjustment
 
       const riskCheck = await passesRiskChecks(signal);
 
@@ -3850,9 +3849,9 @@ export async function POST() {
 
       // STEP 3b: AI Validation (Information Edge)
       // Fast-track: skip AI for very strong signals (≥80% confidence + multi-pattern)
-      const skipAiThreshold = (TOML as any)?.ai?.skip_threshold ?? 0.80;
+      const skipAiThreshold = (TOML as any)?.ai?.skip_threshold ?? 0.85;
       const canSkipAi = signal.confidence >= skipAiThreshold
-        && (signal.patterns?.length ?? 0) >= 2;
+        && (signal.patterns?.length ?? 0) >= 3; // Require 3+ patterns to skip AI (security)
 
       let aiResult: AIValidation;
       if (canSkipAi) {
@@ -4504,9 +4503,6 @@ export async function POST() {
     if (executed > 0 || sells.length > 0) {
       await syncRiskState();
     }
-
-    // Check phantom results (kill rate — what happened to rejected hypotheses?)
-    await checkPhantomResults();
 
     return NextResponse.json({
       success: true,
