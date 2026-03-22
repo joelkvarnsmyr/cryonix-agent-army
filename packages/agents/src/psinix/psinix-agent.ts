@@ -607,21 +607,15 @@ export class PsinixAgent {
 
             let exitReason: string | null = null;
 
-            // Stagnation exit: if position hasn't moved ±1% in 24h, close it
-            const hoursHeld = (Date.now() - pos.entryTime) / (60 * 60 * 1000);
-            if (hoursHeld >= 24 && Math.abs(pnlPct) < 1.0) {
-                exitReason = `Stagnation (${hoursHeld.toFixed(0)}h, ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)`;
-            }
-
-            // Stop loss (dynamic)
-            if (!exitReason && pnlPct <= -sl) {
+            // Priority 1: Stop loss (always, even during min_hold)
+            if (pnlPct <= -sl) {
                 exitReason = `SL hit (${pnlPct.toFixed(1)}% / limit -${sl.toFixed(1)}%)`;
             }
-            // Take profit (dynamic)
+            // Priority 2: Take profit
             else if (pnlPct >= tp) {
                 exitReason = `TP hit (${pnlPct.toFixed(1)}% / target ${tp.toFixed(1)}%)`;
             }
-            // Trailing stop (dynamic)
+            // Priority 3: Trailing stop
             else {
                 if (pnlPct >= trailAct) pos.trailingActive = true;
                 if (pos.trailingActive) {
@@ -632,6 +626,13 @@ export class PsinixAgent {
                     if (drawdown >= trailDist) {
                         exitReason = `Trailing stop (${drawdown.toFixed(1)}% from HWM / dist ${trailDist.toFixed(1)}%)`;
                     }
+                }
+            }
+            // Priority 4: Stagnation — position stuck ±1% for 24h, free up capital
+            if (!exitReason) {
+                const hoursHeld = (Date.now() - pos.entryTime) / (60 * 60 * 1000);
+                if (hoursHeld >= 24 && Math.abs(pnlPct) < 1.0) {
+                    exitReason = `Stagnation (${hoursHeld.toFixed(0)}h, ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)`;
                 }
             }
 
