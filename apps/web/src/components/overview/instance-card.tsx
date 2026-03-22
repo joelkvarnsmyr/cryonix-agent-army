@@ -19,6 +19,8 @@ const INSTANCE_ROUTES: Record<string, string> = {
   polynix: '/polynix',
   copynix: '/copynix',
   psinix: '/psinix',
+  huntrix: '/huntrix',
+  apex: '/apex',
 };
 
 interface InstanceCardProps {
