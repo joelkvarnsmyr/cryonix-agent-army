@@ -70,18 +70,23 @@ export class PumpProfiler {
   }
 
   async checkTimeouts(): Promise<void> {
+    const toFinalize: string[] = [];
     const now = Date.now();
     for (const [id, entry] of this.active) {
       if (now - entry.startedAt > TRACKING_TIMEOUT_MS) {
         console.log(`[PumpProfiler] Timeout for ${entry.profile.symbol} — finalizing`);
-        await this.finalize(id, false);
+        toFinalize.push(id);
+        continue;
       }
       if (entry.profile.peak_price > 0 && entry.profile.dump_start_price > 0) {
         const dropFromPeak = ((entry.profile.peak_price - entry.profile.dump_start_price) / entry.profile.peak_price) * 100;
         if (dropFromPeak >= 50) {
-          await this.finalize(id, false);
+          toFinalize.push(id);
         }
       }
+    }
+    for (const id of toFinalize) {
+      await this.finalize(id, false);
     }
   }
 

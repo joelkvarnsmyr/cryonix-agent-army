@@ -237,6 +237,27 @@ export class HuntrixAgent {
     // ─── Position Management ─────────────────────────────────────
 
     private async enterPosition(signal: ManipulationSignal, price: number): Promise<void> {
+        // Find best exchange for this trade first (price may differ)
+        let targetExchangeId = signal.exchange;
+        let targetExchange: any;
+
+        const best = await this.exchangeManager.getBestExchange(signal.symbol);
+        if (best) {
+            targetExchangeId = best.id;
+            targetExchange = best.exchange;
+            // Use the routed exchange's price for accurate sizing
+            try {
+                const ticker = await targetExchange.fetchTicker(signal.symbol);
+                if (ticker?.last) price = ticker.last;
+            } catch { /* fallback to original price */ }
+        } else {
+            targetExchange = this.exchangeManager.getExchange(targetExchangeId);
+            if (!targetExchange) {
+                console.log(`[HUNTRIX] No exchange available for ${signal.symbol} — skipping`);
+                return;
+            }
+        }
+
         const positionSize = Math.min(
             this.config.capital.max_position_size_usd,
             this.virtualBalance * 0.25,
@@ -248,22 +269,6 @@ export class HuntrixAgent {
         }
 
         const quantity = positionSize / price;
-
-        // Find best exchange for this trade
-        let targetExchangeId = signal.exchange;
-        let targetExchange: any;
-
-        const best = await this.exchangeManager.getBestExchange(signal.symbol);
-        if (best) {
-            targetExchangeId = best.id;
-            targetExchange = best.exchange;
-        } else {
-            targetExchange = this.exchangeManager.getExchange(targetExchangeId);
-            if (!targetExchange) {
-                console.log(`[HUNTRIX] No exchange available for ${signal.symbol} — skipping`);
-                return;
-            }
-        }
 
         if (this.config.general.mode !== 'paper') {
             try {
