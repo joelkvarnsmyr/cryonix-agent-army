@@ -177,6 +177,22 @@ export class SignalAggregator {
                             timestamp: ts, temporality: 'momentary', raw: entry,
                         });
                     }
+                    // Ecosystem-level signal: if 2+ Solana whale buys in window → SOL bullish
+                    const solanaSignals = signals.filter(
+                        s => s.source === 'copynix' && s.temporality === 'momentary'
+                    );
+                    if (solanaSignals.length >= 2) {
+                        signals.push({
+                            symbol: 'SOL', direction: 'bullish', source: 'copynix',
+                            signalType: 'ecosystem_bullish',
+                            confidence: Math.min(100, solanaSignals.length * 30),
+                            score: Math.min(100, solanaSignals.length * 30),
+                            timestamp: now,
+                            temporality: 'momentary',
+                            raw: { ecosystemTokens: solanaSignals.map(s => s.symbol), count: solanaSignals.length },
+                        });
+                    }
+
                     staleness['copynix'] = hasStale;
                 }
             } else {

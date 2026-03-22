@@ -592,6 +592,7 @@ export class CopynixAgent extends BaseAgent {
                             direction: 'buy',
                             consensusLevel: signal.consensusLevel,
                             walletCount: signal.walletCount,
+                            ecosystem: 'solana',
                             timestamp: Date.now(),
                         };
                         const existing = await redis.get('copynix:signals');
