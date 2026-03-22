@@ -82,3 +82,27 @@ cooldown_minutes = 60
 scheduled_hours = [0, 6, 12, 18]
 acute_consecutive_losses = 2
 acute_daily_loss_pct = 10.0
+
+[[exchanges]]
+id = "binance"
+enabled = true
+role = "scan+trade"
+api_key_env = "BINANCE_API_KEY"
+secret_env = "BINANCE_API_SECRET"
+priority = 1
+
+[[exchanges]]
+id = "bybit"
+enabled = true
+role = "scan+trade"
+api_key_env = "BYBIT_API_KEY"
+secret_env = "BYBIT_API_SECRET"
+priority = 2
+
+[[exchanges]]
+id = "mexc"
+enabled = true
+role = "scan+trade"
+api_key_env = "MEXC_API_KEY"
+secret_env = "MEXC_API_SECRET"
+priority = 3
