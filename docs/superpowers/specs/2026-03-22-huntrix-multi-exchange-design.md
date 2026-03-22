@@ -20,7 +20,7 @@ huntrix.toml [[exchanges]]
     → ccxt.mexc    (priority 3, scan+trade)
 ```
 
-**Initialization:** ExchangeManager reads `[[exchanges]]` from config, instantiates one CCXT instance per enabled exchange. Paper mode uses public endpoints only (no API keys needed). Live mode adds credentials from env vars.
+**Initialization:** ExchangeManager reads `[[exchanges]]` from config, instantiates one CCXT instance per enabled exchange with `enableRateLimit: true`. Calls `loadMarkets()` on each exchange to build available pairs index. Paper mode uses public endpoints only (no API keys needed). Live mode adds credentials from env vars.
 
 **Scanning:** `scanAll(symbols)` runs parallel `fetchTicker` + `fetchOrderBook` across all scan-enabled exchanges. Returns aggregated data keyed by `{symbol}:{exchange}`.
 
@@ -58,7 +58,7 @@ New module `pump-profiler.ts` logs every detected pump and builds statistical pr
 **Tracking flow:**
 
 1. When manipulation scanner detects a pump signal, `PumpProfiler.startTracking(signal)` creates a new profile
-2. Profiler polls price every 30s on tracked pumps (max 10 concurrent, 60min timeout)
+2. Profiler polls price every 30s on tracked pumps via the detecting exchange's CCXT instance (max 10 concurrent, 60min timeout)
 3. When price drops >2%/min from peak, mark `peak_price`, `peak_minutes`, `dump_start_price`
 4. When price drops >50% from peak or timeout, finalize profile with `duration_minutes`
 5. Store completed profile to Redis `huntrix:pump_history` (list, max 200 entries, 7d TTL)
