@@ -2405,32 +2405,39 @@ TIME HORIZON: We trade across multiple horizons. Set estimated_minutes_to_target
 - Swing (TP 5-15%): 12-72h target, stagnation 24-48h
 Default stagnation timeout is ${stagnationDefault}h. If position hasn't moved ±1% by stagnation_threshold_hours, it auto-exits.`;
 
-    const jsonSchema = `{"approve":bool,"confidence":0-100,"reasoning":"string","sl":number|null,"tp":number|null,"estimated_minutes_to_target":number,"stagnation_threshold_hours":number}`;
+    const jsonSchema = `{"approve":bool,"confidence":0-100,"reasoning":"string","contradictions":["string array of reasons NOT to trade"],"invalidation_criteria":["if X happens, exit immediately"],"sl":number|null,"tp":number|null,"estimated_minutes_to_target":number,"stagnation_threshold_hours":number}`;
 
     const systemPrompt = isDeepValue
-      ? `You are a crash-buying specialist for crypto markets. Evaluate whether a large drawdown is PANIC SELLING (buy opportunity) or a FALLING KNIFE (avoid).
+      ? `You are a crash-hypothesis validator for an automated trading system. Test the hypothesis: "This drawdown is PANIC SELLING (buy opportunity), not a FALLING KNIFE."
 ${timingContext}
 
-Respond with ONLY a JSON object.
+1. THINK through the crash setup — is this capitulation or structural breakdown?
+2. SEARCH X for any breaking news, delistings, or exploit reports about this coin
+3. Evaluate whether the drawdown is overdone relative to the catalyst
+4. List specific conditions that would INVALIDATE this hypothesis (e.g., exchange delisting, continued selling volume, broken support levels)
+
+Respond with ONLY a JSON object. contradictions must list reasons NOT to buy. invalidation_criteria must list conditions that should trigger an immediate exit.
 JSON: ${jsonSchema}`
       : isDipBuy
-      ? `You are a mean-reversion specialist for crypto dip buying. Strategy: ${strategyMode}.
+      ? `You are a dip-hypothesis validator for an automated trading system. Strategy: ${strategyMode}. Test the hypothesis: "This dip is a mean-reversion opportunity, not the start of a larger decline."
 
 1. THINK through whether this dip is a buying opportunity or start of a larger decline
 2. SEARCH X for any breaking news or negative catalysts about this coin
 3. Evaluate whether the dip is structural or fundamental
+4. List specific conditions that would INVALIDATE this hypothesis (e.g., high-timeframe trend reversal, negative funding rates, whale dumping)
 ${timingContext}
 
-Respond with ONLY a JSON object.
+Respond with ONLY a JSON object. contradictions must list reasons NOT to buy. invalidation_criteria must list conditions that should trigger an immediate exit.
 JSON: ${jsonSchema}`
-      : `You are a crypto trading risk analyst with access to real-time X/Twitter data and web search. Strategy: ${strategyMode}.
+      : `You are a hypothesis validator for an automated trading system with access to real-time X/Twitter data and web search. Strategy: ${strategyMode}. Test the hypothesis: "This technical setup will produce a profitable trade within the expected time horizon."
 
 1. THINK through the technical setup step by step
 2. SEARCH X for any breaking news, hacks, or sentiment shifts
 3. Evaluate risk-reward and momentum
+4. List specific conditions that would INVALIDATE this hypothesis (e.g., resistance rejection, volume divergence, adverse news catalyst)
 ${timingContext}
 
-Respond with ONLY a JSON object.
+Respond with ONLY a JSON object. contradictions must list reasons NOT to trade. invalidation_criteria must list conditions that should trigger an immediate exit.
 JSON: ${jsonSchema}`;
 
     const tpDistancePct = signal.entry_price > 0
