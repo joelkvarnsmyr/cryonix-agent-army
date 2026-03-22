@@ -37,10 +37,10 @@ interface WeightEntry {
 }
 
 const BULLISH_WEIGHTS: Record<string, WeightEntry> = {
-    'DEEP_VALUE_CRASH':        { weight: 'cryonix_deep_value',          minField: 'confidence', minValue: 75 },
-    'DIP_BUY':                 { weight: 'cryonix_dip_buy',             minField: 'confidence', minValue: 70 },
-    'BOLLINGER_SQUEEZE':       { weight: 'cryonix_bollinger',           minField: 'confidence', minValue: 65 },
-    'RSI_OVERSOLD':            { weight: 'cryonix_bollinger',           minField: 'confidence', minValue: 65 },
+    'DEEP_VALUE_CRASH':        { weight: 'cryonix_deep_value',          minField: 'confidence', minValue: 0.75 },
+    'DIP_BUY':                 { weight: 'cryonix_dip_buy',             minField: 'confidence', minValue: 0.70 },
+    'BOLLINGER_SQUEEZE':       { weight: 'cryonix_bollinger',           minField: 'confidence', minValue: 0.65 },
+    'RSI_OVERSOLD':            { weight: 'cryonix_bollinger',           minField: 'confidence', minValue: 0.65 },
     'whale_buy':               { weight: 'copynix_single_whale',        minField: 'score',      minValue: 80 },
     'ecosystem_bullish':       { weight: 'copynix_single_whale',        minField: 'confidence', minValue: 50 },
     'sentiment_shift_bullish': { weight: 'polymarket_sentiment_shift' },
@@ -59,8 +59,8 @@ const BULLISH_WEIGHTS: Record<string, WeightEntry> = {
 const BEARISH_WEIGHTS: Record<string, WeightEntry> = {
     'venus_rx':                { weight: 'vedic_venus_rx' },
     'mercury_rx':              { weight: 'vedic_venus_rx' },
-    'RSI_OVERBOUGHT':          { weight: 'cryonix_rsi_overbought',      minField: 'confidence', minValue: 70 },
-    'MACD_BEARISH_CROSS':      { weight: 'cryonix_macd_bearish',        minField: 'confidence', minValue: 65 },
+    'RSI_OVERBOUGHT':          { weight: 'cryonix_rsi_overbought',      minField: 'confidence', minValue: 0.70 },
+    'MACD_BEARISH_CROSS':      { weight: 'cryonix_macd_bearish',        minField: 'confidence', minValue: 0.65 },
     'sentiment_shift_bearish': { weight: 'polymarket_sentiment_falling' },
     'multi_retrograde':        { weight: 'cmc_fear_greed_dropping' },
     'btc_dom':                 { weight: 'cmc_btc_dom_rising' },
