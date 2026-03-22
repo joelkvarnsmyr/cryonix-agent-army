@@ -139,21 +139,14 @@ export function scoreOpportunities(
             return true;
         });
 
-        // Dedup: count max 1 signal per source × signalType to prevent
-        // inflated scores from repeated scans of the same indicator.
-        const seen = new Set<string>();
-
         // ── Bullish score ──────────────────────────────────────────────
         let bullishScore = 0;
         const bullishContributors: NormalizedSignal[] = [];
         for (const sig of combined) {
             if (sig.direction !== 'bullish') continue;
-            const dedupKey = `${sig.source}:${sig.signalType}`;
-            if (seen.has(dedupKey)) continue;
             const entry = BULLISH_WEIGHTS[sig.signalType];
             if (!entry) continue;
             if (!meetsThreshold(sig, entry)) continue;
-            seen.add(dedupKey);
             const w = weights[entry.weight] ?? 0;
             bullishScore += w;
             bullishContributors.push(sig);
@@ -165,12 +158,9 @@ export function scoreOpportunities(
         for (const sig of combined) {
             if (sig.direction !== 'bearish') continue;
             if (sig.signalType === 'orakel_vol_spike') continue; // handled separately
-            const dedupKey = `${sig.source}:${sig.signalType}`;
-            if (seen.has(dedupKey)) continue;
             const entry = BEARISH_WEIGHTS[sig.signalType];
             if (!entry) continue;
             if (!meetsThreshold(sig, entry)) continue;
-            seen.add(dedupKey);
             const w = weights[entry.weight] ?? 0;
             bearishScore += w;
             bearishContributors.push(sig);
