@@ -53,7 +53,7 @@ def compute_alpha_decay(pg, r):
         SELECT snapshot_date, patterns
         FROM calibration_history
         WHERE run_type = 'pattern_ev'
-          AND snapshot_date > NOW() - INTERVAL '30 days'
+          AND snapshot_date::date > NOW() - INTERVAL '30 days'
         ORDER BY snapshot_date DESC
         LIMIT %s
     """, (ALPHA_DECAY_PERIODS,))
@@ -65,9 +65,18 @@ def compute_alpha_decay(pg, r):
 
     # Extract EV per pattern per snapshot
     pattern_evs = {}  # pattern -> [(date, ev)]
-    for snapshot_date, patterns_json in rows:
+    for snapshot_date_raw, patterns_json in rows:
         if not patterns_json:
             continue
+        # Parse snapshot_date (may be string or date)
+        if isinstance(snapshot_date_raw, str):
+            try:
+                snapshot_date = datetime.strptime(snapshot_date_raw[:10], '%Y-%m-%d')
+            except ValueError:
+                continue
+        else:
+            snapshot_date = snapshot_date_raw
+
         patterns = patterns_json if isinstance(patterns_json, dict) else json.loads(patterns_json)
         for pattern_key, stats in patterns.items():
             ev = stats.get('ev', 0)
@@ -87,7 +96,10 @@ def compute_alpha_decay(pg, r):
         oldest_date, oldest_ev = data_points[0]
         newest_date, newest_ev = data_points[-1]
 
-        days_between = max((newest_date - oldest_date).days, 1)
+        try:
+            days_between = max(abs((newest_date - oldest_date).days), 1)
+        except TypeError:
+            days_between = 14  # fallback
 
         # Absolute decay
         ev_change = newest_ev - oldest_ev
