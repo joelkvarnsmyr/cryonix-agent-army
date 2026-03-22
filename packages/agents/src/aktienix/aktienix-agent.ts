@@ -323,6 +323,66 @@ export class AktienixAgent extends BaseAgent {
                     // Sync missing trades from Alpaca (catch unlogged sells)
                     try { await this.syncMissingTrades(); } catch { /* non-critical */ }
 
+                    // Emergency SL check during extended hours
+                    // Only triggers on catastrophic drops (1.5x normal SL = -4.5% for 3% SL)
+                    // Alpaca supports extended-hours market orders
+                    if (this.brokerClient && this.positions.length > 0) {
+                        const slPct = config.exits.stop_loss_pct ?? 3.0;
+                        const extendedSlPct = slPct * 1.5; // Wider for extended hours (lower liquidity)
+
+                        for (const pos of this.positions) {
+                            const pnlPct = pos.avgEntryPrice > 0
+                                ? ((pos.currentPrice - pos.avgEntryPrice) / pos.avgEntryPrice) * 100 : 0;
+
+                            if (pnlPct <= -extendedSlPct) {
+                                this.log('warn', `[EXTENDED-HOURS SL] ${pos.symbol} at ${pnlPct.toFixed(2)}% (threshold: -${extendedSlPct.toFixed(1)}%) — emergency sell`);
+                                try {
+                                    const result = await this.brokerClient.submitOrder({
+                                        symbol: pos.symbol,
+                                        action: 'SELL',
+                                        qty: pos.qty,
+                                        orderType: 'MARKET',
+                                    });
+                                    if (result.success) {
+                                        this.riskManager.recordExit(pos.unrealizedPl);
+                                        this.exitMonitor.clearPosition(pos.symbol);
+                                        await this.tradeLogger.logTrade({
+                                            symbol: pos.symbol, side: 'SELL', qty: pos.qty,
+                                            fillPrice: pos.currentPrice,
+                                            dollarAmount: pos.qty * pos.currentPrice,
+                                            realizedPnl: pos.unrealizedPl,
+                                            exitReason: 'extended_hours_sl',
+                                            orderId: result.orderId,
+                                        });
+                                        await this.bayesianUpdater.updatePosterior({
+                                            pattern: 'extended_hours_sl', symbol: pos.symbol,
+                                            pnlPct, exitReason: 'extended_hours_sl',
+                                        });
+                                        // AI analysis
+                                        try {
+                                            await this.tradeAnalyst?.analyzeExit({
+                                                symbol: pos.symbol, side: 'SELL', qty: pos.qty,
+                                                entryPrice: pos.avgEntryPrice, exitPrice: pos.currentPrice,
+                                                pnlPct, exitReason: 'extended_hours_sl',
+                                                holdingDays: 0,
+                                            });
+                                        } catch { }
+                                        this.log('warn', `[EXTENDED-HOURS SL] ${pos.symbol} sold successfully`);
+                                    }
+                                } catch (err: any) {
+                                    this.log('error', `[EXTENDED-HOURS SL] Failed to sell ${pos.symbol}: ${err.message}`);
+                                }
+                            }
+                        }
+                        // Refresh positions after potential sells
+                        if (this.positions.some(p => {
+                            const pnl = p.avgEntryPrice > 0 ? ((p.currentPrice - p.avgEntryPrice) / p.avgEntryPrice) * 100 : 0;
+                            return pnl <= -extendedSlPct;
+                        })) {
+                            this.positions = await this.brokerClient.getPositions();
+                        }
+                    }
+
                     const _pms = config.timing.poll_interval_ms;
                     const _tick = 250;
                     for (let _e = 0; _e < _pms && this.isTrading; _e += _tick) {
