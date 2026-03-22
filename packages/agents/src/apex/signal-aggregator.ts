@@ -518,8 +518,10 @@ export class SignalAggregator {
         const symbols = [...symbolSet];
         const pipe = this.redis.pipeline();
         for (const sym of symbols) {
-            pipe.get(`orakel:${sym}:direction`);
-            pipe.get(`orakel:${sym}:fused`);
+            // ORAKEL keys use BTC_USDC format, not BTC
+            const orakelSym = `${sym}_USDC`;
+            pipe.get(`orakel:${orakelSym}:direction`);
+            pipe.get(`orakel:${orakelSym}:fused`);
         }
 
         const results = await pipe.exec();
