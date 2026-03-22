@@ -29,6 +29,7 @@ export interface ManipulationSignal {
   id: string;
   type: ManipulationType;
   symbol: string;
+  exchange: string;              // which exchange detected this signal
   confidence: number;
   phase: PumpPhase;
   shill_activity: ShillActivity[];
@@ -48,6 +49,7 @@ export interface ManipulationSignal {
 export interface HunterPosition {
   id: string;
   symbol: string;
+  exchange: string;              // which exchange this position is on
   entry_price: number;
   current_price: number;
   size_usd: number;
@@ -237,6 +239,7 @@ export interface HuntrixConfig {
     alert_on_circuit_breaker: boolean;
   };
   brain: HuntrixBrainConfig;
+  exchanges: ExchangeConfig[];
 }
 
 // ── Brain ──────────────────────────────────────────────────────
@@ -256,4 +259,44 @@ export interface HuntrixBrainConfig {
   scheduled_hours: number[];
   acute_consecutive_losses: number;
   acute_daily_loss_pct: number;
+}
+
+// ── Multi-Exchange ────────────────────────────────────────────────
+
+export interface ExchangeConfig {
+  id: string;                      // CCXT exchange id: 'binance', 'bybit', 'mexc'
+  enabled: boolean;
+  role: 'scan' | 'trade' | 'scan+trade';
+  api_key_env: string;             // env var name, NOT the actual key
+  secret_env: string;
+  password_env?: string;           // OKX, KuCoin, Bitget require passphrase
+  priority: number;                // 1 = highest (prefer for execution)
+}
+
+// ── Pump Profiling ────────────────────────────────────────────────
+
+export interface PumpProfile {
+  id: string;
+  symbol: string;
+  exchange: string;
+  detected_at: number;
+  detection_phase: PumpPhase;
+  source: ManipulationSignal['source'];
+  price_at_detection: number;
+  peak_price: number;
+  peak_minutes: number;
+  dump_start_price: number;
+  duration_minutes: number;
+  dump_velocity_pct_per_min: number;
+  volume_spike_ratio: number;
+  was_traded: boolean;
+  pnl_pct: number | null;
+}
+
+export interface PumpStats {
+  exchange: string;
+  median_peak_minutes: number;
+  median_duration_minutes: number;
+  median_dump_velocity: number;
+  sample_count: number;
 }
