@@ -248,6 +248,25 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
       }
     } catch { /* ignore scanner errors */ }
 
+    // === Read edge metrics for mutation discipline ===
+    let edgeMetrics = {};
+    try {
+      const [alphaDecay, killRate, mutationFitness, ecr] = await Promise.all([
+        this.redis.get('metrics:alpha_decay'),
+        this.redis.get('metrics:kill_rate'),
+        this.redis.get('metrics:mutation_fitness'),
+        this.redis.get('metrics:ecr'),
+      ]);
+      edgeMetrics = { alphaDecay, killRate, mutationFitness, ecr };
+      console.log('\n📐 Edge Metrics:');
+      console.log(`   Alpha Decay: ${alphaDecay ? 'loaded' : 'unavailable'}`);
+      console.log(`   Kill Rate: ${killRate ? 'loaded' : 'unavailable'}`);
+      console.log(`   Mutation Fitness: ${mutationFitness ? 'loaded' : 'unavailable'}`);
+      console.log(`   ECR: ${ecr ? 'loaded' : 'unavailable'}`);
+    } catch (e) {
+      console.warn(`⚠️  Could not read edge metrics: ${e.message}`);
+    }
+
     // Check if evolution is needed
     if (totalTrades < CONFIG.MIN_TRADES_FOR_ANALYSIS) {
       console.log(`⚠️  Insufficient trades (${totalTrades} < ${CONFIG.MIN_TRADES_FOR_ANALYSIS}). Skipping evolution.`);
@@ -311,6 +330,7 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
       scannerDiagnostic,
       structuralIssues,
       diagnostics,
+      edgeMetrics,
     };
   }
 
@@ -465,7 +485,7 @@ Volume surges: ${volSurges.map(v => `${v.symbol} ${v.vol_ratio.toFixed(1)}x`).jo
 
     const { weakestPattern, weakestPnl, totalPnl, totalTrades, patterns,
             exitAnalysis, tradeFrequency, openPositions, scannerDiagnostic,
-            structuralIssues } = performanceData;
+            structuralIssues, edgeMetrics } = performanceData;
 
     const patternBreakdown = patterns.map(p =>
       `- ${p.pattern}: ${p.trade_count} trades, $${parseFloat(p.total_pnl).toFixed(2)} P&L, ` +
@@ -551,6 +571,14 @@ These come from the AI Brain's analysis of trading performance data.`;
       }
     } catch {}
 
+    // Build edge metrics section for mutation discipline
+    const metricsContext = edgeMetrics ? `
+## Edge Metrics (use for mutation discipline)
+- Alpha Decay: ${edgeMetrics.alphaDecay || 'unavailable'}
+- Kill Rate: ${edgeMetrics.killRate || 'unavailable'}
+- Mutation Fitness: ${edgeMetrics.mutationFitness || 'unavailable'}
+- ECR: ${edgeMetrics.ecr || 'unavailable'}` : '';
+
     // Build structural issues section
     const issuesSection = structuralIssues?.length > 0 ? `
 ## ⚡ STRUCTURAL ISSUES DETECTED
@@ -570,6 +598,24 @@ Analyze the performance data below, identify the most impactful issue, and make 
 3. After editing, run: python3 scripts/evolution/verify_deep_value.py && python3 scripts/evolution/verify_grid.py
 4. Focus on EXIT strategy — historically our entries are better than our exits.
 5. If a pattern has negative EV, raise its confidence threshold.
+
+## Mutation Discipline (check before proposing changes)
+
+Before proposing ANY mutation, verify these pre-conditions:
+
+1. **MFS Check:** Read metrics:mutation_fitness from Redis context.
+   If 2 of the last 3 mutations degraded Sharpe → DO NOT MUTATE. Report "mutation pause recommended" and exit.
+
+2. **αD Check:** For the target pattern, read metrics:alpha_decay.
+   If αD slope < -0.005 → DISABLE the pattern entirely. Do not try to optimize parameters for a pattern with declining edge.
+
+3. **KR Check:** Read metrics:kill_rate.
+   If KR > 40% for a specific conviction gate → LOOSEN that gate (increase threshold, widen range). Don't tighten filters that are already killing profitable hypotheses.
+
+4. **Impact Prediction:** Before applying, predict the expected impact:
+   - Will this increase or decrease ECR?
+   - Does this address a root cause or a symptom?
+   If expected ECR impact is negative or unclear, log the proposal but do NOT apply.
 
 ## Analysis Priority
 1. STRUCTURAL ISSUES (SL too tight, trailing stop killing profits, over-trading)
@@ -598,6 +644,7 @@ ${calibrationSection}
 ${sentimentSection}
 ${issuesSection}
 ${directivesSection}
+${metricsContext}
 
 ## Open Positions
 ${openPositions?.map(p => `- ${p.symbol} entry=$${p.entry} pattern=${p.pattern}`).join('\n') || 'None'}
