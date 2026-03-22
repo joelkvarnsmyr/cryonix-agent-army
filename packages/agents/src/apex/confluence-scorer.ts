@@ -39,6 +39,8 @@ interface WeightEntry {
 const BULLISH_WEIGHTS: Record<string, WeightEntry> = {
     'DEEP_VALUE_CRASH':        { weight: 'cryonix_deep_value',          minField: 'confidence', minValue: 75 },
     'DIP_BUY':                 { weight: 'cryonix_dip_buy',             minField: 'confidence', minValue: 70 },
+    'BOLLINGER_SQUEEZE':       { weight: 'cryonix_bollinger',           minField: 'confidence', minValue: 65 },
+    'RSI_OVERSOLD':            { weight: 'cryonix_bollinger',           minField: 'confidence', minValue: 65 },
     'whale_buy':               { weight: 'copynix_single_whale',        minField: 'score',      minValue: 80 },
     'ecosystem_bullish':       { weight: 'copynix_single_whale',        minField: 'confidence', minValue: 50 },
     'sentiment_shift_bullish': { weight: 'polymarket_sentiment_shift' },

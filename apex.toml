@@ -14,6 +14,7 @@ min_score_half_kelly = 35
 vedic_venus_rx = 40
 cryonix_deep_value = 30
 cryonix_dip_buy = 25
+cryonix_bollinger = 15
 copynix_single_whale = 25
 polymarket_sentiment_shift = 15
 cmc_extreme_fear = 15
