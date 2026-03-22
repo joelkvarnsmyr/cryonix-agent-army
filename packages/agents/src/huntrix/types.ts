@@ -236,4 +236,24 @@ export interface HuntrixConfig {
     alert_on_exit: boolean;
     alert_on_circuit_breaker: boolean;
   };
+  brain: HuntrixBrainConfig;
+}
+
+// ── Brain ──────────────────────────────────────────────────────
+
+export interface BrainAction {
+  type: 'adjust_param' | 'force_exit' | 'restart_runner';
+  param?: string;       // dot-path e.g. 'exits.stop_loss_pct'
+  old_value?: number;
+  new_value?: number;
+  symbol?: string;      // for force_exit
+  reasoning: string;
+}
+
+export interface HuntrixBrainConfig {
+  enabled: boolean;
+  cooldown_minutes: number;
+  scheduled_hours: number[];
+  acute_consecutive_losses: number;
+  acute_daily_loss_pct: number;
 }
