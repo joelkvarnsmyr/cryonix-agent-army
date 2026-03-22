@@ -487,7 +487,7 @@ deep_value_rug_pull_velocity = 20.0
 # Trend-only signals (MACD+EMA without a dip) are rejected.
 # Backtest data: DIP_BUY+DV = 80-100% WR, MACD+EMA alone = 0-25% WR.
 # When to change: set false to return to normal (all patterns allowed).
-dip_focus_mode = false
+dip_focus_mode = true
 
 # Consensus gate: minimum number of confirming patterns required.
 # 2 = require 2+ patterns (strict, fewer signals, higher quality combos)
@@ -508,7 +508,7 @@ trending_adx_threshold = 30
 # Single-pattern signals matching these are rejected before AI validation.
 # Data: RSI_OVERSOLD solo → 33% WR, EMA_BULLISH_CROSS solo → 0% WR.
 # When to change: add/remove patterns based on calibration data.
-weak_solo_patterns = ["RSI_OVERSOLD", "EMA_BULLISH_CROSS", "MACD_BULLISH_CROSS"]
+weak_solo_patterns = ["RSI_OVERSOLD", "EMA_BULLISH_CROSS", "MACD_BULLISH_CROSS", "BOLLINGER_SQUEEZE"]
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
