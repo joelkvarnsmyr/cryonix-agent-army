@@ -1,4 +1,5 @@
 import Redis from 'ioredis';
+import { Client as PgClient } from 'pg';
 import { loadApexConfig, type ApexTomlConfig } from './config';
 import { SignalAggregator, type AggregatorSnapshot } from './signal-aggregator';
 import { scoreOpportunities, type ScoredOpportunity } from './confluence-scorer';
@@ -18,6 +19,7 @@ interface GrokCacheEntry {
 
 export class ApexAgent {
     private redis!: Redis;
+    private pg: PgClient | null = null;
     private config!: ApexTomlConfig;
     private aggregator!: SignalAggregator;
     private riskGate!: RiskGate;
@@ -91,6 +93,43 @@ export class ApexAgent {
             console.warn('[APEX] Could not restore stats:', err instanceof Error ? err.message : err);
         }
 
+        // Postgres trade persistence
+        const pgUrl = process.env.POSTGRES_URL;
+        if (pgUrl) {
+            try {
+                this.pg = new PgClient({ connectionString: pgUrl });
+                await this.pg.connect();
+                await this.pg.query(`
+                    CREATE TABLE IF NOT EXISTS apex_trades (
+                        id SERIAL PRIMARY KEY,
+                        symbol VARCHAR(20) NOT NULL,
+                        direction VARCHAR(10) NOT NULL,
+                        entry_price DECIMAL(20,8),
+                        exit_price DECIMAL(20,8),
+                        size_usd DECIMAL(20,8),
+                        quantity DECIMAL(20,8),
+                        pnl DECIMAL(20,8),
+                        pnl_pct DECIMAL(10,4),
+                        entry_reason TEXT,
+                        exit_reason TEXT,
+                        mode VARCHAR(20),
+                        status TEXT DEFAULT 'open',
+                        entered_at TIMESTAMPTZ DEFAULT NOW(),
+                        exited_at TIMESTAMPTZ,
+                        metadata JSONB
+                    )
+                `);
+                await this.pg.query(`CREATE INDEX IF NOT EXISTS idx_apex_trades_symbol ON apex_trades (symbol)`);
+                await this.pg.query(`CREATE INDEX IF NOT EXISTS idx_apex_trades_entered_at ON apex_trades (entered_at)`);
+                console.log('[APEX] Postgres connected — apex_trades table ready.');
+            } catch (err) {
+                console.warn('[APEX] Postgres connection failed — trades will not be persisted:', err instanceof Error ? err.message : err);
+                this.pg = null;
+            }
+        } else {
+            console.warn('[APEX] No POSTGRES_URL — trade persistence disabled.');
+        }
+
         // CCXT (price data only)
         const ccxtMod = await import('ccxt');
         this.ccxt = new ccxtMod.binance({ enableRateLimit: true });
@@ -133,6 +172,7 @@ export class ApexAgent {
             console.warn('[APEX] Could not publish final state:', err instanceof Error ? err.message : err);
         }
         await this.redis?.quit();
+        await this.pg?.end();
         console.log('[APEX] Stopped.');
     }
 
@@ -215,6 +255,23 @@ export class ApexAgent {
             if (pnl > 0) this.winCount++;
 
             console.log(`[APEX] EXIT ${pos.symbol} ${pos.direction} — ${exitDecision.reason} — PnL: ${pnl.toFixed(2)} USDC (${exitDecision.pnlPct.toFixed(2)}%)`);
+
+            // Persist exit to Postgres
+            if (this.pg) {
+                try {
+                    await this.pg.query(
+                        `UPDATE apex_trades SET exit_price = $1, pnl = $2, pnl_pct = $3, exit_reason = $4, status = 'closed', exited_at = NOW()
+                         WHERE id = (
+                             SELECT id FROM apex_trades
+                             WHERE status = 'open' AND symbol = $5 AND direction = $6
+                             ORDER BY entered_at DESC LIMIT 1
+                         )`,
+                        [pos.currentPrice, pnl, exitDecision.pnlPct, exitDecision.reason, pos.symbol, pos.direction],
+                    );
+                } catch (err) {
+                    console.warn('[APEX] Postgres UPDATE failed:', err instanceof Error ? err.message : err);
+                }
+            }
 
             if (this.config.telegram.alert_on_exit) {
                 const emoji = pnl > 0 ? '✅' : '❌';
@@ -320,6 +377,36 @@ export class ApexAgent {
         this.positions.push(position);
         await this.persistAll();
 
+        // Persist entry to Postgres
+        if (this.pg) {
+            try {
+                await this.pg.query(
+                    `INSERT INTO apex_trades (symbol, direction, entry_price, size_usd, quantity, entry_reason, mode, metadata)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                    [
+                        opp.symbol,
+                        direction,
+                        currentPrice,
+                        size,
+                        quantity,
+                        `confluence:${opp.mode} score=${opp.score}`,
+                        opp.mode,
+                        JSON.stringify({
+                            positionId: position.id,
+                            confluenceScore: opp.score,
+                            contributingSignals: opp.contributingSignals.map(s => ({
+                                source: s.source,
+                                signalType: s.signalType,
+                                confidence: s.confidence,
+                            })),
+                        }),
+                    ],
+                );
+            } catch (err) {
+                console.warn('[APEX] Postgres INSERT failed:', err instanceof Error ? err.message : err);
+            }
+        }
+
         console.log(`[APEX] ENTRY ${opp.symbol} ${opp.direction} ${opp.mode} — score: ${opp.score} — size: $${size.toFixed(2)} — price: ${currentPrice}`);
 
         if (this.config.telegram.alert_on_entry) {
@@ -340,7 +427,7 @@ export class ApexAgent {
     private async validateWithGrok(opp: ScoredOpportunity): Promise<boolean> {
         if (!this.xai || !this.config.grok.enabled) return false;
 
-        const cacheKey = `${opp.symbol}:${opp.direction}`;
+        const cacheKey = `${opp.symbol}:${opp.direction}:${opp.mode}`;
         const cacheTtlMs = this.config.grok.cache_ttl_seconds * 1000;
         const now = Date.now();
 

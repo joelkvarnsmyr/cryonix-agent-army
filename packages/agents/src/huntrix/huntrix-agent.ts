@@ -596,8 +596,8 @@ export class HuntrixAgent {
 
         try {
             await Promise.all([
-                this.redis.setex('huntrix:state', 600, JSON.stringify(state)),
-                this.redis.setex('huntrix:risk', 600, JSON.stringify({
+                this.redis.setex('huntrix:state', 3600, JSON.stringify(state)),
+                this.redis.setex('huntrix:risk', 3600, JSON.stringify({
                     dailyPnl: this.dailyPnl,
                     consecutiveLosses: this.consecutiveLosses,
                     cooldownUntil: this.cooldownUntil,
@@ -613,7 +613,7 @@ export class HuntrixAgent {
 
     private async persistPositions(): Promise<void> {
         try {
-            await this.redis.setex('huntrix:positions', 600, JSON.stringify(this.positions));
+            await this.redis.setex('huntrix:positions', 3600, JSON.stringify(this.positions));
         } catch { /* non-critical */ }
     }
 
