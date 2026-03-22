@@ -32,9 +32,10 @@ export class EntryValidator {
         this.goplusScanner = new GoPlusScanner(redis);
     }
 
-    async validate(signal: ManipulationSignal): Promise<EntryValidation> {
+    async validate(signal: ManipulationSignal, exchangeOverride?: any): Promise<EntryValidation> {
         const reasons: string[] = [];
         let approved = true;
+        const exchange = exchangeOverride ?? this.exchange;
 
         // Defensive blacklist check
         try {
@@ -75,7 +76,7 @@ export class EntryValidator {
         // Fetch live market data
         let ticker: TickerData;
         try {
-            ticker = await this.exchange.fetchTicker(signal.symbol);
+            ticker = await exchange.fetchTicker(signal.symbol);
         } catch (err) {
             reasons.push(`Failed to fetch ticker for ${signal.symbol}: ${err}`);
             return { approved: false, reasons, signal, live_price: 0, live_volume: 0 };
@@ -97,7 +98,7 @@ export class EntryValidator {
 
         // Volume spike & price velocity from OHLCV
         try {
-            const ohlcv = await this.exchange.fetchOHLCV(signal.symbol, '1m', undefined, 15);
+            const ohlcv = await exchange.fetchOHLCV(signal.symbol, '1m', undefined, 15);
             if (ohlcv && ohlcv.length >= 10) {
                 const len = ohlcv.length;
                 const recentCandles = ohlcv.slice(0, len - 1);
