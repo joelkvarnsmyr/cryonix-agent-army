@@ -2631,7 +2631,9 @@ async function postTradeAnalysis(
 
 async function logPhantomRejection(signal: Signal, reason: string): Promise<void> {
   try {
-    await redis.lpush('phantom:rejected', JSON.stringify({
+    // Don't trim here — let checkPhantomResults() handle cleanup after checking.
+    // Just append (rpush = oldest at index 0, newest at end).
+    await redis.rpush('phantom:rejected', JSON.stringify({
       symbol: signal.symbol,
       entryPrice: signal.entry_price,
       confidence: signal.confidence,
@@ -2639,7 +2641,11 @@ async function logPhantomRejection(signal: Signal, reason: string): Promise<void
       reason: reason.slice(0, 80),
       rejectedAt: Date.now(),
     }));
-    await redis.ltrim('phantom:rejected', 0, 499);
+    // Safety cap: prevent unbounded growth (keep last 2000 entries)
+    const len = await redis.llen('phantom:rejected');
+    if (len > 2000) {
+      await redis.ltrim('phantom:rejected', len - 2000, -1);
+    }
   } catch { /* non-critical */ }
 }
 
