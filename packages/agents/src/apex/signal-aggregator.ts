@@ -89,6 +89,10 @@ export class SignalAggregator {
         const momentaryMs = this.config.staleness.momentary_seconds * 1000;
         const ambientMs = this.config.staleness.ambient_seconds * 1000;
 
+        // Normalize timestamps: some sources use Unix seconds, others milliseconds.
+        // If a timestamp is < 1e12 it's seconds — convert to ms.
+        const toMs = (ts: number): number => ts < 1e12 ? ts * 1000 : ts;
+
         // ── Build pipeline ─────────────────────────────────────────────
         const pipe = this.redis.pipeline();
         pipe.lrange('trades:pending', 0, -1);  // 0: CRYONIX (LIST, not string!)
@@ -127,7 +131,7 @@ export class SignalAggregator {
                     try {
                         const e = JSON.parse(rawEntry) as Record<string, unknown>;
                         const ts = (e.timestamp as number) ?? now;
-                        if (now - ts > momentaryMs) { hasStale = true; continue; }
+                        if (now - toMs(ts) > momentaryMs) { hasStale = true; continue; }
 
                         const symbol = normalizeSymbol((e.symbol as string) ?? '');
                         const confidence = (e.confidence as number) ?? 0;
@@ -163,7 +167,7 @@ export class SignalAggregator {
                         if (!entry || typeof entry !== 'object') continue;
                         const e = entry as Record<string, unknown>;
                         const ts = (e.timestamp as number) ?? now;
-                        if (now - ts > momentaryMs) { hasStale = true; continue; }
+                        if (now - toMs(ts) > momentaryMs) { hasStale = true; continue; }
                         const score = (e.score as number) ?? 0;
                         if (score < 80) continue;
                         const rawSym = (e.symbol as string) ?? (e.token as string) ?? '';
@@ -188,7 +192,7 @@ export class SignalAggregator {
             const stateRaw = val<string>(SLOT.PSINIX_STATE);
             const stateObj = stateRaw ? JSON.parse(stateRaw) as Record<string, unknown> : null;
             const updatedAt = (stateObj?.updatedAt as number) ?? null;
-            const isStale = updatedAt !== null ? (now - updatedAt > ambientMs) : false;
+            const isStale = updatedAt !== null ? (now - toMs(updatedAt) > ambientMs) : false;
             staleness['psinix'] = isStale;
 
             if (!isStale && stateObj) {
@@ -226,7 +230,7 @@ export class SignalAggregator {
                 const current = JSON.parse(cryptoRaw) as Record<string, unknown>;
                 const currentScore = (current.score as number) ?? 50;
                 const ts = (current.updated_at as number) ?? (current.timestamp as number) ?? now;
-                const isStale = now - ts > ambientMs;
+                const isStale = now - toMs(ts) > ambientMs;
                 staleness['polymarket'] = isStale;
 
                 if (!isStale) {
@@ -267,7 +271,7 @@ export class SignalAggregator {
             if (raw) {
                 const data = JSON.parse(raw) as Record<string, unknown>;
                 const ts = (data.timestamp as number) ?? null;
-                const isStale = ts !== null ? (now - ts > ambientMs) : false;
+                const isStale = ts !== null ? (now - toMs(ts) > ambientMs) : false;
                 staleness['vedic'] = isStale;
 
                 if (!isStale) {
@@ -328,7 +332,7 @@ export class SignalAggregator {
                     value = (parsed.value as number) ?? null;
                     ts = (parsed.timestamp as number) ?? (parsed.updated_at as number) ?? null;
                 }
-                staleness['cmc'] = ts !== null ? (now - ts > ambientMs) : false;
+                staleness['cmc'] = ts !== null ? (now - toMs(ts) > ambientMs) : false;
                 if (!staleness['cmc'] && value !== null && value <= 25) {
                     signals.push({
                         symbol: 'MARKET', direction: 'bullish', source: 'cmc',
@@ -353,7 +357,7 @@ export class SignalAggregator {
                 const data = JSON.parse(raw) as Record<string, unknown>;
                 const btcDom = (data.btc_dominance as number) ?? null;
                 const ts = (data.timestamp as number) ?? (data.updated_at as number) ?? null;
-                const isStale = ts !== null ? (now - ts > ambientMs) : false;
+                const isStale = ts !== null ? (now - toMs(ts) > ambientMs) : false;
                 if (staleness['cmc'] === false || staleness['cmc'] === undefined) staleness['cmc'] = isStale;
 
                 if (!isStale && btcDom !== null) {
@@ -380,7 +384,7 @@ export class SignalAggregator {
                 const data = JSON.parse(raw) as Record<string, unknown>;
                 const positions: unknown[] = Array.isArray(data.positions) ? data.positions as unknown[] : [];
                 const ts = (data.updatedAt as number) ?? (data.timestamp as number) ?? now;
-                staleness['aktienix'] = now - ts > ambientMs;
+                staleness['aktienix'] = now - toMs(ts) > ambientMs;
 
                 if (!staleness['aktienix'] && positions.length > 0) {
                     // Aktienix has open positions → macro bullish sentiment (5pts)
@@ -411,7 +415,7 @@ export class SignalAggregator {
             const ts = statusData
                 ? ((statusData.updated_at as number) ?? (statusData.updatedAt as number) ?? now)
                 : now;
-            staleness['solanix'] = now - ts > momentaryMs;
+            staleness['solanix'] = now - toMs(ts) > momentaryMs;
 
             if (!staleness['solanix']) {
                 // Active positions as momentum signals
@@ -448,7 +452,7 @@ export class SignalAggregator {
                     const regime = JSON.parse(regimeRaw) as Record<string, unknown>;
                     const regimeLabel = (regime.regime as string) ?? (regime.label as string) ?? '';
                     const ts = (regime.timestamp as number) ?? now;
-                    staleness['orakel'] = now - ts > ambientMs;
+                    staleness['orakel'] = now - toMs(ts) > ambientMs;
 
                     if (!staleness['orakel']) {
                         if (regimeLabel === 'bull') {
