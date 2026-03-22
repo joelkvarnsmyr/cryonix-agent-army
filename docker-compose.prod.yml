@@ -325,6 +325,31 @@ services:
         condition: service_healthy
 
   # ============================================================
+  # Docker Socket Proxy — restricted Docker API access
+  # Only allows: container restart (POST /containers/*/restart)
+  # Used by: aktienix-brain, huntrix-brain
+  # ============================================================
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1        # Allow container listing + restart
+      - POST=1              # Allow POST (needed for restart)
+      - IMAGES=0
+      - NETWORKS=0
+      - VOLUMES=0
+      - SERVICES=0
+      - TASKS=0
+      - NODES=0
+      - SWARM=0
+      - BUILD=0
+      - EXEC=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - cryonix-net
+
+  # ============================================================
   # AktienixBrain — Claude Code CLI autonomous portfolio analyst
   # ============================================================
 
@@ -337,7 +362,6 @@ services:
     command: ["npx", "tsx", "scripts/services/aktienix-brain.ts"]
     volumes:
       - ./aktienix.toml:/app/aktienix.toml  # read-write (Brain edits config)
-      - /var/run/docker.sock:/var/run/docker.sock  # for docker restart aktienix
       - ~/.claude:/root/.claude:ro  # Claude Code auth (account login, not API key)
     environment:
       - NODE_ENV=production
@@ -350,6 +374,7 @@ services:
       - ALPACA_API_KEY=${ALPACA_API_KEY:-}
       - ALPACA_API_SECRET=${ALPACA_API_SECRET:-}
       - PROJECT_ROOT=/app
+      - DOCKER_HOST=tcp://docker-proxy:2375
     networks:
       - cryonix-net
     depends_on:
@@ -357,6 +382,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      docker-proxy:
+        condition: service_started
 
   # ============================================================
   # ============================================================
@@ -604,7 +631,6 @@ services:
     restart: unless-stopped
     volumes:
       - ~/.claude:/root/.claude:ro
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./huntrix.toml:/app/huntrix.toml
     environment:
       - NODE_ENV=production
@@ -612,8 +638,10 @@ services:
       - TELEGRAM_INTERACTIVE_BOT_TOKEN=${TELEGRAM_INTERACTIVE_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - PROJECT_ROOT=/app
+      - DOCKER_HOST=tcp://docker-proxy:2375
     depends_on:
       - redis
+      - docker-proxy
     networks:
       - cryonix-net
 
