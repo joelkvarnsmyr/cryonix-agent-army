@@ -140,10 +140,29 @@ export class ApexAgent {
     // tick — main scan cycle
     // -------------------------------------------------------------------------
 
+    private tickCount = 0;
+
     private async tick(): Promise<void> {
         await this.monitorPositions();
         const snapshot = await this.aggregator.snapshot();
         const opportunities = scoreOpportunities(snapshot, this.config);
+
+        // Verbose logging every 60 ticks (~30min at 30s interval)
+        this.tickCount++;
+        if (this.tickCount % 60 === 1 || opportunities.length > 0) {
+            const staleCount = Object.values(snapshot.staleness).filter(Boolean).length;
+            const signalSummary = snapshot.signals.length > 0
+                ? snapshot.signals.map(s => `${s.source}:${s.signalType}(${s.symbol})`).join(', ')
+                : 'none';
+            console.log(
+                `[APEX] tick #${this.tickCount} | signals: ${snapshot.signals.length} | opportunities: ${opportunities.length} | stale: ${staleCount}/9 | positions: ${this.positions.length} | signals: [${signalSummary}]`
+            );
+            if (opportunities.length > 0) {
+                for (const opp of opportunities) {
+                    console.log(`[APEX] >>> ${opp.symbol} ${opp.direction} score=${opp.score} mode=${opp.mode} signals=[${opp.contributingSignals.map(s => s.signalType).join(',')}]`);
+                }
+            }
+        }
 
         for (const opp of opportunities) {
             await this.evaluateAndExecute(opp);
