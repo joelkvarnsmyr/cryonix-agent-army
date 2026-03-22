@@ -95,7 +95,7 @@ export class SignalAggregator {
 
         // ── Build pipeline ─────────────────────────────────────────────
         const pipe = this.redis.pipeline();
-        pipe.lrange('trades:pending', 0, -1);  // 0: CRYONIX (LIST, not string!)
+        pipe.get('signals:broadcast');  // 0: CRYONIX (broadcast key, not consumed queue)
         pipe.get('copynix:signals');          // 1: COPYNIX
         pipe.get('psinix:state');             // 2: PSINIX_STATE
         pipe.get('polymarket:crypto');        // 3: POLY_CRYPTO
@@ -119,18 +119,18 @@ export class SignalAggregator {
             return entry[1] as T | null;
         };
 
-        // ── 1. Cryonix — trades:pending (LIST via LRANGE, momentary) ──
+        // ── 1. Cryonix — signals:broadcast (STRING with JSON array, momentary) ──
         try {
-            // LRANGE returns string[] (each entry is a JSON string)
-            const listEntries = val<string[]>(SLOT.CRYONIX);
-            if (listEntries && listEntries.length > 0) {
+            const raw = val<string>(SLOT.CRYONIX);
+            if (raw) {
+                const entries: unknown[] = JSON.parse(raw);
                 let hasStale = false;
 
-                for (const rawEntry of listEntries) {
-                    if (!rawEntry) continue;
+                for (const entry of entries) {
+                    if (!entry || typeof entry !== 'object') continue;
                     try {
-                        const e = JSON.parse(rawEntry) as Record<string, unknown>;
-                        const ts = (e.timestamp as number) ?? now;
+                        const e = entry as Record<string, unknown>;
+                        const ts = (e._ts as number) ?? (e.timestamp as number) ?? now / 1000;
                         if (now - toMs(ts) > momentaryMs) { hasStale = true; continue; }
 
                         const symbol = normalizeSymbol((e.symbol as string) ?? '');
@@ -141,11 +141,11 @@ export class SignalAggregator {
                             signals.push({
                                 symbol, direction: 'bullish', source: 'cryonix',
                                 signalType: String(pattern).toUpperCase(),
-                                confidence, score: confidence, timestamp: ts,
+                                confidence, score: confidence, timestamp: toMs(ts),
                                 temporality: 'momentary', raw: e,
                             });
                         }
-                    } catch { /* skip malformed list entry */ }
+                    } catch { /* skip malformed entry */ }
                 }
                 staleness['cryonix'] = hasStale && signals.filter(s => s.source === 'cryonix').length === 0;
             } else {
