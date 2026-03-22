@@ -85,6 +85,32 @@ export const HUNTRIX_DEFAULTS: HuntrixConfig = {
     acute_consecutive_losses: 2,
     acute_daily_loss_pct: 10.0,
   },
+  exchanges: [
+    {
+      id: 'binance',
+      enabled: true,
+      role: 'scan+trade' as const,
+      api_key_env: 'BINANCE_API_KEY',
+      secret_env: 'BINANCE_API_SECRET',
+      priority: 1,
+    },
+    {
+      id: 'bybit',
+      enabled: true,
+      role: 'scan+trade' as const,
+      api_key_env: 'BYBIT_API_KEY',
+      secret_env: 'BYBIT_API_SECRET',
+      priority: 2,
+    },
+    {
+      id: 'mexc',
+      enabled: true,
+      role: 'scan+trade' as const,
+      api_key_env: 'MEXC_API_KEY',
+      secret_env: 'MEXC_API_SECRET',
+      priority: 3,
+    },
+  ],
 };
 
 export function loadHuntrixConfig(filePath?: string): HuntrixConfig {
@@ -108,6 +134,17 @@ export function loadHuntrixConfig(filePath?: string): HuntrixConfig {
       timing: { ...HUNTRIX_DEFAULTS.timing, ...parsed.timing },
       telegram: { ...HUNTRIX_DEFAULTS.telegram, ...parsed.telegram },
       brain: { ...HUNTRIX_DEFAULTS.brain, ...parsed.brain },
+      exchanges: (parsed as any).exchanges?.length
+        ? (parsed as any).exchanges.map((ex: any) => ({
+            id: ex.id ?? 'unknown',
+            enabled: ex.enabled ?? true,
+            role: ex.role ?? 'scan+trade',
+            api_key_env: ex.api_key_env ?? '',
+            secret_env: ex.secret_env ?? '',
+            password_env: ex.password_env,
+            priority: ex.priority ?? 99,
+          }))
+        : HUNTRIX_DEFAULTS.exchanges,
     };
   } catch {
     console.warn('[huntrix] Failed to parse huntrix.toml, using defaults');

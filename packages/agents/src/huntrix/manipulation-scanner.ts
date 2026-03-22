@@ -267,6 +267,7 @@ export class ManipulationScanner {
                                 id: `trending-${symbol}-${Date.now()}`,
                                 type: 'wash_trading_pump',
                                 symbol: `${symbol}/USDC`,
+                                exchange: 'unknown',
                                 confidence: Math.min(90, 50 + volumeToMcapRatio * 5),
                                 phase: 'mid_pump',
                                 shill_activity: [],
@@ -368,7 +369,7 @@ export class ManipulationScanner {
     /**
      * Scan order books for spoofing. Requires two calls (snapshot comparison).
      */
-    async scanOrderBook(exchange: any, symbols: string[]): Promise<ManipulationSignal[]> {
+    async scanOrderBook(exchange: any, symbols: string[], exchangeId: string = 'binance'): Promise<ManipulationSignal[]> {
         if (!this.config.scanner.sources.orderbook_spoof_enabled) return [];
 
         const signals: ManipulationSignal[] = [];
@@ -388,6 +389,7 @@ export class ManipulationScanner {
                             id: `spoof-${symbol}-${Date.now()}`,
                             type: 'wash_trading_pump',
                             symbol,
+                            exchange: exchangeId,
                             confidence: Math.min(85, 55 + detection.disappeared_pct / 5),
                             phase: detection.side === 'bid' ? 'early_pump' : 'mid_pump',
                             shill_activity: [],
@@ -441,6 +443,7 @@ export class ManipulationScanner {
                     id: `telegram-cluster-${cluster.symbol}-${Date.now()}`,
                     type: 'coordinated_shill',
                     symbol: cluster.symbol.includes('/') ? cluster.symbol : `${cluster.symbol}/USDC`,
+                    exchange: 'unknown',
                     confidence: Math.min(90, 50 + cluster.channel_count * 10),
                     phase: 'early_pump', // Telegram clusters usually indicate early phase
                     shill_activity: [{
@@ -515,6 +518,7 @@ export class ManipulationScanner {
             id: `x-${campaign.symbol}-${Date.now()}`,
             type: campaign.type,
             symbol: campaign.symbol.includes('/') ? campaign.symbol : `${campaign.symbol}/USDC`,
+            exchange: 'unknown',
             confidence: campaign.confidence,
             phase: campaign.phase,
             shill_activity: [{
