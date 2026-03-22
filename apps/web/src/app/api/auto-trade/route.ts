@@ -2618,6 +2618,83 @@ async function postTradeAnalysis(
 }
 
 // ============================================================================
+// ============================================================================
+// KILL RATE — Shadow-track rejected hypotheses
+// ============================================================================
+
+async function logPhantomRejection(signal: Signal, reason: string): Promise<void> {
+  try {
+    await redis.lpush('phantom:rejected', JSON.stringify({
+      symbol: signal.symbol,
+      entryPrice: signal.entry_price,
+      confidence: signal.confidence,
+      patterns: signal.patterns?.join(', ') || '',
+      reason: reason.slice(0, 80),
+      rejectedAt: Date.now(),
+    }));
+    await redis.ltrim('phantom:rejected', 0, 499);
+  } catch { /* non-critical */ }
+}
+
+async function checkPhantomResults(): Promise<void> {
+  try {
+    const phantoms = await redis.lrange('phantom:rejected', 0, -1);
+    if (phantoms.length === 0) return;
+
+    const ex = getExchange();
+    let checked = 0;
+
+    for (const raw of phantoms) {
+      const phantom = JSON.parse(raw);
+      const age = Date.now() - phantom.rejectedAt;
+      if (age < 4 * 3600_000 || age > 5 * 3600_000) continue;
+
+      try {
+        const ticker = await ex.fetchTicker(phantom.symbol);
+        const priceNow = ticker.last || 0;
+        if (priceNow <= 0) continue;
+
+        const phantomPnlPct = ((priceNow - phantom.entryPrice) / phantom.entryPrice) * 100;
+
+        await redis.lpush('phantom:results', JSON.stringify({
+          symbol: phantom.symbol,
+          pattern: phantom.pattern,
+          reason: phantom.reason,
+          entryPrice: phantom.entryPrice,
+          priceAfter4h: priceNow,
+          phantomPnlPct: Math.round(phantomPnlPct * 100) / 100,
+          wouldHaveWon: phantomPnlPct > 0,
+          rejectedAt: phantom.rejectedAt,
+        }));
+        await redis.ltrim('phantom:results', 0, 199);
+        checked++;
+      } catch { /* ticker unavailable */ }
+
+      if (checked >= 5) break; // Rate limit
+    }
+
+    // Calculate Kill Rate
+    const results = await redis.lrange('phantom:results', 0, -1);
+    if (results.length >= 10) {
+      const parsed = results.map(r => JSON.parse(r));
+      const profitable = parsed.filter(r => r.wouldHaveWon).length;
+      const killRate = (profitable / parsed.length) * 100;
+      await redis.set('metrics:kill_rate', JSON.stringify({
+        killRate: Math.round(killRate * 10) / 10,
+        profitable,
+        total: parsed.length,
+        avgPhantomPnl: Math.round(parsed.reduce((s, r) => s + r.phantomPnlPct, 0) / parsed.length * 100) / 100,
+        timestamp: Date.now(),
+      }), 'EX', 86400);
+
+      if (checked > 0) {
+        console.log(`[KILL-RATE] ${killRate.toFixed(1)}% of rejected hypotheses were profitable (${profitable}/${parsed.length})`);
+      }
+    }
+  } catch { /* non-critical */ }
+}
+
+// ============================================================================
 // ATR CACHE (for Dynamic SL — V2 Gap 4)
 // ============================================================================
 
@@ -3692,6 +3769,7 @@ export async function POST() {
         } else {
           await redis.lrem('trades:pending', 1, raw);
           rejected++;
+          await logPhantomRejection(signal, riskCheck.reason);
           buyResults.push({
             symbol: signal.symbol,
             status: 'RISK_REJECTED',
@@ -4357,6 +4435,9 @@ export async function POST() {
     if (executed > 0 || sells.length > 0) {
       await syncRiskState();
     }
+
+    // Check phantom results (kill rate — what happened to rejected hypotheses?)
+    await checkPhantomResults();
 
     return NextResponse.json({
       success: true,
