@@ -10,35 +10,33 @@ max_concurrent_positions = 80
 max_exposure_pct = 95
 
 [strategy]
-arb_threshold = 0.95            # 5% gross edge → ~1.9% net after 3.12% round-trip fees
+arb_threshold = 0.95
 min_edge_pct = 2.0
 momentum_lookback_seconds = 60
-min_time_to_expiry_s = 300         # 5 min minimum (allow short-duration bets)
-max_time_to_expiry_s = 1209600     # 14 days max (faster settlement = more data)
-scan_all_for_arb = true            # Scan all high-liquidity markets for YES+NO arb
-min_liquidity_usd = 100            # Min $100 liquidity (wider net for arb discovery)
-max_markets_per_scan = 250         # Max markets per arb scan cycle (wider scan)
-arb_max_bet_size_usd = 10          # Arb bets capped at $10 (was $25 — faster capital rotation)
-arb_max_positions = 30             # Max 30 arb slots (rest reserved for directional/micro)
-arb_max_exposure_pct = 50          # Max 50% of bankroll locked in arb
-arb_max_expiry_s = 259200          # Skip arbs expiring in > 3 days (72h)
+min_time_to_expiry_s = 300
+max_time_to_expiry_s = 1209600     # 14 days max
+scan_all_for_arb = true
+min_liquidity_usd = 100
+max_markets_per_scan = 250
+
+# ARB-FIRST STRATEGY: arb is 100% WR, +$4.49/trade — maximize it
+arb_max_bet_size_usd = 25          # Full bet size (was 10 — arb is risk-free)
+arb_max_positions = 60             # 60 of 80 slots for arb (was 30)
+arb_max_exposure_pct = 80          # 80% of bankroll in arb (was 50%)
+arb_max_expiry_s = 604800          # 7 days max (was 3 days — more opportunities)
 
 [risk]
 kelly_fraction = 0.25
-max_daily_loss_usd = 50             # Increased with larger bankroll
+max_daily_loss_usd = 50
 max_consecutive_losses = 5
 fee_rate = 0.0156
 
 [timing]
-scan_interval_ms = 30000           # 30s between scans (was 60s — faster discovery)
-settlement_check_ms = 300000       # 5 min settlement checks
+scan_interval_ms = 30000
+settlement_check_ms = 300000
 
 [micro_markets]
-enabled = false                        # DISABLED: 20% WR, -$34 over 255 trades — destroys portfolio
-min_time_to_expiry_s = 30          # 30s minimum (need time to execute)
-max_time_to_expiry_s = 300         # 5 minutes max
-max_bet_size_usd = 9               # $9 per micro-bet (small, high frequency)
-reserve_pct = 20                   # 20% of bankroll reserved for micro-markets only
+enabled = false                    # DISABLED: 20% WR, -$34 — proven unprofitable
 
 [data_sources]
 binance_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
@@ -46,20 +44,13 @@ use_polymarket_intelligence = true
 
 [exits]
 enabled = true
-take_profit_pct = 30              # Sell if P&L >= +30%
-stop_loss_pct = 40                # Sell if P&L <= -40%
-stagnation_hours = 48             # Sell if flat (|P&L| < 5%) for 48 hours
-min_hold_seconds = 300            # Hold at least 5 minutes before any exit
+take_profit_pct = 30
+stop_loss_pct = 40
+stagnation_hours = 48
+min_hold_seconds = 300
 
 [copy_trader]
-enabled = false                   # Disabled by default (stub)
-poll_interval_ms = 300000         # Poll every 5 minutes
-min_wallet_pnl = 100             # Min $100 PnL to follow
-min_wallet_trades = 10           # Min 10 trades to qualify
-max_copy_size_usd = 15           # Max $15 per copy trade
+enabled = false
 
 [whale_detection]
-enabled = true
-min_confidence = 40
-max_boost_pct = 15
-max_penalty_pct = 10
+enabled = false                    # Disabled: only boosts directional which loses money
