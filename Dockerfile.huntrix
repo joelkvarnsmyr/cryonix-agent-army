@@ -3,6 +3,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# System packages for brain (git for commits, docker-cli for restart)
+RUN apk add --no-cache git docker-cli
+
 # Install runtime dependencies
 RUN npm install --no-save \
     @iarna/toml@2 \
@@ -13,6 +16,9 @@ RUN npm install --no-save \
     tsx@4 \
     typescript@5
 
+# Install Claude Code CLI (for brain)
+RUN npm install -g @anthropic-ai/claude-code
+
 # Stub for @cryonix/types — all imports are `import type` (erased by tsx at runtime)
 RUN mkdir -p node_modules/@cryonix/types && \
     echo '{"name":"@cryonix/types","version":"1.0.0","main":"index.js"}' > node_modules/@cryonix/types/package.json && \
@@ -21,11 +27,11 @@ RUN mkdir -p node_modules/@cryonix/types && \
 # Copy agent source
 COPY packages/agents/src/ ./packages/agents/src/
 
-# Copy runner script
+# Copy runner + brain scripts
 COPY scripts/services/huntrix-runner.ts ./scripts/services/
+COPY scripts/services/huntrix-brain.ts ./scripts/services/
 
 # Copy config
 COPY huntrix.toml ./
 
-USER node
 CMD ["npx", "tsx", "scripts/services/huntrix-runner.ts"]

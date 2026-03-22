@@ -102,6 +102,25 @@ export class HuntrixAgent {
     private async tick(): Promise<void> {
         this.checkDailyReset();
 
+        // 0. Check brain force-exit signal
+        try {
+            const forceExitRaw = await this.redis.get('huntrix:brain:force_exit');
+            if (forceExitRaw) {
+                const { symbol, reason } = JSON.parse(forceExitRaw);
+                const pos = this.positions.find(p => p.symbol === symbol);
+                if (pos) {
+                    console.log(`[HUNTRIX] Brain force-exit: ${symbol} — ${reason}`);
+                    await this.closePosition(pos, 'manual');
+                    if (this.config.telegram.alert_on_exit) {
+                        await this.sendTelegramAlert(
+                            `<b>🧠 HUNTRIX BRAIN EXIT</b>\n${symbol}: ${reason}\nP&L: ${pos.unrealized_pnl_pct.toFixed(2)}%`,
+                        );
+                    }
+                }
+                await this.redis.del('huntrix:brain:force_exit');
+            }
+        } catch { /* best effort */ }
+
         // 1. Monitor open positions (fast path)
         if (this.positions.length > 0) {
             await this.monitorPositions();

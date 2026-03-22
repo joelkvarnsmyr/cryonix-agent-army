@@ -78,6 +78,13 @@ export const HUNTRIX_DEFAULTS: HuntrixConfig = {
     alert_on_exit: true,
     alert_on_circuit_breaker: true,
   },
+  brain: {
+    enabled: true,
+    cooldown_minutes: 60,
+    scheduled_hours: [0, 6, 12, 18],
+    acute_consecutive_losses: 2,
+    acute_daily_loss_pct: 10.0,
+  },
 };
 
 export function loadHuntrixConfig(filePath?: string): HuntrixConfig {
@@ -100,6 +107,7 @@ export function loadHuntrixConfig(filePath?: string): HuntrixConfig {
       exits: { ...HUNTRIX_DEFAULTS.exits, ...parsed.exits },
       timing: { ...HUNTRIX_DEFAULTS.timing, ...parsed.timing },
       telegram: { ...HUNTRIX_DEFAULTS.telegram, ...parsed.telegram },
+      brain: { ...HUNTRIX_DEFAULTS.brain, ...parsed.brain },
     };
   } catch {
     console.warn('[huntrix] Failed to parse huntrix.toml, using defaults');

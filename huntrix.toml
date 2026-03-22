@@ -75,3 +75,10 @@ defi_llama_enabled = true
 rss_enabled = true
 orderbook_spoof_enabled = true
 rss_poll_interval_minutes = 30
+
+[brain]
+enabled = true
+cooldown_minutes = 60
+scheduled_hours = [0, 6, 12, 18]
+acute_consecutive_losses = 2
+acute_daily_loss_pct = 10.0
