@@ -1189,7 +1189,7 @@ max_vol_factor = 1.5
 
 [htf_filter]
 enabled = true
-bearish_penalty = 0.15
+bearish_penalty = 0.10
 
 # ── ORAKEL Forecast Engine ──────────────────────────────────
 [orakel]
