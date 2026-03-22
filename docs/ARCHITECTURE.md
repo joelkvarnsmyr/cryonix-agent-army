@@ -34,7 +34,7 @@ Cryonix is a regime-aware AI trading system built as a Turborepo monorepo. It fe
 │         │ SELL signals skipped (spot-only)                                    │
 │         ▼                                                                    │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                     RISK GATE (≥65% confidence)                       │   │
+│  │                     RISK GATE (see cryonix.toml [risk] min_confidence) │   │
 │  │  → Approved signals written to Redis pending queue                    │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -44,11 +44,11 @@ Cryonix is a regime-aware AI trading system built as a Turborepo monorepo. It fe
 │                          EXECUTION PIPELINE (auto-trade/route.ts)            │
 │                                                                              │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                   CAPITAL ALLOCATOR (NEW)                             │   │
-│  │  Pools: Signal 65% │ Grid 25% │ Reserve 10%                         │   │
+│  │                   CAPITAL ALLOCATOR                                   │   │
+│  │  Pools: see cryonix.toml [capital] signal/grid/reserve_pct           │   │
 │  │  Regime overrides:                                                    │   │
-│  │    volatile  → grid paused, reserve 30%, signal 70%                  │   │
-│  │    trending  → signal 72%, grid 18%, reserve 10%                     │   │
+│  │    volatile  → grid paused, reserve increased                        │   │
+│  │    trending  → more capital to signals                               │   │
 │  │    ranging   → default (grid works well in ranges)                   │   │
 │  │  Tracks per-strategy usage via Redis positions                       │   │
 │  │  Exposed in API response for dashboard                               │   │
@@ -58,7 +58,7 @@ Cryonix is a regime-aware AI trading system built as a Turborepo monorepo. It fe
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
 │  │  EV Filter   │→ │  X Sentiment │→ │ GROK AI      │→ │ Spread Check │     │
 │  │ ≥5 trades    │  │ 12 keywords  │  │ Validation   │  │ Max slippage │     │
-│  │ reject -EV   │  │ Redis alert  │  │ (fail-closed)│  │  0.5%        │     │
+│  │ reject -EV   │  │ Redis alert  │  │ (fail-closed)│  │ [exits] cfg  │     │
 │  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
 │                                                                │             │
 │                                                                ▼             │
@@ -119,7 +119,7 @@ Cryonix is a regime-aware AI trading system built as a Turborepo monorepo. It fe
 - GainerScanner for MOMENTUM_GAINER detection (top movers 3%+ in 1h)
 - Classify market regime and write to Redis `market:regime` (1h TTL)
 - Skip SELL signals early (spot-only system)
-- Emit BUY signals that pass the ≥65% confidence risk gate
+- Emit BUY signals that pass the confidence risk gate (configured in `cryonix.toml [risk] min_confidence`)
 
 ### Quant Guild (`packages/engine/src/guilds/quant.py`)
 Core analysis engine with 8 pattern detectors + regime classification.
@@ -128,64 +128,61 @@ Core analysis engine with 8 pattern detectors + regime classification.
 
 | # | Pattern | Detection Logic | Confidence |
 |---|---------|----------------|------------|
-| 1 | Bollinger Squeeze | BB width in bottom 20%, price near band | 0.75–0.95 |
-| 2 | RSI Extreme | RSI < 35 (oversold) | 0.75–0.92 |
-| 3 | Volume Spike | Volume > 2× average | 0.65–0.85 |
+| 1 | Bollinger Squeeze | BB width in bottom N% (see `[indicators] bollinger_squeeze_pct`), price near band | 0.75–0.95 |
+| 2 | RSI Extreme | RSI below `[indicators] rsi_oversold` (oversold) | 0.75–0.92 |
+| 3 | Volume Spike | Volume > `[indicators] volume_spike_threshold` × average | 0.65–0.85 |
 | 4 | MACD Crossover | Signal line cross (bullish/bearish) | 0.68 |
 | 5 | EMA 9/21 Cross | EMA9 crosses EMA21 | 0.76 |
-| 6 | Dip Buy | 5%+ drawdown from high, RSI < 50, recovering | 0.70–0.85 |
-| 7 | Deep Value Crash | 8%+ crash with velocity analysis | 0.80–0.93 |
+| 6 | Dip Buy | Drawdown from high (see `[patterns] dip_buy_drawdown`), RSI below `dip_buy_max_rsi` | 0.70–0.85 |
+| 7 | Deep Value Crash | Large crash (see `[patterns] deep_value_threshold`) with velocity analysis | 0.80–0.93 |
 | 8 | MOMENTUM_GAINER | GainerScanner top mover + RSI/vol confirmation | 0.72–0.93 |
 
 **Regime Classification (`_classify_regime`):**
 - **volatile** — ATR > 2× mean
-- **trending** — ADX ≥ 25
+- **trending** — ADX ≥ `[indicators] adx_trending_threshold`
 - **ranging** — default (neither volatile nor trending)
 
 ### Capital Allocator (`apps/web/src/app/api/auto-trade/route.ts`)
 Sits between risk checks and execution. Manages capital budgets per strategy pool.
 
-**Pool Allocation (default):**
+**Pool Allocation:**
 
-| Pool | % | Purpose |
-|------|---|---------|
-| Signal | 65% | Pattern-based signal trades |
-| Grid | 25% | Grid trading strategies |
-| Reserve | 10% | Always held back as buffer |
+Configured in `cryonix.toml [capital]` — see `signal_pool_pct`, `grid_pool_pct`, `reserve_pct`.
+
+| Pool | Config Key | Purpose |
+|------|-----------|---------|
+| Signal | `signal_pool_pct` | Pattern-based signal trades |
+| Grid | `grid_pool_pct` | Grid trading strategies |
+| Reserve | `reserve_pct` | Always held back as buffer |
 
 **Regime-Based Dynamic Allocation:**
 
-| Regime | Signal | Grid | Reserve | Notes |
-|--------|--------|------|---------|-------|
-| volatile | 70% | 0% (paused) | 30% | Grid paused, reserve increased |
-| trending | 72% | 18% | 10% | More capital to signals |
-| ranging | 65% | 25% | 10% | Default — grid works well in ranges |
+Regime overrides are applied dynamically based on `market:regime` from Redis. In volatile regimes, grid is paused and reserve is increased. In trending regimes, more capital flows to signals. Ranging uses the default split from config.
 
 **Key Behaviors:**
 - Reads `market:regime` from Redis (set by market_scout.py)
 - Tracks per-strategy usage via Redis position keys
 - Budget check performed before every trade
 - Allocation state exposed in API response for dashboard display
-- Position limits: 4 max signal positions, 2 max grid positions
+- Position limits: see `cryonix.toml [limits]` for `max_signal_positions`, `max_grid_positions`
 
 ### Risk Management — Consolidated
 
 **Single source of truth:** `CONFIG` object in `auto-trade/route.ts`. Python `risk_manager.py` limits are synced with this CONFIG.
 
-**Risk Limits:**
+**Risk Limits** (all values configured in `cryonix.toml` — sections shown below):
 
-| Limit | Value | Purpose |
-|-------|-------|---------|
-| Max Daily Loss | 5% | Circuit breaker on daily drawdown |
-| Max Weekly Loss | 10% | Weekly cumulative loss limit |
-| Max Position Size | 15% | Per-position cap |
-| Max Total Exposure | 90% | Portfolio exposure ceiling |
-| Min Confidence | 65% | Signal minimum threshold |
-| Volatility Pause | ATR > 5% | Volatility threshold |
-| Max Trades/Day | 6 | Trade frequency limit |
-| Max Open Positions | 5 | Concurrent position limit |
-| Consecutive Loss Limit | 5 | Cooling-off trigger |
-| Max Slippage | 0.5% | Spread check before execution |
+| Limit | Config Section & Key | Purpose |
+|-------|---------------------|---------|
+| Max Daily Loss | `[risk] max_daily_loss_pct` | Circuit breaker on daily drawdown |
+| Max Weekly Loss | `[risk] max_weekly_loss_pct` | Weekly cumulative loss limit |
+| Max Position Size | `[capital] max_position_size_pct` | Per-position cap |
+| Min Confidence | `[risk] min_confidence` | Signal minimum threshold |
+| Volatility Pause | `[risk] volatility_pause_atr_pct` | Volatility threshold |
+| Max Trades/Day | `[limits] max_trades_per_day` | Trade frequency limit |
+| Max Open Positions | `[limits] max_open_positions` | Concurrent position limit |
+| Consecutive Loss Limit | `[risk] max_consecutive_losses` | Cooling-off trigger |
+| Max Slippage | `[exits] max_slippage_pct` | Spread check before execution |
 
 **Safety Layers:**
 - AI validation is **fail-closed** — if GROK is unreachable, trade is rejected
@@ -199,7 +196,7 @@ Sits between risk checks and execution. Manages capital budgets per strategy poo
 ```
 quant.py _classify_regime()
   │  ATR > 2× mean → volatile
-  │  ADX ≥ 25      → trending
+  │  ADX ≥ threshold → trending  (see [indicators] adx_trending_threshold)
   │  else           → ranging
   ▼
 market_scout.py → Redis SET market:regime (1h TTL)
@@ -221,12 +218,12 @@ MarketScout (market_scout.py)
   → QuantGuild (quant.py): 8 pattern detectors + MOMENTUM_GAINER
     → Regime classification → Redis market:regime
     → SELL signals skipped early (spot-only)
-    → Risk Gate (≥65% confidence) → Redis pending queue
+    → Risk Gate (see [risk] min_confidence) → Redis pending queue
       → Capital Allocator (budget check per strategy pool)
         → EV filter (≥5 trades sample, reject negative EV)
           → X sentiment alert check (12 keywords via x_sentiment.py)
             → GROK AI validation (fail-closed, with regime/EV/sentiment context)
-              → Spread check (≤0.5% slippage)
+              → Spread check (see [exits] max_slippage_pct)
                 → Binance BUY (market/limit order via CCXT)
                   → Native STOP_LOSS_LIMIT order placed
                     → Position monitor (30s loop: SL / TP / trailing stop)
