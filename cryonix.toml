@@ -623,7 +623,7 @@ telegram_boost_enabled = false
 # is considered statistically meaningful.
 # 5 is a low bar — raise to 10-20 as trade history grows.
 # When to change: increase after accumulating 100+ total trades.
-min_trades_for_ev = 5
+min_trades_for_ev = 50
 
 # Calibration lookback window and minimum sample size.
 # calibration_lookback_days: how far back to analyze trade performance.
