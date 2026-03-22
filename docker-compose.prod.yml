@@ -603,6 +603,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.huntrix
+      target: runner
     container_name: huntrix
     restart: unless-stopped
     volumes:
@@ -630,8 +631,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.huntrix
+      target: brain
     container_name: huntrix-brain
-    command: ["npx", "tsx", "scripts/services/huntrix-brain.ts"]
     restart: unless-stopped
     volumes:
       - ~/.claude:/root/.claude:ro

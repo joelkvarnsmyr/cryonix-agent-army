@@ -1,9 +1,12 @@
 # Dockerfile.huntrix — Huntrix — Manipulation Detection & Ride Trader
-FROM node:20-alpine
+# Multi-stage: runner (lean) + brain (with Claude Code CLI)
+
+# ── Stage 1: Base (shared) ──────────────────────────────────────
+FROM node:20-alpine AS base
 
 WORKDIR /app
 
-# System packages for brain (git for commits, docker-cli for restart)
+# System packages (git for brain commits, docker-cli for restart)
 RUN apk add --no-cache git docker-cli
 
 # Install runtime dependencies
@@ -14,10 +17,8 @@ RUN npm install --no-save \
     openai@4 \
     ccxt@4 \
     tsx@4 \
-    typescript@5
-
-# Install Claude Code CLI (for brain)
-RUN npm install -g @anthropic-ai/claude-code
+    typescript@5 \
+    pg@8
 
 # Stub for @cryonix/types — all imports are `import type` (erased by tsx at runtime)
 RUN mkdir -p node_modules/@cryonix/types && \
@@ -34,4 +35,11 @@ COPY scripts/services/huntrix-brain.ts ./scripts/services/
 # Copy config
 COPY huntrix.toml ./
 
+# ── Stage 2: Runner (lean, no Claude CLI) ───────────────────────
+FROM base AS runner
 CMD ["npx", "tsx", "scripts/services/huntrix-runner.ts"]
+
+# ── Stage 3: Brain (with Claude Code CLI) ───────────────────────
+FROM base AS brain
+RUN npm install -g @anthropic-ai/claude-code
+CMD ["npx", "tsx", "scripts/services/huntrix-brain.ts"]
