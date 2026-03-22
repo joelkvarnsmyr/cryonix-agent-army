@@ -524,8 +524,11 @@ export class PsinixAgent {
 
         const dynamicTpPct = Math.max(2.0, baseTp * (0.5 + psi.coherence * 0.8) * (atrPct / 0.3));
         const dynamicSlPct = Math.max(1.0, baseSl * (1 / betaNorm) * (atrPct / 0.3));
-        const dynamicTrailActivation = dynamicTpPct * 0.5;
-        const dynamicTrailDistance = dynamicSlPct * 0.67;
+        // Trail activation: 60% of TP — require meaningful profit before trailing kicks in
+        // Trail distance: 1.2× SL — wider than before (was 0.67×) to let winners run
+        // Old avg win $0.57 vs avg loss $1.33 → need wider trailing to improve R:R
+        const dynamicTrailActivation = dynamicTpPct * 0.6;
+        const dynamicTrailDistance = dynamicSlPct * 1.2;
 
         console.log(
             `[psinix] Dynamic exits ${symbol}: TP=${dynamicTpPct.toFixed(1)}% SL=${dynamicSlPct.toFixed(1)}% ` +
