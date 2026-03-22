@@ -559,6 +559,18 @@ class VedicFuturesPaper:
             print(f"[{self.name}] {pm_reason}")
         self._pm_mult = pm_mult
 
+        # Coherence sizing: scale by Kuramoto signal synchronization
+        try:
+            coh_raw = await self.redis.get("vedic:coherence")
+            if coh_raw:
+                coh = json.loads(coh_raw)
+                coh_mult = coh.get("size_multiplier", 1.0)
+                self._pm_mult *= coh_mult
+                if coh.get("coherence", 0) > 0.7:
+                    print(f"[{self.name}] Coherence C={coh['coherence']:.2f} → size x{coh_mult:.2f}")
+        except Exception:
+            pass
+
         # Check new entries
         open_slots = MAX_POSITIONS - len(self.wallet.positions)
         if open_slots > 0 and can_trade:
