@@ -2073,8 +2073,43 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
     }
   }
 
-  if (openPositions.some(p => p.symbol === signal.symbol)) {
-    return { pass: false, reason: `Already in ${signal.symbol}` };
+  // DCA / Pyramiding: allow additional entries under strict conditions
+  const existingPositions = openPositions.filter(p => p.symbol === signal.symbol);
+  if (existingPositions.length > 0) {
+    const dcaEnabled = (TOML as any)?.dca?.enabled ?? false;
+    const maxEntries = (TOML as any)?.dca?.max_entries_per_symbol ?? 1;
+    const minConf = (TOML as any)?.dca?.second_entry_min_confidence ?? 0.75;
+    const dipThreshold = (TOML as any)?.dca?.dip_threshold_pct ?? 2.0;
+    const maxExposurePct = (TOML as any)?.dca?.max_symbol_exposure_pct ?? 60;
+
+    if (!dcaEnabled) {
+      return { pass: false, reason: `Already in ${signal.symbol} (DCA disabled)` };
+    }
+
+    if (existingPositions.length >= maxEntries) {
+      return { pass: false, reason: `Already ${existingPositions.length}/${maxEntries} entries in ${signal.symbol}` };
+    }
+
+    if (signal.confidence < minConf) {
+      return { pass: false, reason: `DCA ${signal.symbol}: conf ${(signal.confidence * 100).toFixed(0)}% < ${(minConf * 100).toFixed(0)}% required for 2nd entry` };
+    }
+
+    const firstEntry = existingPositions[0];
+    const currentPrice = signal.entry_price;
+    const priceDiffPct = ((currentPrice - firstEntry.entryPrice) / firstEntry.entryPrice) * 100;
+
+    if (priceDiffPct > -dipThreshold && priceDiffPct < dipThreshold) {
+      return { pass: false, reason: `DCA ${signal.symbol}: price ${priceDiffPct >= 0 ? '+' : ''}${priceDiffPct.toFixed(1)}% from entry (need >${dipThreshold}% move)` };
+    }
+
+    const existingExposure = existingPositions.reduce((sum, p) => sum + (p.entryPrice * p.quantity), 0);
+    const maxExposure = budget.totalCapital * (maxExposurePct / 100);
+    if (existingExposure > maxExposure) {
+      return { pass: false, reason: `DCA ${signal.symbol}: exposure $${existingExposure.toFixed(2)} > $${maxExposure.toFixed(2)} max (${maxExposurePct}%)` };
+    }
+
+    const dcaType = priceDiffPct < 0 ? 'DCA' : 'PYRAMID';
+    console.log(`[${dcaType}] ${signal.symbol}: 2nd entry allowed (conf=${(signal.confidence * 100).toFixed(0)}%, price ${priceDiffPct >= 0 ? '+' : ''}${priceDiffPct.toFixed(1)}% from 1st entry)`);
   }
 
   // Per-symbol loss cooldown: don't re-buy a symbol that just lost money
