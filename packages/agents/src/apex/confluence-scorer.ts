@@ -126,7 +126,18 @@ export function scoreOpportunities(
 
     for (const symbol of symbolSet) {
         const symbolSignals = fresh.filter(s => s.symbol === symbol);
-        const combined = [...symbolSignals, ...marketSignals];
+        const rawCombined = [...symbolSignals, ...marketSignals];
+
+        // Dedup: count each (source, signalType) only once per symbol.
+        // Multiple BOLLINGER_SQUEEZE from same Cryonix broadcast window
+        // is one signal, not four.
+        const seen = new Set<string>();
+        const combined = rawCombined.filter(s => {
+            const key = `${s.source}:${s.signalType}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
 
         // Dedup: count max 1 signal per source × signalType to prevent
         // inflated scores from repeated scans of the same indicator.
