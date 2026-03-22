@@ -185,6 +185,7 @@ export interface HuntrixConfig {
     cluster_window_minutes: number;
     sources: {
       goplus_enabled: boolean;
+      goplus_fail_closed: boolean;
       defi_llama_enabled: boolean;
       rss_enabled: boolean;
       orderbook_spoof_enabled: boolean;

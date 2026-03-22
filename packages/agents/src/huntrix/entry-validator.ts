@@ -184,7 +184,11 @@ export class EntryValidator {
                 }
             } catch (err) {
                 reasons.push(`GoPlus check failed: ${err instanceof Error ? err.message : err}`);
-                // Fail-open for GoPlus — don't block entry on API failures
+                // Fail-closed by default — reject entry when GoPlus API is unavailable
+                if (this.config.scanner.sources.goplus_fail_closed !== false) {
+                    approved = false;
+                    reasons.push('GoPlus fail-closed: entry blocked due to API failure');
+                }
             }
         }
 

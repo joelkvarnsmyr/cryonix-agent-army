@@ -25,6 +25,7 @@ export const HUNTRIX_DEFAULTS: HuntrixConfig = {
     cluster_window_minutes: 5,
     sources: {
       goplus_enabled: true,
+      goplus_fail_closed: true,
       defi_llama_enabled: true,
       rss_enabled: true,
       orderbook_spoof_enabled: true,
