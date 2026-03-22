@@ -91,7 +91,7 @@ export class SignalAggregator {
 
         // ── Build pipeline ─────────────────────────────────────────────
         const pipe = this.redis.pipeline();
-        pipe.get('trades:pending');           // 0: CRYONIX
+        pipe.lrange('trades:pending', 0, -1);  // 0: CRYONIX (LIST, not string!)
         pipe.get('copynix:signals');          // 1: COPYNIX
         pipe.get('psinix:state');             // 2: PSINIX_STATE
         pipe.get('polymarket:crypto');        // 3: POLY_CRYPTO
@@ -115,32 +115,33 @@ export class SignalAggregator {
             return entry[1] as T | null;
         };
 
-        // ── 1. Cryonix — trades:pending (momentary) ───────────────────
+        // ── 1. Cryonix — trades:pending (LIST via LRANGE, momentary) ──
         try {
-            const raw = val<string>(SLOT.CRYONIX);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                const entries: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+            // LRANGE returns string[] (each entry is a JSON string)
+            const listEntries = val<string[]>(SLOT.CRYONIX);
+            if (listEntries && listEntries.length > 0) {
                 let hasStale = false;
 
-                for (const entry of entries) {
-                    if (!entry || typeof entry !== 'object') continue;
-                    const e = entry as Record<string, unknown>;
-                    const ts = (e.timestamp as number) ?? now;
-                    if (now - ts > momentaryMs) { hasStale = true; continue; }
+                for (const rawEntry of listEntries) {
+                    if (!rawEntry) continue;
+                    try {
+                        const e = JSON.parse(rawEntry) as Record<string, unknown>;
+                        const ts = (e.timestamp as number) ?? now;
+                        if (now - ts > momentaryMs) { hasStale = true; continue; }
 
-                    const symbol = normalizeSymbol((e.symbol as string) ?? '');
-                    const confidence = (e.confidence as number) ?? 0;
-                    const patterns: string[] = Array.isArray(e.patterns) ? e.patterns as string[] : [];
+                        const symbol = normalizeSymbol((e.symbol as string) ?? '');
+                        const confidence = (e.confidence as number) ?? 0;
+                        const patterns: string[] = Array.isArray(e.patterns) ? e.patterns as string[] : [];
 
-                    for (const pattern of patterns) {
-                        signals.push({
-                            symbol, direction: 'bullish', source: 'cryonix',
-                            signalType: String(pattern).toUpperCase(),
-                            confidence, score: confidence, timestamp: ts,
-                            temporality: 'momentary', raw: entry,
-                        });
-                    }
+                        for (const pattern of patterns) {
+                            signals.push({
+                                symbol, direction: 'bullish', source: 'cryonix',
+                                signalType: String(pattern).toUpperCase(),
+                                confidence, score: confidence, timestamp: ts,
+                                temporality: 'momentary', raw: e,
+                            });
+                        }
+                    } catch { /* skip malformed list entry */ }
                 }
                 staleness['cryonix'] = hasStale && signals.filter(s => s.source === 'cryonix').length === 0;
             } else {
