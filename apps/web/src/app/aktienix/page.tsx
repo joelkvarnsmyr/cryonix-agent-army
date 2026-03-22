@@ -43,6 +43,20 @@ export default function AktienixPage() {
   const { positions } = useAktienixPositions(15_000);
   const { trades, summary } = useAktienixTrades(20, 30_000);
 
+  // Sentiment data
+  const [sentimentData, setSentimentData] = useState<any>(null);
+  useEffect(() => {
+    const fetchSentiment = async () => {
+      try {
+        const res = await fetch('/api/aktienix/sentiment');
+        if (res.ok) setSentimentData(await res.json());
+      } catch { }
+    };
+    fetchSentiment();
+    const id = setInterval(fetchSentiment, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const [etTime, setEtTime] = useState('');
   useEffect(() => {
     const tick = () => {
@@ -253,6 +267,55 @@ export default function AktienixPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* Market Intelligence */}
+        <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm p-4">
+          <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest mb-2.5">MARKET INTELLIGENCE</div>
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="rounded-lg bg-white/[0.03] p-2">
+              <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">FEAR & GREED</div>
+              <div className={`font-mono text-lg font-bold ${
+                (sentimentData?.fearGreed?.score ?? 50) < 25 ? 'text-red-400' :
+                (sentimentData?.fearGreed?.score ?? 50) > 75 ? 'text-emerald-400' : 'text-amber-400'
+              }`}>
+                {sentimentData?.fearGreed?.score?.toFixed(0) ?? '\u2014'}
+              </div>
+              <div className="text-[9px] font-mono text-muted-foreground/40">
+                {sentimentData?.fearGreed?.rating ?? 'loading'}
+              </div>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] p-2">
+              <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">PUT/CALL</div>
+              <div className={`font-mono text-lg font-bold ${
+                (sentimentData?.putCall?.ratio ?? 1) > 1.2 ? 'text-red-400' :
+                (sentimentData?.putCall?.ratio ?? 1) < 0.7 ? 'text-emerald-400' : 'text-foreground'
+              }`}>
+                {sentimentData?.putCall?.ratio?.toFixed(2) ?? '\u2014'}
+              </div>
+              <div className="text-[9px] font-mono text-muted-foreground/40">
+                {(sentimentData?.putCall?.ratio ?? 1) > 1.2 ? 'heavy hedging' :
+                 (sentimentData?.putCall?.ratio ?? 1) < 0.7 ? 'complacent' : 'neutral'}
+              </div>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] p-2">
+              <div className="text-muted-foreground/50 mb-0.5 font-mono text-[10px]">VIX</div>
+              <div className={`font-mono text-lg font-bold ${
+                (sentimentData?.fearGreed?.vixScore ?? 50) < 25 ? 'text-red-400' :
+                (sentimentData?.fearGreed?.vixScore ?? 50) > 60 ? 'text-emerald-400' : 'text-foreground'
+              }`}>
+                {sentimentData?.fearGreed?.vixScore?.toFixed(0) ?? '\u2014'}
+              </div>
+              <div className="text-[9px] font-mono text-muted-foreground/40">volatility index</div>
+            </div>
+          </div>
+          {sentimentData?.econCalendar?.majorToday?.length > 0 && (
+            <div className="mt-2 p-2 rounded-lg bg-amber-400/5 border border-amber-400/20">
+              <div className="text-[10px] font-mono text-amber-400">
+                HIGH IMPACT TODAY: {sentimentData.econCalendar.majorToday.join(', ')}
+              </div>
             </div>
           )}
         </div>
