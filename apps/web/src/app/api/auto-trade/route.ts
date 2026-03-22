@@ -2152,11 +2152,11 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
       } else if (severity === 'warning' && confirmedCount >= minConfirmations) {
         return { pass: false, reason: `X alert [warning x${confirmedCount}]: ${reason}` };
       } else if (severity === 'warning' && confirmedCount < minConfirmations) {
-        console.log(`[BUY-FILTER] X alert warning (${confirmedCount}/${minConfirmations} confirmations) for ${baseAsset} — pass, log only: ${reason}`);
+        console.log(`[CONVICTION] X alert warning (${confirmedCount}/${minConfirmations} confirmations) for ${baseAsset} — pass, log only: ${reason}`);
       }
       // info severity: pass — no impact
     }
-  } catch (e) { console.warn('[BUY-FILTER] X sentiment check failed:', e); }
+  } catch (e) { console.warn('[CONVICTION] X sentiment check failed:', e); }
 
   // ── CoinMarketCap macro filters ──────────────────────────────────────
   const cmcEnabled = TOML?.coinmarketcap?.enabled ?? false;
@@ -2271,7 +2271,7 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
   const weakSoloPatterns: string[] = TOML?.patterns?.weak_solo_patterns ?? ['RSI_OVERSOLD', 'EMA_BULLISH_CROSS', 'MACD_BULLISH_CROSS'];
   const patterns = signal.patterns || [];
   if (patterns.length === 1 && weakSoloPatterns.includes(patterns[0])) {
-    return { pass: false, reason: `Weak solo pattern: ${patterns[0]} (requires 2+ confirming patterns)` };
+    return { pass: false, reason: `Low-conviction solo hypothesis: ${patterns[0]} (requires 2+ confirming patterns)` };
   }
 
   // === DIP FOCUS MODE: require at least one value pattern ===
@@ -2300,7 +2300,7 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
   // === EV-MODEL: Expected Value filter based on historical pattern performance ===
   const ev = await calculateExpectedValue(signal);
   if (ev !== null && ev.ev < 0) {
-    return { pass: false, reason: `Negative EV: $${ev.ev.toFixed(4)} (${ev.pattern} win ${ev.winRate}% of ${ev.sampleSize} trades)` };
+    return { pass: false, reason: `Negative expected value: $${ev.ev.toFixed(4)} (${ev.pattern} win ${ev.winRate}% of ${ev.sampleSize} trades)` };
   }
 
   return { pass: true, reason: 'OK' };
@@ -2722,6 +2722,27 @@ async function checkPhantomResults(): Promise<void> {
 
       if (checked > 0) {
         console.log(`[KILL-RATE] Checked ${checked} phantoms. KR=${killRate.toFixed(1)}% (${profitable}/${parsed.length} profitable). Queue: ${toKeep.length} remaining.`);
+      }
+
+      // Kill Rate Action Framework — advisory for AI Brain
+      if (killRate > 30) {
+        console.warn(`[KILL-RATE] WARNING: ${killRate.toFixed(1)}% of rejected signals were profitable — filters may be too aggressive`);
+        // Find the most aggressive filter (highest profitable-rejection rate)
+        const sorted = Object.entries(byFilter)
+          .filter(([, s]) => s.total >= 5)
+          .map(([reason, s]) => ({ ...s, reason, rate: (s.won / s.total) * 100 }))
+          .sort((a, b) => b.rate - a.rate);
+        if (sorted.length > 0) {
+          console.warn(`[KILL-RATE] Worst filter: "${sorted[0].reason}" kills ${sorted[0].rate.toFixed(0)}% profitable signals (${sorted[0].won}/${sorted[0].total})`);
+        }
+        // Store advisory for AI Brain to read
+        await redis.set('metrics:kill_rate_advisory', JSON.stringify({
+          killRate: Math.round(killRate * 10) / 10,
+          worstFilter: sorted[0] ?? null,
+          allFilters: sorted,
+          recommendation: killRate > 50 ? 'URGENT: loosen filters' : 'REVIEW: consider loosening',
+          timestamp: Date.now(),
+        }), 'EX', 86400);
       }
     }
   } catch (err) {
