@@ -574,6 +574,28 @@ services:
     networks:
       - cryonix-net
 
+  huntrix-brain:
+    build:
+      context: .
+      dockerfile: Dockerfile.huntrix
+    container_name: huntrix-brain
+    command: ["npx", "tsx", "scripts/services/huntrix-brain.ts"]
+    restart: unless-stopped
+    volumes:
+      - ~/.claude:/root/.claude:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./huntrix.toml:/app/huntrix.toml
+    environment:
+      - NODE_ENV=production
+      - KV_URL=redis://redis:6379
+      - TELEGRAM_INTERACTIVE_BOT_TOKEN=${TELEGRAM_INTERACTIVE_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - PROJECT_ROOT=/app
+    depends_on:
+      - redis
+    networks:
+      - cryonix-net
+
   # Caddy Reverse Proxy (Handles HTTPS and routing)
   # ============================================================
 
