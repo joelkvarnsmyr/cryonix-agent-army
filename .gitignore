@@ -57,6 +57,9 @@ baselines/
 # Worktrees
 .worktrees/
 
+# Screenshot archive
+docs/img/*.png
+
 # Problematic files
 nul
 .vercel
