@@ -527,6 +527,71 @@ def main():
         if backtest_baseline:
             context['backtest_baseline'] = backtest_baseline
 
+        # Step 1c: Add edge metrics context from Redis (advisory, errors don't block)
+        metrics_context = ""
+        try:
+            alpha_raw = r.get('metrics:alpha_decay')
+            kr_raw = r.get('metrics:kill_rate')
+            mfs_raw = r.get('metrics:mutation_fitness')
+            cv_raw = r.get('metrics:capital_velocity')
+            ecr_raw = r.get('metrics:ecr')
+
+            if alpha_raw:
+                alpha = json.loads(alpha_raw)
+                declining = [
+                    f"{p}: slope={d['slope']}"
+                    for p, d in alpha.get('patterns', {}).items()
+                    if d.get('trend') == 'declining'
+                ]
+                if declining:
+                    metrics_context += f"\nALPHA DECAY WARNING: These patterns have declining edge: {', '.join(declining)}\n"
+                    metrics_context += "Consider disabling patterns with severe decay rather than tuning parameters.\n"
+            else:
+                metrics_context += "\nALPHA DECAY: (metrics unavailable)\n"
+
+            if kr_raw:
+                kr = json.loads(kr_raw)
+                metrics_context += f"\nKILL RATE: {kr.get('killRate', 0)}% of rejected signals would have been profitable.\n"
+                if kr.get('byFilter'):
+                    for reason, stats in kr['byFilter'].items():
+                        if stats['total'] >= 5:
+                            rate = (stats['won'] / stats['total']) * 100
+                            if rate > 40:
+                                metrics_context += f"  Filter '{reason}' kills {rate:.0f}% profitable signals — consider loosening.\n"
+            else:
+                metrics_context += "\nKILL RATE: (metrics unavailable)\n"
+
+            if mfs_raw:
+                mfs = json.loads(mfs_raw)
+                comps = mfs.get('comparisons', [])
+                recent_bad = sum(1 for c in comps[-3:] if not c.get('improved', True))
+                if recent_bad >= 2:
+                    metrics_context += f"\nMUTATION WARNING: {recent_bad}/3 recent mutations degraded performance. Consider pausing evolution.\n"
+                else:
+                    improvements = sum(1 for c in comps[-3:] if c.get('improved', False))
+                    metrics_context += f"\nMUTATION FITNESS: {improvements}/{min(3, len(comps))} recent mutations improved performance.\n"
+            else:
+                metrics_context += "\nMUTATION FITNESS: (metrics unavailable)\n"
+
+            if cv_raw:
+                cv = json.loads(cv_raw)
+                metrics_context += f"\nCAPITAL VELOCITY: {cv.get('velocity', 0):.3f}x/day ({cv.get('trades', 0)} trades, ${cv.get('volume', 0):.2f} volume over {cv.get('days', 0)} days)\n"
+            else:
+                metrics_context += "\nCAPITAL VELOCITY: (metrics unavailable)\n"
+
+            if ecr_raw:
+                ecr = json.loads(ecr_raw)
+                metrics_context += f"\nEDGE CAPTURE RATIO: {ecr.get('ecr', 0):.4f}% (realized ${ecr.get('realized', 0):.2f} / theoretical ${ecr.get('theoretical', 0):.2f})\n"
+            else:
+                metrics_context += "\nEDGE CAPTURE RATIO: (metrics unavailable)\n"
+
+        except Exception as e:
+            metrics_context = f"\n(Edge metrics unavailable: {e})\n"
+
+        if metrics_context.strip():
+            context['edge_metrics'] = metrics_context.strip()
+            print(f'[AI BRAIN] Edge metrics loaded ({len(metrics_context)} chars)')
+
         # Step 2: Call Grok
         print('[AI BRAIN] Calling Grok for analysis...')
         result = call_grok(context, is_acute=args.acute)
