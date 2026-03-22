@@ -178,6 +178,27 @@ services:
       - web
 
   # ============================================================
+  # Signal Worker (Push-based trade execution via Redis Pub/Sub)
+  # ============================================================
+
+  signal-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.scripts
+    restart: always
+    command: [ "node", "scripts/services/signal-worker.mjs" ]
+    environment:
+      - KV_URL=redis://redis:6379
+      - NEXT_PUBLIC_APP_URL=http://web:3000
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+  # ============================================================
   # CVD Monitor (Order Flow — Cumulative Volume Delta)
   # ============================================================
 
