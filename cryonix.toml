@@ -997,7 +997,7 @@ high_retro_penalty = 0.04
 # T2: sell 30% at +8%, activate ratcheting trail for remaining 30%
 # T3: ratcheting trail (multiplier increases with profit level)
 [vedic.exits]
-enabled = true
+enabled = false  # MOON config: tiered exits reduce returns (T1 sells too early)
 t1_target_pct = 0.04
 t1_sell_pct = 0.40
 t2_target_pct = 0.08
@@ -1011,9 +1011,9 @@ ratchet_20pct_mult = 3.0
 # Pause trading after consecutive losses or excessive daily drawdown.
 # Resets daily at UTC midnight. Consecutive losses reset on any win.
 [vedic.risk]
-max_consecutive_losses = 2
-max_daily_loss_pct = 0.05
-max_trades_per_day = 5
+max_consecutive_losses = 999  # MOON config: CB off (kills returns, backtest: +131% without vs +9% with)
+max_daily_loss_pct = 0.50     # Effectively disabled
+max_trades_per_day = 20       # Effectively unlimited
 
 # ── Polymarket Sentiment Overlay ───────────────────────────────────────
 # Reads polymarket:crypto from Redis (written by polymarket-scanner).

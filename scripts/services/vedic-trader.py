@@ -69,8 +69,8 @@ _pm = TOML.get("vedic", {}).get("polymarket", {})
 WATCHLIST = {sym: f"{sym}/USDC" for sym in CRYPTO_GENESIS.keys()}
 
 INITIAL_BALANCE = 1000.0          # $1000 paper money
-POSITION_SIZE_PCT = 0.15          # 15% of balance per trade (V3: wider stops allow larger size)
-MAX_POSITIONS = 3                 # Up to 3 concurrent positions
+POSITION_SIZE_PCT = 0.30          # 30% — MOON config (backtest: +47.6% OOS, 71% WR)
+MAX_POSITIONS = 5                 # 5 concurrent positions (backtest: 2x returns vs 3)
 MAX_PER_SYMBOL = 1                # Only 1 position per symbol
 SCAN_INTERVAL = 300               # Check every 5 minutes
 REDIS_TTL = 86400 * 30            # Keep data for 30 days
@@ -82,14 +82,14 @@ REDIS_TTL = 86400 * 30            # Keep data for 30 days
 # BUY when composite score > this AND no blocking conditions
 # Lowered from 20 to 10: the reweighted muhurta (45% lunar phase) produces
 # more granular scores. Old threshold blocked too many trades (27% WR).
-BUY_SCORE_THRESHOLD = 15  # Raised from 8 — reduce false entries
+BUY_SCORE_THRESHOLD = 8   # MOON config — more trades = more returns (backtest validated)
 
 # SELL when composite score < this OR stop-loss/take-profit hit
 SELL_SCORE_THRESHOLD = -25
 
 # V3 optimized stops: wider = better returns (backtest: +59% at SL=8/TP=20)
-STOP_LOSS_PCT = 0.08              # -8% from entry (wider, avoid whipsaws)
-TAKE_PROFIT_PCT = 0.20            # +20% from entry (let winners run)
+STOP_LOSS_PCT = 0.10              # -10% — MOON config (wider = fewer whipsaws)
+TAKE_PROFIT_PCT = 0.25            # +25% — MOON config (let winners run further)
 
 # Trailing stop: wider activation, wider trail
 TRAILING_ACTIVATION_PCT = 0.06    # Activate at +6%
