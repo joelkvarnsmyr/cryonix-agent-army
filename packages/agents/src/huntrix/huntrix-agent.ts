@@ -3,6 +3,8 @@ import { loadHuntrixConfig, type HuntrixConfig } from './config';
 import { ManipulationScanner } from './manipulation-scanner';
 import { EntryValidator } from './entry-validator';
 import { DumpDetector } from './dump-detector';
+import { ExchangeManager } from './exchange-manager';
+import { PumpProfiler } from './pump-profiler';
 import type {
     HuntrixState,
     ManipulationSignal,
@@ -13,7 +15,8 @@ import type {
 export class HuntrixAgent {
     private redis!: Redis;
     private config!: HuntrixConfig;
-    private ccxt!: import('ccxt').binance;
+    private exchangeManager!: ExchangeManager;
+    private pumpProfiler!: PumpProfiler;
     private scanner!: ManipulationScanner;
     private validator!: EntryValidator;
     private dumpDetector!: DumpDetector;
@@ -44,20 +47,20 @@ export class HuntrixAgent {
         this.redis = new Redis(process.env.KV_URL ?? 'redis://localhost:6379');
         this.redis.on('error', (err: Error) => console.error('[HUNTRIX] Redis error:', err.message));
 
-        // CCXT Binance (price data only in paper mode)
-        const ccxtMod = await import('ccxt');
-        if (this.config.general.mode === 'paper') {
-            this.ccxt = new ccxtMod.binance({ enableRateLimit: true });
-        } else {
-            this.ccxt = new ccxtMod.binance({
-                apiKey: process.env.BINANCE_API_KEY,
-                secret: process.env.BINANCE_API_SECRET,
-                enableRateLimit: true,
-            });
-        }
+        // Multi-exchange initialization
+        this.exchangeManager = new ExchangeManager(this.config.exchanges, this.config.general.mode);
+        await this.exchangeManager.initialize();
+        await this.exchangeManager.loadMarkets();
+
+        this.pumpProfiler = new PumpProfiler(this.redis);
 
         this.scanner = new ManipulationScanner(this.config, this.redis);
-        this.validator = new EntryValidator(this.config, this.ccxt, this.redis);
+        const primaryId = this.exchangeManager.getScanExchangeIds()[0] ?? 'binance';
+        const primaryExchange = this.exchangeManager.getExchange(primaryId);
+        if (!primaryExchange) {
+            throw new Error(`[HUNTRIX] No exchange available — check [[exchanges]] config`);
+        }
+        this.validator = new EntryValidator(this.config, primaryExchange, this.redis);
         this.dumpDetector = new DumpDetector(this.config);
         await this.dumpDetector.initXai();
 
@@ -162,11 +165,19 @@ export class HuntrixAgent {
         // 5b. Order book spoofing scan (uses CCXT exchange instance)
         if (this.config.scanner.sources.orderbook_spoof_enabled) {
             const spoofSymbols = this.positions.map(p => p.symbol);
-            const spoofSignals = await this.scanner.scanOrderBook(this.ccxt, spoofSymbols);
-            signals.push(...spoofSignals);
+            for (const [exId, exchange] of this.exchangeManager.getAllExchanges()) {
+                const spoofSignals = await this.scanner.scanOrderBook(exchange, spoofSymbols, exId);
+                signals.push(...spoofSignals);
+            }
         }
 
         this.activeSignals = signals;
+
+        // Start tracking detected pumps for profiling
+        for (const signal of signals) {
+            this.pumpProfiler.startTracking(signal);
+        }
+        await this.pumpProfiler.checkTimeouts();
         this.lastScanAt = new Date().toISOString();
 
         // 5c. Check for new blacklist entries and alert
@@ -238,22 +249,39 @@ export class HuntrixAgent {
 
         const quantity = positionSize / price;
 
+        // Find best exchange for this trade
+        let targetExchangeId = signal.exchange;
+        let targetExchange: any;
+
+        const best = await this.exchangeManager.getBestExchange(signal.symbol);
+        if (best) {
+            targetExchangeId = best.id;
+            targetExchange = best.exchange;
+        } else {
+            targetExchange = this.exchangeManager.getExchange(targetExchangeId);
+            if (!targetExchange) {
+                console.log(`[HUNTRIX] No exchange available for ${signal.symbol} — skipping`);
+                return;
+            }
+        }
+
         if (this.config.general.mode !== 'paper') {
             try {
-                const order = await this.ccxt.createMarketBuyOrder(signal.symbol, quantity);
+                const order = await targetExchange.createMarketBuyOrder(signal.symbol, quantity);
                 price = order.average || price;
-                console.log(`[HUNTRIX] LIVE BUY ${signal.symbol} — $${positionSize.toFixed(2)} @ $${price}`);
+                console.log(`[HUNTRIX] LIVE BUY ${signal.symbol} on ${targetExchangeId} — $${positionSize.toFixed(2)} @ $${price}`);
             } catch (err) {
-                console.error(`[HUNTRIX] BUY failed for ${signal.symbol}:`, err instanceof Error ? err.message : err);
+                console.error(`[HUNTRIX] BUY failed for ${signal.symbol} on ${targetExchangeId}:`, err instanceof Error ? err.message : err);
                 return;
             }
         } else {
-            console.log(`[HUNTRIX] PAPER BUY ${signal.symbol} — $${positionSize.toFixed(2)} @ $${price.toFixed(6)} (${signal.type}, conf: ${signal.confidence}%)`);
+            console.log(`[HUNTRIX] PAPER BUY ${signal.symbol} on ${targetExchangeId} — $${positionSize.toFixed(2)} @ $${price.toFixed(6)} (${signal.type}, conf: ${signal.confidence}%)`);
         }
 
         const position: HunterPosition = {
             id: `htx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             symbol: signal.symbol,
+            exchange: targetExchangeId,
             entry_price: price,
             current_price: price,
             size_usd: positionSize,
@@ -291,7 +319,10 @@ export class HuntrixAgent {
 
         for (const position of this.positions) {
             try {
-                const ticker = await this.ccxt.fetchTicker(position.symbol);
+                const exchangeId = position.exchange ?? 'binance';
+                const ex = this.exchangeManager.getExchange(exchangeId);
+                if (!ex) continue;
+                const ticker = await ex.fetchTicker(position.symbol);
                 const currentPrice = ticker.last ?? ticker.close ?? 0;
                 if (currentPrice <= 0) continue;
 
@@ -304,6 +335,9 @@ export class HuntrixAgent {
                     timestamp: Date.now(),
                     volume: ticker.quoteVolume || 0,
                 });
+
+                // Update pump profiler with current price
+                this.pumpProfiler.updatePrice(position.signal.id, currentPrice);
 
                 if (position.price_history.length > 120) {
                     position.price_history = position.price_history.slice(-120);
@@ -331,7 +365,10 @@ export class HuntrixAgent {
 
         if (this.config.general.mode !== 'paper' && reason !== 'manual') {
             try {
-                await this.ccxt.createMarketSellOrder(position.symbol, position.quantity);
+                const sellExId = position.exchange ?? 'binance';
+                const ex = this.exchangeManager.getExchange(sellExId);
+                if (!ex) throw new Error(`Exchange ${sellExId} not available`);
+                await ex.createMarketSellOrder(position.symbol, position.quantity);
             } catch (err) {
                 console.error(`[HUNTRIX] SELL failed for ${position.symbol}:`, err instanceof Error ? err.message : err);
                 return;
@@ -383,6 +420,9 @@ export class HuntrixAgent {
         if (this.recentTrades.length > 50) this.recentTrades = this.recentTrades.slice(-50);
 
         this.dumpDetector.cleanup(position.id);
+
+        // Finalize pump profile with trade result
+        await this.pumpProfiler.finalize(position.signal.id, true, pnlPct);
 
         const emoji = pnl >= 0 ? '+' : '';
         const mode = this.config.general.mode === 'paper' ? 'PAPER' : 'LIVE';
