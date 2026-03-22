@@ -41,11 +41,14 @@ Skipped (live-only): blacklist, spread check, GoPlus, recent-exit cooldown.
 
 Replays 1-minute OHLCV ticks from entry point through the real `DumpDetector`:
 - Constructs synthetic `HunterPosition` with `price_history: PriceTick[]`
+- On each tick: appends candle to `price_history`, updates `current_price`, `unrealized_pnl`, `unrealized_pnl_pct`
 - Calls `DumpDetector.check()` + `DumpDetector.updateTrailing()` on each tick
 - Exits triggered: stop_loss, take_profit, trailing_stop, dump_velocity, volume_reversal, max_hold_time
 - `recheckShillActivity()` skipped (live Grok API call)
 
-Uses `exits.*` config from `huntrix.toml` — identical thresholds as production.
+**DumpDetector time injection:** `DumpDetector.checkMaxHoldTime()` uses `Date.now()` which won't work for historical data. The ExitSimulator wraps this by setting `position.entered_at` relative to the simulated tick timestamp, so hold time is computed correctly. Specifically: `entered_at` is set to `candles[entryIdx].timestamp` as ISO string, and the ExitSimulator computes hold time from `(candle.timestamp - entryTimestamp)` directly rather than relying on `checkMaxHoldTime()`. The other DumpDetector checks (SL/TP/trailing/velocity/volume) are pure math on position fields and work without modification.
+
+Uses full `HuntrixConfig` (loaded from `huntrix.toml` via `loadHuntrixConfig()`) — identical thresholds as production. `DumpDetector` constructor requires the complete config object.
 
 ### 4. Calibrator (optional)
 
@@ -58,9 +61,8 @@ When `--pump-history <file.json>` is provided:
 
 | Component | Source | Notes |
 |-----------|--------|-------|
-| `OHLCVFetcher` | `packages/agents/src/psinix/ohlcv-fetcher.ts` | CCXT wrapper with caching, import as-is |
-| `DumpDetector` | `packages/agents/src/huntrix/dump-detector.ts` | Exit logic — skip `recheckShillActivity()` |
-| `VolumeSpikeDetector` | `packages/agents/src/market-scout/pattern-detectors/volume-spike.ts` | Volume anomaly detection, import as-is |
+| `DumpDetector` | `packages/agents/src/huntrix/dump-detector.ts` | Exit logic — skip `recheckShillActivity()` and `checkMaxHoldTime()` (handle in ExitSimulator) |
+| `VolumeSpikeDetector` | `packages/agents/src/market-scout/pattern-detectors/volume-spike.ts` | Volume anomaly detection on 15m candles (needs ≥21 candles, ≥1% price move). Returns `PatternSignal \| null` — treat non-null as spike confirmed. Input `OhlcvData[]` is structurally identical to `Candle[]` |
 | `calculateSMA`, `calculateStdDev` | `packages/agents/src/market-scout/pattern-detectors/pattern-detector.interface.ts` | Pure math functions |
 | `BacktestResult`, `PerformanceMetrics`, `BacktestTrade`, `EquityPoint` | `packages/types/src/index.ts` | Platform-wide output types for dashboard compatibility |
 
@@ -77,7 +79,7 @@ When `--pump-history <file.json>` is provided:
 
 ### HuntrixBacktestResult
 
-Conforms to `BacktestResult` from `@cryonix/types` with Huntrix-specific extensions:
+Independent type with Huntrix-specific fields. Includes a `toPerformanceMetrics()` method that maps to `PerformanceMetrics` from `@cryonix/types` for dashboard compatibility:
 
 ```typescript
 interface HuntrixBacktestResult {
@@ -165,13 +167,13 @@ Arguments:
 
 ```
 CLI (--symbol, --days, --exchange)
-  → OHLCVFetcher.getCandles(symbol, '1m', barsNeeded)
-  → OHLCVFetcher.getCandles(symbol, '15m', barsNeeded/15)
+  → CCXT exchange.fetchOHLCV(symbol, '1m', ...) with pagination (1000 bars/request)
+  → CCXT exchange.fetchOHLCV(symbol, '15m', ...) with pagination
   → SyntheticSignalGenerator.scan(candles1m, candles15m, config.detection)
     → VolumeSpikeDetector.detect() per 20-bar window
     → Price velocity calculation per velocity_window_seconds
     → Phase classification (early_pump / mid_pump)
-    → ManipulationSignal[] with type='wash_trading_pump', source='synthetic'
+    → ManipulationSignal[] with type='wash_trading_pump', source='trending_anomaly'
   → EntrySimulator.filter(signals, config)
     → Phase check, confidence threshold, already-pumped guard
     → Approved ManipulationSignal[]
@@ -191,10 +193,12 @@ CLI (--symbol, --days, --exchange)
 ## Constraints
 
 - No Redis/Postgres dependencies at runtime (pure computation)
-- OHLCV fetched via public CCXT (no API keys needed)
+- OHLCV fetched via public CCXT (no API keys needed), any exchange supported via `--exchange`
+- CLI runner handles OHLCV pagination (1000 bars/request, loop until all fetched)
 - 1-minute candles for exit replay (matches production `price_check_ms: 5000` granularity)
-- 15-minute candles for signal generation context (matches MarketScoutTank scan interval)
-- Max ~43,200 candles per symbol for 30 days of 1m data (CCXT pagination handles this)
+- 15-minute candles for signal generation + `VolumeSpikeDetector` (needs ≥21 candles, ≥1% price move — too rare on 1m)
+- Max ~43,200 1m candles per symbol for 30 days (pagination handles this)
+- Synthetic signals use `source: 'trending_anomaly'` (existing union value, no type changes needed)
 - Reuse existing components wherever possible — no duplication
 
 ## Testing
