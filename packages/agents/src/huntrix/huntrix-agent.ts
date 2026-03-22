@@ -1,4 +1,5 @@
 import Redis from 'ioredis';
+import { Client as PgClient } from 'pg';
 import { loadHuntrixConfig, type HuntrixConfig } from './config';
 import { ManipulationScanner } from './manipulation-scanner';
 import { EntryValidator } from './entry-validator';
@@ -21,6 +22,7 @@ export class HuntrixAgent {
     private validator!: EntryValidator;
     private dumpDetector!: DumpDetector;
 
+    private pg: PgClient | null = null;
     private positions: HunterPosition[] = [];
     private recentTrades: HunterPosition[] = [];
     private activeSignals: ManipulationSignal[] = [];
@@ -63,6 +65,31 @@ export class HuntrixAgent {
         this.validator = new EntryValidator(this.config, primaryExchange, this.redis);
         this.dumpDetector = new DumpDetector(this.config);
         await this.dumpDetector.initXai();
+
+        // Postgres trade persistence
+        const pgUrl = process.env.POSTGRES_URL;
+        if (pgUrl) {
+            this.pg = new PgClient({ connectionString: pgUrl });
+            await this.pg.connect();
+            await this.pg.query(`
+                CREATE TABLE IF NOT EXISTS huntrix_trades (
+                    id SERIAL PRIMARY KEY,
+                    symbol VARCHAR(20) NOT NULL,
+                    side VARCHAR(10) NOT NULL,
+                    entry_price DECIMAL(20,8),
+                    exit_price DECIMAL(20,8),
+                    size DECIMAL(20,8),
+                    pnl DECIMAL(20,8),
+                    entry_reason TEXT,
+                    exit_reason TEXT,
+                    status TEXT DEFAULT 'open',
+                    entered_at TIMESTAMPTZ DEFAULT NOW(),
+                    exited_at TIMESTAMPTZ,
+                    metadata JSONB
+                )
+            `);
+            console.log('[huntrix] Postgres connected');
+        }
 
         // Restore state from Redis
         await this.loadState();
@@ -307,6 +334,20 @@ export class HuntrixAgent {
         this.virtualBalance -= positionSize;
         this.tradesToday++;
 
+        // Persist trade to Postgres
+        if (this.pg) {
+            await this.pg.query(
+                `INSERT INTO huntrix_trades (symbol, side, entry_price, size, entry_reason, metadata)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [signal.symbol, 'BUY', price, quantity, `${signal.type}:${signal.phase}`, JSON.stringify({
+                    confidence: signal.confidence,
+                    exchange: targetExchangeId,
+                    source: signal.source,
+                    position_id: position.id,
+                })]
+            ).catch(e => console.warn('[huntrix-db]', e.message));
+        }
+
         if (this.config.telegram.alert_on_entry) {
             await this.sendTelegramAlert(
                 `<b>HUNTRIX ENTRY</b> ${signal.symbol}\n` +
@@ -429,6 +470,15 @@ export class HuntrixAgent {
         // Finalize pump profile with trade result
         await this.pumpProfiler.finalize(position.signal.id, true, pnlPct);
 
+        // Persist exit to Postgres
+        if (this.pg) {
+            await this.pg.query(
+                `UPDATE huntrix_trades SET exit_price=$1, pnl=$2, exit_reason=$3, status='closed', exited_at=NOW()
+                 WHERE symbol=$4 AND status='open' ORDER BY entered_at DESC LIMIT 1`,
+                [currentPrice, pnl, reason, position.symbol]
+            ).catch(e => console.warn('[huntrix-db]', e.message));
+        }
+
         const emoji = pnl >= 0 ? '+' : '';
         const mode = this.config.general.mode === 'paper' ? 'PAPER' : 'LIVE';
         console.log(`[HUNTRIX] [${mode}] CLOSED ${position.symbol} — ${reason} — PnL: ${emoji}$${pnl.toFixed(2)} (${emoji}${pnlPct.toFixed(2)}%)`);
@@ -516,8 +566,8 @@ export class HuntrixAgent {
 
         try {
             await Promise.all([
-                this.redis.set('huntrix:state', JSON.stringify(state)),
-                this.redis.set('huntrix:risk', JSON.stringify({
+                this.redis.setex('huntrix:state', 600, JSON.stringify(state)),
+                this.redis.setex('huntrix:risk', 600, JSON.stringify({
                     dailyPnl: this.dailyPnl,
                     consecutiveLosses: this.consecutiveLosses,
                     cooldownUntil: this.cooldownUntil,
@@ -533,7 +583,7 @@ export class HuntrixAgent {
 
     private async persistPositions(): Promise<void> {
         try {
-            await this.redis.set('huntrix:positions', JSON.stringify(this.positions));
+            await this.redis.setex('huntrix:positions', 600, JSON.stringify(this.positions));
         } catch { /* non-critical */ }
     }
 
