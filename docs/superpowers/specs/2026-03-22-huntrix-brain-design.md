@@ -58,6 +58,10 @@ The brain prompt includes hard min/max bounds. Values outside bounds are rejecte
 | `capital.max_position_size_usd` | 10 | 50 | 25 |
 | `limits.max_trades_per_day` | 2 | 10 | 5 |
 | `risk.max_daily_loss_pct` | 5.0 | 25.0 | 15.0 |
+| `exits.volume_reversal_checks` | 2 | 5 | 3 |
+| `exits.shill_drop_tighten_pct` | 30.0 | 70.0 | 50.0 |
+| `exits.shill_tightened_trailing_pct` | 1.0 | 4.0 | 2.0 |
+| `detection.max_spread_pct` | 0.3 | 1.0 | 0.5 |
 
 ### Frozen Parameters (Brain MUST NOT touch)
 
@@ -65,6 +69,7 @@ The brain prompt includes hard min/max bounds. Values outside bounds are rejecte
 - `timing.*` — scan intervals (risk of API rate limits)
 - `telegram.*` — alerting config
 - `scanner.sources.*` — which scanners are active
+- `detection.phase_window_minutes` — baseline lookback window (structural)
 
 ## Data Collection
 
@@ -117,6 +122,7 @@ huntrix-brain:
     context: .
     dockerfile: Dockerfile.huntrix
   container_name: huntrix-brain
+  command: ["npx", "tsx", "scripts/services/huntrix-brain.ts"]
   restart: unless-stopped
   volumes:
     - ~/.claude:/root/.claude:ro
