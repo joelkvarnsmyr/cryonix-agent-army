@@ -1200,3 +1200,11 @@ daily_hour_utc = 0
 retrain_interval_days = 7
 weight_in_auto_trade = 0.20
 min_confidence_to_publish = 0.10
+
+# ── DCA / Pyramiding ────────────────────────────────────────
+[dca]
+enabled = true
+max_entries_per_symbol = 2
+second_entry_min_confidence = 0.75
+dip_threshold_pct = 2.0
+max_symbol_exposure_pct = 60
