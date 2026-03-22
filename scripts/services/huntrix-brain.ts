@@ -115,6 +115,7 @@ interface BrainData {
     risk: any | null;
     previousRun: string | null;
     currentConfig: string | null;
+    pumpStats: any | null;
 }
 
 async function collectData(): Promise<BrainData> {
@@ -122,7 +123,8 @@ async function collectData(): Promise<BrainData> {
 
     const stateRaw   = await redis.get('huntrix:state').catch(() => null);
     const riskRaw    = await redis.get('huntrix:risk').catch(() => null);
-    const prevRunRaw = await redis.get('huntrix:brain:last_run').catch(() => null);
+    const prevRunRaw    = await redis.get('huntrix:brain:last_run').catch(() => null);
+    const pumpStatsRaw  = await redis.get('huntrix:pump_stats').catch(() => null);
 
     function safeParse(raw: string | null): any {
         if (!raw) return null;
@@ -147,6 +149,7 @@ async function collectData(): Promise<BrainData> {
         risk: safeParse(riskRaw),
         previousRun,
         currentConfig,
+        pumpStats: safeParse(pumpStatsRaw),
     };
 }
 
@@ -199,6 +202,10 @@ function buildPrompt(data: BrainData, triggerReason: string, runId: string): str
     const configSection = data.currentConfig ?? '[could not read huntrix.toml]';
     const prevSection = data.previousRun ?? 'First run — no prior Brain analysis exists.';
 
+    const pumpStatsSection = data.pumpStats
+        ? JSON.stringify(data.pumpStats, null, 2)
+        : '[no pump data yet — profiler needs more detected pumps]';
+
     // Build bounds table for prompt
     const boundsTable = Object.entries(PARAM_BOUNDS)
         .map(([param, b]) => `| \`${param}\` | ${b.min} | ${b.max} |`)
@@ -233,6 +240,13 @@ ${configSection}
 
 ## Previous Brain Run
 ${prevSection}
+
+## Pump Duration Statistics (per exchange)
+\`\`\`json
+${pumpStatsSection}
+\`\`\`
+
+Use these stats to inform \`exits.max_hold_minutes\` adjustments. If median peak is 8min on MEXC but max_hold is 30, consider lowering it. If no data exists yet, skip this analysis.
 
 ## Your Job
 
