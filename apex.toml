@@ -8,7 +8,7 @@ scan_interval_seconds = 30
 
 [confluence]
 min_score_full_kelly = 60
-min_score_half_kelly = 40
+min_score_half_kelly = 35
 
 [confluence.weights]
 vedic_venus_rx = 40
@@ -17,7 +17,7 @@ cryonix_dip_buy = 25
 copynix_single_whale = 25
 polymarket_sentiment_shift = 15
 cmc_extreme_fear = 15
-psinix_coherence = 10
+psinix_coherence = 15
 solanix_volume_spike = 10
 aktienix_macro_bullish = 5
 cmc_btc_dom_falling = 5
@@ -29,7 +29,7 @@ cmc_fear_greed_dropping = 10
 cmc_btc_dom_rising = 10
 # ORAKEL weights
 orakel_direction = 15
-orakel_regime = 10
+orakel_regime = 15
 orakel_fused = 10
 
 [confluence.thresholds]
