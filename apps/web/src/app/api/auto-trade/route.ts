@@ -2643,16 +2643,22 @@ async function checkPhantomResults(): Promise<void> {
 
     const ex = getExchange();
     let checked = 0;
+    const toKeep: string[] = [];
 
     for (const raw of phantoms) {
       const phantom = JSON.parse(raw);
       const age = Date.now() - phantom.rejectedAt;
-      if (age < 4 * 3600_000 || age > 5 * 3600_000) continue;
 
+      if (age < 4 * 3600_000) {
+        toKeep.push(raw); // Too recent, keep for later
+        continue;
+      }
+
+      // Old enough — check result
       try {
         const ticker = await ex.fetchTicker(phantom.symbol);
-        const priceNow = ticker.last || 0;
-        if (priceNow <= 0) continue;
+        const priceNow = ticker.last ?? ticker.close ?? 0;
+        if (priceNow <= 0) { toKeep.push(raw); continue; }
 
         const phantomPnlPct = ((priceNow - phantom.entryPrice) / phantom.entryPrice) * 100;
 
@@ -2665,33 +2671,62 @@ async function checkPhantomResults(): Promise<void> {
           phantomPnlPct: Math.round(phantomPnlPct * 100) / 100,
           wouldHaveWon: phantomPnlPct > 0,
           rejectedAt: phantom.rejectedAt,
+          checkedAt: Date.now(),
         }));
-        await redis.ltrim('phantom:results', 0, 199);
+        await redis.ltrim('phantom:results', 0, 499);
         checked++;
-      } catch { /* ticker unavailable */ }
+      } catch {
+        toKeep.push(raw); // Price fetch failed, retry later
+      }
 
-      if (checked >= 5) break; // Rate limit
+      if (checked >= 10) break; // Rate limit per cycle
     }
 
-    // Calculate Kill Rate
+    // Replace the rejected list with only unexpired/unprocessed entries
+    if (checked > 0) {
+      const pipe = redis.pipeline();
+      pipe.del('phantom:rejected');
+      if (toKeep.length > 0) {
+        pipe.rpush('phantom:rejected', ...toKeep);
+      }
+      await pipe.exec();
+    }
+
+    // Calculate Kill Rate with per-filter breakdown
     const results = await redis.lrange('phantom:results', 0, -1);
-    if (results.length >= 10) {
+    if (results.length > 0) {
       const parsed = results.map(r => JSON.parse(r));
       const profitable = parsed.filter(r => r.wouldHaveWon).length;
       const killRate = (profitable / parsed.length) * 100;
+
+      // Per-filter breakdown
+      const byFilter: Record<string, { won: number; total: number; rate: number }> = {};
+      for (const r of parsed) {
+        const key = r.reason ?? 'unknown';
+        if (!byFilter[key]) byFilter[key] = { won: 0, total: 0, rate: 0 };
+        byFilter[key].total++;
+        if (r.wouldHaveWon) byFilter[key].won++;
+      }
+      for (const key of Object.keys(byFilter)) {
+        byFilter[key].rate = Math.round((byFilter[key].won / byFilter[key].total) * 1000) / 10;
+      }
+
       await redis.set('metrics:kill_rate', JSON.stringify({
         killRate: Math.round(killRate * 10) / 10,
         profitable,
         total: parsed.length,
-        avgPhantomPnl: Math.round(parsed.reduce((s, r) => s + r.phantomPnlPct, 0) / parsed.length * 100) / 100,
+        avgPhantomPnl: Math.round(parsed.reduce((s: number, r: any) => s + r.phantomPnlPct, 0) / parsed.length * 100) / 100,
+        byFilter,
         timestamp: Date.now(),
       }), 'EX', 86400);
 
       if (checked > 0) {
-        console.log(`[KILL-RATE] ${killRate.toFixed(1)}% of rejected hypotheses were profitable (${profitable}/${parsed.length})`);
+        console.log(`[KILL-RATE] Checked ${checked} phantoms. KR=${killRate.toFixed(1)}% (${profitable}/${parsed.length} profitable). Queue: ${toKeep.length} remaining.`);
       }
     }
-  } catch { /* non-critical */ }
+  } catch (err) {
+    console.warn('[KILL-RATE] checkPhantomResults error:', err instanceof Error ? err.message : err);
+  }
 }
 
 // ============================================================================
