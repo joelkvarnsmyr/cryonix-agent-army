@@ -1,4 +1,5 @@
 import json
+import time
 import redis.asyncio as redis
 from typing import Optional, Dict, Any
 from src.core.config import settings
@@ -28,8 +29,14 @@ class StateManager:
         return await self.redis.lrange("trades:pending", 0, -1)
         
     async def request_approval(self, signal: Dict[str, Any]):
-        """Push a trade to the approval queue."""
+        """Push a trade to the approval queue and notify subscribers."""
         await self.redis.rpush("trades:pending", json.dumps(signal))
+        await self.redis.publish('signals:new', json.dumps({
+            'symbol': signal.get('symbol'),
+            'action': signal.get('action'),
+            'confidence': signal.get('confidence'),
+            'timestamp': time.time(),
+        }))
         
     async def close(self):
         await self.redis.close()
