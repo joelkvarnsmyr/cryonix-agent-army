@@ -10,7 +10,7 @@ import Redis from 'ioredis';
 import { execSync } from 'child_process';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
-import { PARAM_BOUNDS } from '../../packages/agents/src/huntrix/brain-actions';
+import { PARAM_BOUNDS, validateAction } from '../../packages/agents/src/huntrix/brain-actions';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const PROJECT_ROOT = process.env.PROJECT_ROOT ?? path.resolve(__dirname, '../..');
@@ -319,6 +319,12 @@ async function runBrain(triggerReason: string) {
     const promptPath = path.join(tmpdir(), `huntrix-brain-${runId}.md`);
     writeFileSync(promptPath, prompt);
 
+    // 2.5. Save baseline TOML for post-validation
+    let baselineToml = '';
+    try {
+        baselineToml = readFileSync(TOML_PATH, 'utf-8');
+    } catch { /* non-fatal — validation will skip if empty */ }
+
     // 3. Run Claude Code CLI
     console.log('[huntrix-brain] Invoking Claude Code CLI...');
     let claudeOutput = '';
@@ -336,6 +342,71 @@ async function runBrain(triggerReason: string) {
         return;
     } finally {
         try { unlinkSync(promptPath); } catch { /* ignore */ }
+    }
+
+    // 3.5. Post-validation: verify all parameter changes against PARAM_BOUNDS
+    if (baselineToml) {
+        try {
+            const { parse } = await import('@iarna/toml');
+            const newToml = readFileSync(TOML_PATH, 'utf-8');
+            const oldDoc = parse(baselineToml) as Record<string, any>;
+            const newDoc = parse(newToml) as Record<string, any>;
+
+            const violations: string[] = [];
+            for (const [paramPath, bounds] of Object.entries(PARAM_BOUNDS)) {
+                const [section, key] = paramPath.split('.');
+                const oldVal = oldDoc[section]?.[key];
+                const newVal = newDoc[section]?.[key];
+                if (newVal === undefined || newVal === oldVal) continue;
+
+                // Validate using brain-actions validateAction
+                const result = validateAction({
+                    type: 'adjust_param',
+                    param: paramPath,
+                    new_value: newVal,
+                    reasoning: 'post-validation check',
+                });
+                if (!result.valid) {
+                    violations.push(`${paramPath}: ${newVal} — ${result.reason}`);
+                }
+            }
+
+            // Also check for changes to frozen parameters not in PARAM_BOUNDS
+            const FROZEN_PREFIXES = ['general.', 'timing.', 'telegram.', 'scanner.sources.', 'brain.'];
+            const FROZEN_KEYS = ['detection.phase_window_minutes'];
+            for (const section of Object.keys(newDoc)) {
+                if (typeof newDoc[section] !== 'object' || newDoc[section] === null) continue;
+                for (const key of Object.keys(newDoc[section])) {
+                    const paramPath = `${section}.${key}`;
+                    const oldVal = oldDoc[section]?.[key];
+                    const newVal = newDoc[section][key];
+                    if (newVal === oldVal) continue;
+                    if (oldVal === undefined) continue; // new key added, not a violation
+
+                    const isFrozen = FROZEN_PREFIXES.some(p => paramPath.startsWith(p))
+                        || FROZEN_KEYS.includes(paramPath);
+                    if (isFrozen) {
+                        violations.push(`${paramPath}: frozen parameter was modified`);
+                    }
+                }
+            }
+
+            if (violations.length > 0) {
+                console.warn('[huntrix-brain] POST-VALIDATION FAILED — reverting huntrix.toml');
+                for (const v of violations) console.warn(`  ⛔ ${v}`);
+                writeFileSync(TOML_PATH, baselineToml);
+                await sendTelegram(
+                    `🧠 HuntrixBrain\n\n⛔ Post-validation REVERTED huntrix.toml\n\n` +
+                    violations.map(v => `• ${v}`).join('\n')
+                );
+            } else {
+                console.log('[huntrix-brain] Post-validation passed.');
+            }
+        } catch (err: any) {
+            // Validation parse error — revert to be safe
+            console.error('[huntrix-brain] Post-validation parse error, reverting:', err.message);
+            writeFileSync(TOML_PATH, baselineToml);
+        }
     }
 
     // 4. Parse summary block
