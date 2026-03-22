@@ -12,7 +12,7 @@ export interface ApexPosition {
     highWatermark: number;
     trailingActive: boolean;
     confluenceScore: number;
-    contributingSignals: string[];  // source names
+    contributingSignals: (string | { source: string; signalType: string; confidence: number; score: number })[];
 }
 
 export interface ExitDecision {

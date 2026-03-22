@@ -5,6 +5,7 @@ export { CopyExecutor } from './copy-executor';
 export { CopyRiskGate } from './risk-gate';
 export { WalletProfiler } from './wallet-profiler';
 export { BayesianScorer } from './bayesian-scorer';
+export { CopyTracker } from './copy-tracker';
 export { loadCopynixConfig } from './config';
 export type { CopynixTomlConfig } from './config';
-export type { TrackedWallet, WalletTrade, CopySignal, CopyPosition, CopyAccountState, TokenSafetyCheck } from './types';
+export type { TrackedWallet, WalletTrade, CopySignal, CopyPosition, CopyAccountState, TokenSafetyCheck, WalletPerformance } from './types';

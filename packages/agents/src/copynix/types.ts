@@ -67,3 +67,20 @@ export interface TokenSafetyCheck {
     safe: boolean;
     reasons: string[];
 }
+
+export interface WalletPerformance {
+    address: string;
+    realizedPnlUsd: number;
+    totalRoundTrips: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    copynixTrades: number;
+    copynixWins: number;
+    copynixPnlUsd: number;
+    compositeScore: number;
+    tier: 'whale' | 'tracked' | 'probation' | 'removed';
+    lastActive: number;
+    addedAt: number;
+    source: 'manual' | 'discovery' | 'dune';
+}
