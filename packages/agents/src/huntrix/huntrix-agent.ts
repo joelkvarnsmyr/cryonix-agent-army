@@ -88,6 +88,33 @@ export class HuntrixAgent {
                     metadata JSONB
                 )
             `);
+            await this.pg.query(`
+                CREATE TABLE IF NOT EXISTS huntrix_signals (
+                    id SERIAL PRIMARY KEY,
+                    signal_id VARCHAR(64) NOT NULL,
+                    symbol VARCHAR(20) NOT NULL,
+                    type VARCHAR(50) NOT NULL,
+                    source VARCHAR(50) NOT NULL,
+                    exchange VARCHAR(20),
+                    confidence DECIMAL(5,2),
+                    phase VARCHAR(20),
+                    price_at_detection DECIMAL(20,8),
+                    volume_spike_ratio DECIMAL(10,4),
+                    price_velocity DECIMAL(10,6),
+                    total_shill_accounts INTEGER DEFAULT 0,
+                    estimated_peak_minutes INTEGER,
+                    reasoning TEXT,
+                    detected_at TIMESTAMPTZ NOT NULL,
+                    logged_at TIMESTAMPTZ DEFAULT NOW(),
+                    metadata JSONB
+                )
+            `);
+            await this.pg.query(`
+                CREATE INDEX IF NOT EXISTS idx_huntrix_signals_symbol ON huntrix_signals(symbol)
+            `);
+            await this.pg.query(`
+                CREATE INDEX IF NOT EXISTS idx_huntrix_signals_detected ON huntrix_signals(detected_at)
+            `);
             console.log('[huntrix] Postgres connected');
         }
 
@@ -199,6 +226,9 @@ export class HuntrixAgent {
         }
 
         this.activeSignals = signals;
+
+        // Persist all signals to Postgres for future backtesting
+        await this.persistSignals(signals);
 
         // Start tracking detected pumps for profiling
         for (const signal of signals) {
@@ -631,6 +661,47 @@ export class HuntrixAgent {
         } catch (err) {
             console.warn('[HUNTRIX] Telegram alert failed:', err instanceof Error ? err.message : err);
         }
+    }
+
+    // ─── Signal Persistence ──────────────────────────────────────
+
+    private async persistSignals(signals: ManipulationSignal[]): Promise<void> {
+        if (!this.pg || signals.length === 0) return;
+        for (const sig of signals) {
+            try {
+                await this.pg.query(
+                    `INSERT INTO huntrix_signals
+                     (signal_id, symbol, type, source, exchange, confidence, phase,
+                      price_at_detection, volume_spike_ratio, price_velocity,
+                      total_shill_accounts, estimated_peak_minutes, reasoning,
+                      detected_at, metadata)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+                    [
+                        sig.id,
+                        sig.symbol,
+                        sig.type,
+                        sig.source,
+                        sig.exchange ?? null,
+                        sig.confidence,
+                        sig.phase,
+                        sig.price_at_detection,
+                        sig.volume_spike_ratio,
+                        sig.price_velocity,
+                        sig.total_shill_accounts,
+                        sig.estimated_peak_minutes,
+                        sig.reasoning,
+                        sig.detected_at,
+                        JSON.stringify({
+                            shill_activity: sig.shill_activity,
+                            volume_24h: sig.volume_24h,
+                        }),
+                    ],
+                );
+            } catch (err) {
+                console.warn('[huntrix-db] Signal persist failed:', err instanceof Error ? err.message : err);
+            }
+        }
+        console.log(`[HUNTRIX] Persisted ${signals.length} signal(s) to Postgres`);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────
