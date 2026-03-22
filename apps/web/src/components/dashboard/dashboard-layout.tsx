@@ -117,6 +117,16 @@ export const NAV_GROUPS = [
       { href: '/huntrix', label: 'Huntrix', icon: Crosshair, desc: 'Manipulation detector' },
     ],
   },
+  {
+    id: 'metrics',
+    label: 'METRICS',
+    accent: 'text-rose-400',
+    dot: 'bg-rose-400',
+    glow: 'shadow-[0_0_8px_rgba(251,113,133,0.5)]',
+    items: [
+      { href: '/metrics', label: 'Metrics', icon: Activity, desc: 'Edge machine metrics' },
+    ],
+  },
 ] as const;
 
 type NavGroup = (typeof NAV_GROUPS)[number];

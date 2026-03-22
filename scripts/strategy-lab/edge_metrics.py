@@ -288,6 +288,15 @@ def compute_ecr(pg, r):
         'timestamp': int(time.time() * 1000),
     }), ex=86400)
 
+    # Store ECR history for trend sparkline (last 90 data points ~22 days at 6h intervals)
+    r.lpush('metrics:ecr:history', json.dumps({
+        'ecr': round(ecr, 4),
+        'realized': round(realized, 4),
+        'theoretical': round(total_theoretical, 2),
+        'timestamp': int(time.time() * 1000),
+    }))
+    r.ltrim('metrics:ecr:history', 0, 89)
+
     print(f'[ECR] {ecr:.4f}% — realized ${realized:.4f} / theoretical ${total_theoretical:.2f} (7d)')
 
 
