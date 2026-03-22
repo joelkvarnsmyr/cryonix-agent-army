@@ -361,12 +361,13 @@ export class ApexAgent {
                 messages: [{
                     role: 'user',
                     content:
-                        `You are a meta-intelligence analyst. APEX has detected confluence across ` +
-                        `${opp.contributingSignals.length} independent trading systems for ${opp.symbol} (${opp.direction}).\n` +
-                        `Contributing signals: ${opp.contributingSignals.map(s => `${s.source}:${s.signalType}`).join(', ')}\n` +
+                        `You are a crypto trade validator. APEX detected confluence for ${opp.symbol} (${opp.direction}).\n` +
+                        `Each signal below is from a DIFFERENT source (already deduplicated — no duplicates):\n` +
+                        `${opp.contributingSignals.map(s => `- ${s.source}:${s.signalType} (conf=${s.confidence})`).join('\n')}\n` +
+                        `Unique sources: ${new Set(opp.contributingSignals.map(s => s.source)).size}\n` +
                         `Confluence score: ${opp.score}/100\n\n` +
-                        `Evaluate if this multi-system agreement represents a genuine opportunity ` +
-                        `or if the signals are correlated (same underlying cause, not independent).\n` +
+                        `Should we enter this trade? Consider: macro environment, technical setup, ` +
+                        `risk/reward. Approve if the setup has positive expected value.\n` +
                         `Reply JSON: {"approve": true/false, "confidence": 0-100, "reason": "..."}`,
                 }],
             });
