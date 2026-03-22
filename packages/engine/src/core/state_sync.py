@@ -37,6 +37,21 @@ class StateManager:
             'confidence': signal.get('confidence'),
             'timestamp': time.time(),
         }))
+
+        # Broadcast for APEX and other meta-consumers.
+        # Unlike trades:pending (consumed by auto-trader via LREM),
+        # this key persists for 5 minutes so downstream readers always
+        # see the latest signals.
+        try:
+            existing_raw = await self.redis.get("signals:broadcast")
+            existing: list = json.loads(existing_raw) if existing_raw else []
+            cutoff = time.time() - 300  # 5 min window
+            existing = [s for s in existing if s.get("_ts", 0) > cutoff]
+            signal_copy = {**signal, "_ts": time.time()}
+            existing.append(signal_copy)
+            await self.redis.set("signals:broadcast", json.dumps(existing), ex=300)
+        except Exception:
+            pass  # Broadcast failure must never block trading
         
     async def close(self):
         await self.redis.close()
