@@ -34,7 +34,7 @@ scan_interval_ms = 30000           # 30s between scans (was 60s — faster disco
 settlement_check_ms = 300000       # 5 min settlement checks
 
 [micro_markets]
-enabled = true
+enabled = false                        # DISABLED: 20% WR, -$34 over 255 trades — destroys portfolio
 min_time_to_expiry_s = 30          # 30s minimum (need time to execute)
 max_time_to_expiry_s = 300         # 5 minutes max
 max_bet_size_usd = 9               # $9 per micro-bet (small, high frequency)
