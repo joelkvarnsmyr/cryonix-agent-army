@@ -308,6 +308,20 @@ export class ApexAgent {
                 } catch (err) {
                     console.warn('[APEX] Postgres UPDATE failed:', err instanceof Error ? err.message : err);
                 }
+
+                // A/B validation PnL backfill
+                if (this.config.ab_test.enabled) {
+                    try {
+                        await this.pg.query(
+                            `UPDATE apex_validations
+                             SET actual_pnl = $1, actual_pnl_pct = $2
+                             WHERE position_id = $3`,
+                            [pnl, exitDecision.pnlPct, pos.id],
+                        );
+                    } catch (err) {
+                        console.warn('[APEX/ab] PnL backfill failed:', err instanceof Error ? err.message : err);
+                    }
+                }
             }
 
             if (this.config.telegram.alert_on_exit) {
