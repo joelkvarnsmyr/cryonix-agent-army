@@ -38,6 +38,29 @@ export interface AlphanixTomlConfig {
     broker?: {
         paper_trading: boolean;
     };
+    exits?: {
+        take_profit_pct: number;
+        stop_loss_pct: number;
+        trailing_stop_activation_pct: number;
+        trailing_stop_distance_pct: number;
+        stagnation_hours: number;
+        min_holding_minutes: number;
+    };
+    data_sources?: {
+        fred_enabled: boolean;
+        sec_edgar_enabled: boolean;
+        sentiment_enabled: boolean;
+        opensky_enabled: boolean;
+        trafikverket_enabled: boolean;
+        transcript_enabled: boolean;
+    };
+    brain?: {
+        enabled: boolean;
+        schedule_utc: string[];
+        acute_trigger_consecutive_losses: number;
+        acute_trigger_daily_drawdown_pct: number;
+        cooldown_hours: number;
+    };
     timing: {
         orchestrator_loop_ms: number;
         pod_default_loop_ms: number;
@@ -103,6 +126,29 @@ const DEFAULTS: AlphanixTomlConfig = {
     },
     broker: {
         paper_trading: true,
+    },
+    exits: {
+        take_profit_pct: 5.0,
+        stop_loss_pct: 3.0,
+        trailing_stop_activation_pct: 2.0,
+        trailing_stop_distance_pct: 1.0,
+        stagnation_hours: 48,
+        min_holding_minutes: 15,
+    },
+    data_sources: {
+        fred_enabled: true,
+        sec_edgar_enabled: true,
+        sentiment_enabled: true,
+        opensky_enabled: true,
+        trafikverket_enabled: true,
+        transcript_enabled: true,
+    },
+    brain: {
+        enabled: true,
+        schedule_utc: ['06:00', '12:00', '18:00', '00:00'],
+        acute_trigger_consecutive_losses: 3,
+        acute_trigger_daily_drawdown_pct: 2.0,
+        cooldown_hours: 1,
     },
     timing: {
         orchestrator_loop_ms: 60_000,

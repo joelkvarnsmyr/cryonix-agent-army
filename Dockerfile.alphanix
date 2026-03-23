@@ -10,15 +10,7 @@ RUN npm install -g tsx
 
 # Install runtime dependencies
 RUN npm install --no-save \
-    dotenv@16 \
-    ccxt@4 \
-    @iarna/toml@2 \
-    ioredis@5 \
-    pg@8 \
-    zod@3 \
-    openai@4 \
-    technicalindicators@3 \
-    node-fetch@3
+  dotenv ccxt @alpacahq/alpaca-trade-api @iarna/toml ioredis pg
 
 # Stub for @cryonix/types — all imports are `import type` (erased by tsx at runtime)
 RUN mkdir -p node_modules/@cryonix/types && \

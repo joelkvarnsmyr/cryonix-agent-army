@@ -277,7 +277,7 @@ CMC_API_KEY=...                      # CoinMarketCap Free tier API key (engine)
 ## Key Conventions
 
 - Python engine packages use `echo` skip for `pnpm build` since they run in Docker
-- Redis key patterns: `trades:pending`, `trades:approved`, `positions:open`, `sentiment:{SYMBOL}`, `agent:{NAME}:status`, `risk:portfolio_state`, `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:{channel}:{symbol}:{action}`, `cmc:global`, `cmc:fear_greed`, `cmc:mcap:{SYMBOL}`, `brain:acute_trigger`, `brain:loss_streak`, `brain:blocked_patterns`, `evolution:directives`, `aktienix:state`, `aktienix:risk`, `aktienix:brain:last_run`, `aktienix:brain:cooldown`, `polymarket:crypto`, `polymarket:fed`, `polymarket:oil`, `polymarket:geopolitik`, `polymarket:summary`, `polymarket:{cat}:prev`, `polymarket:{cat}:delta`
+- Redis key patterns: `trades:pending`, `trades:approved`, `positions:open`, `sentiment:{SYMBOL}`, `agent:{NAME}:status`, `risk:portfolio_state`, `signals:telegram:active`, `telegram:signal:{SYMBOL}`, `telegram:dedup:{channel}:{symbol}:{action}`, `cmc:global`, `cmc:fear_greed`, `cmc:mcap:{SYMBOL}`, `brain:acute_trigger`, `brain:loss_streak`, `brain:blocked_patterns`, `evolution:directives`, `aktienix:state`, `aktienix:risk`, `aktienix:brain:last_run`, `aktienix:brain:cooldown`, `polymarket:crypto`, `polymarket:fed`, `polymarket:oil`, `polymarket:geopolitik`, `polymarket:summary`, `polymarket:{cat}:prev`, `polymarket:{cat}:delta`, `alphanix:orchestrator:state`, `alphanix:pod:{POD_ID}:state`, `alphanix:pod:{POD_ID}:positions`, `alphanix:pod:{POD_ID}:risk`, `alphanix:pod:{POD_ID}:heartbeat`, `alphanix:pod:{POD_ID}:performance`, `alphanix:status`, `alphanix:swarm:active`, `alphanix:brain:last_run`, `alphanix:brain:cooldown`
 - Docker networking: containers use service names (web, engine, redis, postgres) not localhost
 - `host.docker.internal` for dev Docker -> host communication
 - Auto-trader is SPOT_ONLY (rejects SELL signals, only BUY)
@@ -313,7 +313,7 @@ Aktienix is a separate trading agent for US stocks via Alpaca. Runs in its own D
 - **Scheduled**: 09:00-09:05 ET (pre-market review) + 16:30-16:35 ET (post-close review)
 - **Acute**: consecutiveLosses >= 2 OR dailyPnlDollar < -(portfolioValue * 3%)
 - **Cooldown**: Max one run per hour (Redis `aktienix:brain:last_run`, 48h TTL)
-- **Budget**: $3 max per Claude Code invocation
+
 
 ### Key Redis Keys (Aktienix)
 
