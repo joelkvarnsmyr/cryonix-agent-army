@@ -9,6 +9,8 @@ import { Pod } from './pod/pod';
 import { AlphanixStatePublisher } from './state/state-publisher';
 import { AlphanixDB } from './data/postgres';
 import { ScheduleManager } from './orchestrator/schedule-manager';
+import { SwarmSpawner } from './swarms/swarm-spawner';
+import { registerAllWorkers } from './swarms/workers/index';
 
 export class AlphanixAgent extends BaseAgent {
   private toml!: AlphanixTomlConfig;
@@ -19,6 +21,7 @@ export class AlphanixAgent extends BaseAgent {
   private publisher: AlphanixStatePublisher | null = null;
   private db: AlphanixDB | null = null;
   private scheduler = new ScheduleManager();
+  private swarmSpawner: SwarmSpawner | null = null;
   private running = false;
 
   async initialize(): Promise<void> {
@@ -79,6 +82,12 @@ export class AlphanixAgent extends BaseAgent {
       this.log('info', `Pod created: ${id} ($${budgets[id]})`);
     }
 
+    // Initialize swarm system
+    const maxWorkers = this.toml.swarms?.max_concurrent_workers ?? 5;
+    this.swarmSpawner = new SwarmSpawner(maxWorkers);
+    registerAllWorkers(this.swarmSpawner);
+    this.log('info', `Swarm system: ${maxWorkers} max workers, ${this.swarmSpawner.getBudgetStatus().active} active`);
+
     // Postgres
     this.db = new AlphanixDB();
     await this.db.connect();
@@ -97,6 +106,22 @@ export class AlphanixAgent extends BaseAgent {
             const risk = pod.getRiskState();
             this.log('info', `Pod ${id}: dailyPnl=$${risk.dailyPnl.toFixed(2)}, trades=${risk.tradesToday}`);
         }
+    });
+
+    this.scheduler.on('macro_scan', async () => {
+        if (!this.swarmSpawner) return;
+        this.log('info', '=== MACRO SCAN ===');
+        const result = await this.swarmSpawner.spawn({
+            id: `macro-${Date.now()}`,
+            type: 'macro',
+            requester: { podId: 'orchestrator', role: 'scheduler' },
+            task: 'Fetch FRED macro data',
+            params: {},
+            workerCount: 1,
+            maxDuration: 60000,
+            priority: 'normal',
+        });
+        this.log('info', `Macro scan: ${result.status}`, { workers: result.workersUsed, duration: result.durationMs });
     });
 
     this.log('info', `Alphanix initialized: ${this.pods.size} pod(s)`);
