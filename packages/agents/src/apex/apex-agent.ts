@@ -121,6 +121,39 @@ export class ApexAgent {
                 `);
                 await this.pg.query(`CREATE INDEX IF NOT EXISTS idx_apex_trades_symbol ON apex_trades (symbol)`);
                 await this.pg.query(`CREATE INDEX IF NOT EXISTS idx_apex_trades_entered_at ON apex_trades (entered_at)`);
+                await this.pg.query(`
+                    CREATE TABLE IF NOT EXISTS apex_validations (
+                        id SERIAL PRIMARY KEY,
+                        symbol VARCHAR(20) NOT NULL,
+                        direction VARCHAR(10) NOT NULL,
+                        score DECIMAL(5,2),
+                        mode VARCHAR(20),
+                        contributing_signals JSONB,
+
+                        -- Grok result
+                        grok_approve BOOLEAN,
+                        grok_confidence DECIMAL(5,2),
+                        grok_reason TEXT,
+                        grok_model VARCHAR(100),
+
+                        -- Claude result
+                        claude_approve BOOLEAN,
+                        claude_confidence DECIMAL(5,2),
+                        claude_reason TEXT,
+                        claude_model VARCHAR(100),
+
+                        -- Outcome
+                        trade_executed BOOLEAN DEFAULT FALSE,
+                        position_id VARCHAR(64),
+                        actual_pnl DECIMAL(20,8),
+                        actual_pnl_pct DECIMAL(10,4),
+
+                        validated_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_apex_validations_symbol ON apex_validations(symbol);
+                    CREATE INDEX IF NOT EXISTS idx_apex_validations_date ON apex_validations(validated_at);
+                    CREATE INDEX IF NOT EXISTS idx_apex_validations_position ON apex_validations(position_id);
+                `);
                 console.log('[APEX] Postgres connected — apex_trades table ready.');
             } catch (err) {
                 console.warn('[APEX] Postgres connection failed — trades will not be persisted:', err instanceof Error ? err.message : err);
