@@ -28,7 +28,7 @@ export async function GET() {
             LIMIT 50
         `);
 
-        const mutations = result.rows.map((r: any) => ({
+        const mutations = result.map((r: any) => ({
             ...r,
             improved: (r.fitness_score ?? 0) > 0,
             wrDelta: ((r.post_wr ?? 0) - (r.pre_wr ?? 0)),

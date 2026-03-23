@@ -52,8 +52,8 @@ export async function GET(request: Request) {
         const trend = await db.execute(trendQuery);
 
         return NextResponse.json({
-            breakdown: breakdown.rows,
-            trend: trend.rows,
+            breakdown: breakdown,
+            trend: trend,
             days,
             filter,
             timestamp: new Date().toISOString(),
