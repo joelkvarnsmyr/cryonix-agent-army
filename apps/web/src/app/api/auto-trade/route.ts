@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { redis } from '@/lib/redis';
-import { logTrade, saveValidation, archivePosition, createPosition, closePositionBySymbol, markLatestSignalExecuted } from '@cryonix/database';
+import { logTrade, saveValidation, archivePosition, createPosition, closePositionBySymbol, markLatestSignalExecuted, db } from '@cryonix/database';
+import { sql } from 'drizzle-orm';
 import { fullConfig, loadConfig } from '@/lib/config';
 import { getConfigVersion } from '@/lib/config-version';
 import ccxt, { type Exchange } from 'ccxt';
@@ -2694,6 +2695,15 @@ async function checkPhantomResults(): Promise<void> {
           checkedAt: Date.now(),
         }));
         await redis.ltrim('phantom:results', 0, 499);
+
+        // Persist to signal_rejections table for historical trend analysis
+        try {
+          const regime = await redis.get('market:regime') ?? 'unknown';
+          await db.execute(sql`
+            INSERT INTO signal_rejections (timestamp, symbol, pattern, confidence, entry_price, rejection_reason, price_after_4h, phantom_pnl_pct, would_have_won, checked_at, market_regime)
+            VALUES (${new Date(phantom.rejectedAt)}, ${phantom.symbol}, ${phantom.pattern ?? null}, ${phantom.confidence ?? null}, ${phantom.entryPrice}, ${phantom.reason}, ${priceNow}, ${Math.round(phantomPnlPct * 100) / 100}, ${phantomPnlPct > 0}, NOW(), ${regime})
+          `);
+        } catch { /* non-critical — Redis is primary, DB is bonus */ }
         checked++;
       } catch (fetchErr) {
         failed++;
