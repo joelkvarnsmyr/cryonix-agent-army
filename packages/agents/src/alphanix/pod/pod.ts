@@ -38,7 +38,7 @@ export class Pod {
     this.risk = new RiskAgent(config.id, {
       maxDrawdownPct: config.riskMaxDrawdownPct,
       maxPositions: config.riskMaxPositions,
-      minConfidence: 40,
+      minConfidence: 25,
     });
     this.execution = new ExecutionAgent(config.id);
     this.exitMonitor = new ExitMonitor({
@@ -107,6 +107,7 @@ export class Pod {
 
           if (decision.action === 'veto') {
             result.vetoed++;
+            console.log(`[Pod:${this.config.id}] VETO ${symbol}: ${decision.vetoReason} (conf=${sized.confidence}, signals=${sized.signals})`);
             continue;
           }
 
