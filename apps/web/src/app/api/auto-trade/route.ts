@@ -2275,8 +2275,13 @@ async function passesRiskChecks(signal: Signal): Promise<{ pass: boolean; reason
   // These patterns consistently lose money when they fire alone (no confirming pattern).
   // Data: RSI_OVERSOLD solo → 33% WR, -$0.48 total | EMA_BULLISH_CROSS solo → 0% WR, -$0.05
   const weakSoloPatterns: string[] = TOML?.patterns?.weak_solo_patterns ?? ['RSI_OVERSOLD', 'EMA_BULLISH_CROSS', 'MACD_BULLISH_CROSS'];
+  // PERMANENT PROTECTION: Value patterns must NEVER be in weak_solo, regardless of TOML.
+  // BOLLINGER_SQUEEZE was incorrectly added by Evolution/Brain twice (2026-03-20, 2026-03-22).
+  // It's our primary profitable pattern (40% WR, 2.6:1 win/loss on clean trades).
+  const PROTECTED_PATTERNS = ['BOLLINGER_SQUEEZE', 'DIP_BUY', 'DEEP_VALUE_CRASH'];
+  const safeWeakSolo = weakSoloPatterns.filter(p => !PROTECTED_PATTERNS.includes(p));
   const patterns = signal.patterns || [];
-  if (patterns.length === 1 && weakSoloPatterns.includes(patterns[0])) {
+  if (patterns.length === 1 && safeWeakSolo.includes(patterns[0])) {
     return { pass: false, reason: `Low-conviction solo hypothesis: ${patterns[0]} (requires 2+ confirming patterns)` };
   }
 

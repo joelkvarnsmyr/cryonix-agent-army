@@ -508,7 +508,13 @@ trending_adx_threshold = 30
 # Single-pattern signals matching these are rejected before AI validation.
 # Data: RSI_OVERSOLD solo → 33% WR, EMA_BULLISH_CROSS solo → 0% WR.
 # When to change: add/remove patterns based on calibration data.
-weak_solo_patterns = ["RSI_OVERSOLD", "EMA_BULLISH_CROSS", "MACD_BULLISH_CROSS", "BOLLINGER_SQUEEZE"]
+weak_solo_patterns = ["RSI_OVERSOLD", "EMA_BULLISH_CROSS", "MACD_BULLISH_CROSS"]
+
+# Patterns that must NEVER be added to weak_solo_patterns.
+# Evolution Engine and AI Brain MUST check this list before modifying weak_solo_patterns.
+# BOLLINGER_SQUEEZE: 40% WR, 2.6:1 win/loss — our primary value pattern. Has been
+# incorrectly added to weak_solo twice (2026-03-20, 2026-03-22) causing signal loss.
+protected_patterns = ["BOLLINGER_SQUEEZE", "DIP_BUY", "DEEP_VALUE_CRASH"]
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
