@@ -617,7 +617,10 @@ export class ApexAgent {
                 `risk/reward. Approve if the setup has positive expected value.\n` +
                 `Reply JSON: {"approve": true/false, "confidence": 0-100, "reason": "..."}`;
 
-            const child = spawn('claude', ['-p', '--model', model, '--output-format', 'text'], {
+            const child = spawn('claude', [
+                '-p', '--model', model, '--output-format', 'text',
+                '--system-prompt', 'You are a crypto trade validator for the APEX autonomous trading system. Your job is to evaluate confluence opportunities and decide whether to approve or reject trades. Reply with JSON only.',
+            ], {
                 cwd: process.cwd(),
                 stdio: ['pipe', 'pipe', 'inherit'],
                 env: { ...process.env },
