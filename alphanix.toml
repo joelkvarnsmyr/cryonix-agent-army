@@ -1,0 +1,55 @@
+# alphanix.toml — Alphanix Multi-Asset AI Trading Army
+
+[orchestrator]
+max_pods = 10
+capital_total_usd = 10000
+rebalance_interval_hours = 6
+global_max_drawdown_pct = 5.0
+morning_huddle_utc = "06:00"
+
+[orchestrator.esg]
+enabled = false
+planetary_boundary_checks = false
+min_esg_score = 40
+
+[swarms]
+max_concurrent_workers = 5
+default_timeout_ms = 300000
+backtest_timeout_ms = 900000
+
+[pods.crypto]
+enabled = true
+adapter = "binance"
+capital_pct = 100
+strategy = "momentum_dip"
+symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
+poll_interval_ms = 30000
+risk_max_drawdown_pct = 3.0
+risk_max_positions = 5
+
+[pods.us_stocks]
+enabled = false
+adapter = "alpaca"
+capital_pct = 0
+strategy = "value_momentum"
+symbols = ["AAPL", "MSFT", "NVDA"]
+poll_interval_ms = 60000
+risk_max_drawdown_pct = 2.0
+risk_max_positions = 10
+trading_hours = "09:30-16:00 ET"
+
+[pods.eu_stocks]
+enabled = false
+adapter = "ibkr"
+capital_pct = 0
+strategy = "nordic_value"
+symbols = ["HM-B.ST", "VOLV-B.ST"]
+poll_interval_ms = 60000
+risk_max_drawdown_pct = 2.0
+risk_max_positions = 8
+trading_hours = "09:00-17:30 CET"
+
+[timing]
+orchestrator_loop_ms = 60000
+pod_default_loop_ms = 30000
+state_publish_interval_ms = 10000
