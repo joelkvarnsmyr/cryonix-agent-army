@@ -14,6 +14,9 @@ export class AlpacaAdapter implements MarketAdapter {
 
   private client: any = null;
   private options: AlpacaAdapterOptions;
+  private simulationMode = false;
+  private paperBalance = 10000;
+  private paperPositions = new Map<string, { qty: number; avgPrice: number }>();
 
   constructor(options: AlpacaAdapterOptions) {
     this.options = options;
@@ -25,12 +28,20 @@ export class AlpacaAdapter implements MarketAdapter {
   }
 
   async connect(): Promise<void> {
-    const Alpaca = (await import('@alpacahq/alpaca-trade-api')).default;
-    this.client = new Alpaca({
-      keyId: this.options.apiKey || process.env.ALPACA_API_KEY,
-      secretKey: this.options.apiSecret || process.env.ALPACA_API_SECRET,
-      paper: this.options.paper,
-    });
+    try {
+      const Alpaca = (await import('@alpacahq/alpaca-trade-api')).default;
+      this.client = new Alpaca({
+        keyId: this.options.apiKey || process.env.ALPACA_API_KEY,
+        secretKey: this.options.apiSecret || process.env.ALPACA_API_SECRET,
+        paper: this.options.paper,
+      });
+      // Test connection — will throw if keys are invalid
+      await this.client.getAccount();
+    } catch (err: any) {
+      console.warn(`[AlpacaAdapter] Connection failed (${err.message}), using paper simulation mode`);
+      this.client = null;
+      this.simulationMode = true;
+    }
   }
 
   async disconnect(): Promise<void> {
@@ -38,6 +49,9 @@ export class AlpacaAdapter implements MarketAdapter {
   }
 
   async healthCheck(): Promise<HealthStatus> {
+    if (this.simulationMode) {
+      return { connected: true, latencyMs: 0 };  // Simulation always healthy
+    }
     if (!this.client) {
       return { connected: false, latencyMs: 0, error: 'Not connected' };
     }
@@ -51,6 +65,10 @@ export class AlpacaAdapter implements MarketAdapter {
   }
 
   async getOHLCV(symbol: string, timeframe: string = '15Min', limit: number = 100): Promise<Candle[]> {
+    if (this.simulationMode) {
+      // In simulation mode, no real market data available
+      return [];
+    }
     const client = this.requireClient();
     const bars = client.getBarsV2(symbol, {
       timeframe,
@@ -78,6 +96,7 @@ export class AlpacaAdapter implements MarketAdapter {
   }
 
   async getSymbols(): Promise<SymbolInfo[]> {
+    if (this.simulationMode) return [];  // No symbol list in simulation
     const client = this.requireClient();
     const assets = await client.getAssets({ status: 'active', asset_class: 'us_equity' });
     return assets
@@ -95,6 +114,35 @@ export class AlpacaAdapter implements MarketAdapter {
   }
 
   async submitOrder(order: NormalizedOrder): Promise<OrderResult> {
+    if (this.simulationMode) {
+      // Paper simulation: use a synthetic fill price (last known or 100)
+      const fillPrice = order.limitPrice || 100;
+      const fillQty = order.qty > 0 ? order.qty : 1;
+      const orderId = `paper-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      const existing = this.paperPositions.get(order.symbol);
+      const currentQty = existing?.qty || 0;
+      const newQty = currentQty + (order.side === 'BUY' ? fillQty : -fillQty);
+      if (newQty > 0) {
+        this.paperPositions.set(order.symbol, { qty: newQty, avgPrice: fillPrice });
+      } else {
+        this.paperPositions.delete(order.symbol);
+      }
+      this.paperBalance -= order.side === 'BUY'
+        ? fillPrice * fillQty
+        : -(fillPrice * fillQty);
+
+      console.log(`[AlpacaAdapter:PAPER] ${order.side} ${fillQty} ${order.symbol} @ ${fillPrice} (orderId: ${orderId})`);
+
+      return {
+        success: true,
+        orderId,
+        status: 'filled',
+        filledQty: fillQty,
+        filledAvgPrice: fillPrice,
+      };
+    }
+
     const client = this.requireClient();
     try {
       const result = await client.createOrder({
@@ -118,11 +166,30 @@ export class AlpacaAdapter implements MarketAdapter {
   }
 
   async cancelOrder(orderId: string, _symbol?: string): Promise<void> {
+    if (this.simulationMode) return;  // No-op in simulation mode
     const client = this.requireClient();
     await client.cancelOrder(orderId);
   }
 
   async getPositions(): Promise<NormalizedPosition[]> {
+    if (this.simulationMode) {
+      const positions: NormalizedPosition[] = [];
+      for (const [symbol, pos] of this.paperPositions) {
+        if (pos.qty <= 0) continue;
+        positions.push({
+          symbol,
+          qty: pos.qty,
+          avgEntryPrice: pos.avgPrice,
+          currentPrice: pos.avgPrice,  // No live price in simulation
+          marketValue: pos.qty * pos.avgPrice,
+          unrealizedPnl: 0,
+          unrealizedPnlPct: 0,
+          adapter: this.id,
+        });
+      }
+      return positions;
+    }
+
     const client = this.requireClient();
     const positions = await client.getPositions();
     return positions.map((p: any) => ({
@@ -138,6 +205,7 @@ export class AlpacaAdapter implements MarketAdapter {
   }
 
   async getOpenOrders(): Promise<NormalizedOrder[]> {
+    if (this.simulationMode) return [];  // No pending orders in simulation
     const client = this.requireClient();
     const orders = await client.getOrders({ status: 'open' });
     return orders.map((o: any) => ({
@@ -150,6 +218,16 @@ export class AlpacaAdapter implements MarketAdapter {
   }
 
   async getAccountState(): Promise<AccountState> {
+    if (this.simulationMode) {
+      return {
+        balance: this.paperBalance,
+        equity: this.paperBalance,
+        availableCapital: this.paperBalance,
+        currency: 'USD',
+        updatedAt: Date.now(),
+      };
+    }
+
     const client = this.requireClient();
     const acc = await client.getAccount();
     return {

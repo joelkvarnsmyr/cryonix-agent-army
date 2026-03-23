@@ -14,6 +14,9 @@ export class BinanceAdapter implements MarketAdapter {
 
   private exchange: any = null;
   private config: BinanceAdapterConfig;
+  private paper = false;
+  private paperBalance = 10000;  // Virtual starting balance (USDC)
+  private paperPositions = new Map<string, { qty: number; avgPrice: number }>();
 
   constructor(config: BinanceAdapterConfig) {
     this.config = config;
@@ -25,16 +28,17 @@ export class BinanceAdapter implements MarketAdapter {
   }
 
   async connect(): Promise<void> {
+    this.paper = this.config.paper;
     const ccxt = await import('ccxt');
+    // Always connect to real Binance for market data.
+    // In paper mode we simulate orders locally instead of using sandbox
+    // (sandbox rejects mainnet API keys).
     this.exchange = new ccxt.default.binance({
-      apiKey: this.config.apiKey,
-      secret: this.config.apiSecret,
+      apiKey: this.paper ? undefined : this.config.apiKey,
+      secret: this.paper ? undefined : this.config.apiSecret,
       enableRateLimit: true,
       options: { defaultType: 'spot' },
     });
-    if (this.config.paper) {
-      this.exchange.setSandboxMode(true);
-    }
   }
 
   async disconnect(): Promise<void> {
@@ -95,6 +99,45 @@ export class BinanceAdapter implements MarketAdapter {
 
   async submitOrder(order: NormalizedOrder): Promise<OrderResult> {
     const ex = this.requireExchange();
+
+    if (this.paper) {
+      // Paper mode: simulate fill at current market price
+      try {
+        const ticker = await ex.fetchTicker(order.symbol);
+        const fillPrice = order.side === 'BUY'
+          ? (ticker.ask || ticker.last)
+          : (ticker.bid || ticker.last);
+        const fillQty = order.qty > 0 ? order.qty : 1;
+        const orderId = `paper-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+        // Track in virtual portfolio
+        const existing = this.paperPositions.get(order.symbol);
+        const currentQty = existing?.qty || 0;
+        const newQty = currentQty + (order.side === 'BUY' ? fillQty : -fillQty);
+        if (newQty > 0) {
+          this.paperPositions.set(order.symbol, { qty: newQty, avgPrice: fillPrice });
+        } else {
+          this.paperPositions.delete(order.symbol);
+        }
+        this.paperBalance -= order.side === 'BUY'
+          ? fillPrice * fillQty
+          : -(fillPrice * fillQty);
+
+        console.log(`[BinanceAdapter:PAPER] ${order.side} ${fillQty} ${order.symbol} @ ${fillPrice} (orderId: ${orderId})`);
+
+        return {
+          success: true,
+          orderId,
+          status: 'filled',
+          filledQty: fillQty,
+          filledAvgPrice: fillPrice,
+        };
+      } catch (err: any) {
+        return { success: false, message: `Paper sim error: ${err.message}` };
+      }
+    }
+
+    // Real mode
     try {
       const result = await ex.createOrder(
         order.symbol,
@@ -119,12 +162,36 @@ export class BinanceAdapter implements MarketAdapter {
   }
 
   async cancelOrder(orderId: string, symbol?: string): Promise<void> {
+    if (this.paper) return;  // No-op in paper mode
     const ex = this.requireExchange();
     await ex.cancelOrder(orderId, symbol);
   }
 
   async getPositions(): Promise<NormalizedPosition[]> {
     const ex = this.requireExchange();
+
+    if (this.paper) {
+      const positions: NormalizedPosition[] = [];
+      for (const [symbol, pos] of this.paperPositions) {
+        if (pos.qty <= 0) continue;
+        try {
+          const ticker = await ex.fetchTicker(symbol);
+          const currentPrice = ticker.last || pos.avgPrice;
+          positions.push({
+            symbol,
+            qty: pos.qty,
+            avgEntryPrice: pos.avgPrice,
+            currentPrice,
+            marketValue: pos.qty * currentPrice,
+            unrealizedPnl: pos.qty * (currentPrice - pos.avgPrice),
+            unrealizedPnlPct: ((currentPrice - pos.avgPrice) / pos.avgPrice) * 100,
+            adapter: this.id,
+          });
+        } catch { /* skip */ }
+      }
+      return positions;
+    }
+
     const balance = await ex.fetchBalance();
     const positions: NormalizedPosition[] = [];
 
@@ -167,6 +234,16 @@ export class BinanceAdapter implements MarketAdapter {
   }
 
   async getAccountState(): Promise<AccountState> {
+    if (this.paper) {
+      return {
+        balance: this.paperBalance,
+        equity: this.paperBalance,
+        availableCapital: this.paperBalance,
+        currency: 'USDC',
+        updatedAt: Date.now(),
+      };
+    }
+
     const ex = this.requireExchange();
     const balance = await ex.fetchBalance();
     const usdc = balance.USDC ?? { free: 0, total: 0 };

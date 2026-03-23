@@ -38,7 +38,7 @@ export class Pod {
     this.risk = new RiskAgent(config.id, {
       maxDrawdownPct: config.riskMaxDrawdownPct,
       maxPositions: config.riskMaxPositions,
-      minConfidence: 60,
+      minConfidence: 40,
     });
     this.execution = new ExecutionAgent(config.id);
     this.exitMonitor = new ExitMonitor({
@@ -132,6 +132,8 @@ export class Pod {
                   entryPrice: execResult.fillPrice,
                   qty: execResult.fillQty,
                 });
+              } else {
+                result.errors.push(`Order not filled for ${symbol} (adapter returned empty orderId)`);
               }
             } catch (err: any) {
               result.errors.push(`Execution failed for ${symbol}: ${err.message}`);

@@ -152,3 +152,56 @@ describe('AlpacaAdapter', () => {
     expect(health.connected).toBe(false);
   });
 });
+
+// --- IbkrAdapter ---
+
+import { IbkrAdapter } from '../adapters/ibkr-adapter';
+
+describe('IbkrAdapter', () => {
+  it('should have correct id and asset class', () => {
+    const adapter = new IbkrAdapter({ paper: true });
+    expect(adapter.id).toBe('ibkr');
+    expect(adapter.assetClass).toBe('stock');
+  });
+
+  it('should connect in simulation mode', async () => {
+    const adapter = new IbkrAdapter({ paper: true });
+    await adapter.connect();
+    const health = await adapter.healthCheck();
+    expect(health.connected).toBe(true);
+  });
+
+  it('should return CET trading hours', () => {
+    const adapter = new IbkrAdapter({ paper: true });
+    const hours = adapter.getTradingHours();
+    expect(hours.hours).toContain('09:00');
+    expect(hours.timezone).toContain('Stockholm');
+  });
+
+  it('should return Nordic stock symbols', async () => {
+    const adapter = new IbkrAdapter({ paper: true });
+    const symbols = await adapter.getSymbols();
+    expect(symbols.length).toBeGreaterThan(0);
+    expect(symbols[0].quoteAsset).toBe('SEK');
+  });
+
+  it('should return SEK account state', async () => {
+    const adapter = new IbkrAdapter({ paper: true });
+    const state = await adapter.getAccountState();
+    expect(state.currency).toBe('SEK');
+    expect(state.balance).toBe(10000);
+  });
+
+  it('should return fee structure', () => {
+    const adapter = new IbkrAdapter({ paper: true });
+    const fees = adapter.getFees();
+    expect(fees.maker).toBe(0.001);
+    expect(fees.taker).toBe(0.001);
+  });
+
+  it('should report disconnected before connect', async () => {
+    const adapter = new IbkrAdapter({ paper: true });
+    const health = await adapter.healthCheck();
+    expect(health.connected).toBe(false);
+  });
+});

@@ -4,6 +4,7 @@ import { loadAlphanixConfig, resetAlphanixConfig, toPodConfig, type AlphanixToml
 import { AdapterRegistry } from './adapters/adapter-registry';
 import { BinanceAdapter } from './adapters/binance-adapter';
 import { AlpacaAdapter } from './adapters/alpaca-adapter';
+import { IbkrAdapter } from './adapters/ibkr-adapter';
 import { Orchestrator } from './orchestrator/orchestrator';
 import { CapitalAllocator } from './orchestrator/capital-allocator';
 import { Pod } from './pod/pod';
@@ -50,6 +51,7 @@ export class AlphanixAgent extends BaseAgent {
         apiKey: process.env.ALPACA_API_KEY,
         apiSecret: process.env.ALPACA_API_SECRET,
     }));
+    this.registry.register(new IbkrAdapter({ paper: paperTrading }));
 
     // Connect adapters (non-fatal if fails)
     try {

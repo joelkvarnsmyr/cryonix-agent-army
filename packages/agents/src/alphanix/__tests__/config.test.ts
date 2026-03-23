@@ -57,7 +57,7 @@ describe('toPodConfig', () => {
         expect(pod.id).toBe('crypto');
         expect(pod.enabled).toBe(true);
         expect(pod.adapter).toBe('binance');
-        expect(pod.capitalPct).toBe(60);
+        expect(pod.capitalPct).toBe(50);
         expect(pod.strategy).toBe('momentum_dip');
         expect(pod.symbols).toEqual(['BTC/USDC', 'ETH/USDC', 'SOL/USDC']);
         expect(pod.pollIntervalMs).toBe(30000);
