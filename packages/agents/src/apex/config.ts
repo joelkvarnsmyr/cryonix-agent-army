@@ -71,6 +71,13 @@ export interface ApexTomlConfig {
         alert_on_exit: boolean;
         alert_on_circuit_breaker: boolean;
     };
+    ab_test: AbTestConfig;
+}
+
+export interface AbTestConfig {
+    enabled: boolean;
+    claude_model: string;
+    shadow_mode: boolean;
 }
 
 export const APEX_DEFAULTS: ApexTomlConfig = {
@@ -125,6 +132,11 @@ export const APEX_DEFAULTS: ApexTomlConfig = {
     staleness: { momentary_seconds: 300, ambient_seconds: 86400 },
     grok: { enabled: true, model: 'grok-3-mini', cache_ttl_seconds: 300, max_calls_per_minute: 4 },
     telegram: { enabled: true, alert_on_entry: true, alert_on_exit: true, alert_on_circuit_breaker: true },
+    ab_test: {
+        enabled: true,
+        claude_model: 'claude-sonnet-4-6',
+        shadow_mode: true,
+    },
 };
 
 export function loadApexConfig(filePath?: string): ApexTomlConfig {
@@ -157,6 +169,7 @@ export function loadApexConfig(filePath?: string): ApexTomlConfig {
             staleness: { ...APEX_DEFAULTS.staleness, ...parsed.staleness },
             grok: { ...APEX_DEFAULTS.grok, ...parsed.grok },
             telegram: { ...APEX_DEFAULTS.telegram, ...parsed.telegram },
+            ab_test: { ...APEX_DEFAULTS.ab_test, ...parsed.ab_test },
         };
     } catch (err) {
         console.warn('[apex] Failed to parse apex.toml, using defaults:', err instanceof Error ? err.message : err);
