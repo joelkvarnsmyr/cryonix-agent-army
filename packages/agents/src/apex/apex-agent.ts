@@ -333,6 +333,10 @@ export class ApexAgent {
     // -------------------------------------------------------------------------
 
     private async evaluateAndExecute(opp: ScoredOpportunity): Promise<void> {
+        // A/B tracking variables
+        let abClaudePromise: Promise<{ approve: boolean; confidence: number; reason: string } | null> | null = null;
+        let abGrokResult: { approve: boolean; confidence: number; reason: string } | null = null;
+
         // Already in position?
         if (this.positions.some(p => p.symbol === opp.symbol)) return;
 
@@ -365,7 +369,38 @@ export class ApexAgent {
 
         // Grok validation (cached + rate-limited, fail-closed)
         const grokResult = await this.validateWithGrok(opp);
-        if (!grokResult) return;
+
+        // --- A/B: fire Claude validation (non-blocking) ---
+        if (this.config.ab_test.enabled) {
+            const cacheKey = `${opp.symbol}:${opp.direction}:${opp.mode}`;
+            const cachedGrok = this.grokCache.get(cacheKey);
+            abGrokResult = cachedGrok
+                ? { approve: cachedGrok.approve, confidence: cachedGrok.confidence, reason: cachedGrok.reason }
+                : null;
+            abClaudePromise = this.validateWithClaude(opp);
+        }
+
+        if (!grokResult) {
+            // A/B: log Grok rejection + fire shadow Claude
+            if (this.config.ab_test.enabled) {
+                const cacheKey = `${opp.symbol}:${opp.direction}:${opp.mode}`;
+                const cachedGrok = this.grokCache.get(cacheKey);
+                if (cachedGrok) {
+                    const grokRejection = { approve: cachedGrok.approve, confidence: cachedGrok.confidence, reason: cachedGrok.reason };
+                    const claudePromise = this.validateWithClaude(opp);
+                    const validationId = await this.insertValidation(opp, grokRejection, false, null);
+                    if (validationId && claudePromise) {
+                        claudePromise.then((claudeResult) => {
+                            if (claudeResult) {
+                                this.updateClaudeResult(validationId, claudeResult);
+                                console.log(`[APEX/ab] Claude (shadow): ${claudeResult.approve ? 'APPROVE' : 'REJECT'} (${claudeResult.confidence}%) — Grok rejected this one`);
+                            }
+                        }).catch(() => { /* fail-silent */ });
+                    }
+                }
+            }
+            return;
+        }
 
         // Fetch current price
         let currentPrice: number;
@@ -454,6 +489,20 @@ export class ApexAgent {
                 `Signals: ${opp.contributingSignals.map(s => `${s.source}:${s.signalType}`).join(', ')}` +
                 (dedupFactor < 1 ? `\n⚠️ Cryonix dedup: sizing reduced 50%` : ''),
             );
+        }
+
+        // --- A/B: Insert validation row + backfill Claude result async ---
+        if (this.config.ab_test.enabled && abGrokResult) {
+            const posId = position?.id ?? null;
+            const validationId = await this.insertValidation(opp, abGrokResult, true, posId);
+            if (validationId && abClaudePromise) {
+                abClaudePromise.then((claudeResult) => {
+                    if (claudeResult) {
+                        this.updateClaudeResult(validationId, claudeResult);
+                        console.log(`[APEX/ab] Claude: ${claudeResult.approve ? 'APPROVE' : 'REJECT'} (${claudeResult.confidence}%) — ${claudeResult.reason.slice(0, 80)}`);
+                    }
+                }).catch(() => { /* fail-silent */ });
+            }
         }
     }
 
@@ -611,6 +660,64 @@ export class ApexAgent {
             return null;
         } finally {
             this.claudeValidationRunning = false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // insertValidation — persist A/B row to Postgres
+    // -------------------------------------------------------------------------
+
+    private async insertValidation(
+        opp: ScoredOpportunity,
+        grokResult: { approve: boolean; confidence: number; reason: string } | null,
+        tradeExecuted: boolean,
+        positionId: string | null,
+    ): Promise<number | null> {
+        if (!this.pg) return null;
+        try {
+            const res = await this.pg.query(
+                `INSERT INTO apex_validations
+                 (symbol, direction, score, mode, contributing_signals,
+                  grok_approve, grok_confidence, grok_reason, grok_model,
+                  trade_executed, position_id)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                 RETURNING id`,
+                [
+                    opp.symbol, opp.direction, opp.score, opp.mode,
+                    JSON.stringify(opp.contributingSignals),
+                    grokResult?.approve ?? null,
+                    grokResult?.confidence ?? null,
+                    grokResult?.reason ?? null,
+                    this.config.grok.enabled ? this.config.grok.model : null,
+                    tradeExecuted,
+                    positionId,
+                ],
+            );
+            return res.rows[0]?.id ?? null;
+        } catch (err) {
+            console.warn('[APEX/ab] Validation insert failed:', err instanceof Error ? err.message : err);
+            return null;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // updateClaudeResult — backfill Claude's async result
+    // -------------------------------------------------------------------------
+
+    private async updateClaudeResult(
+        validationId: number,
+        result: { approve: boolean; confidence: number; reason: string },
+    ): Promise<void> {
+        if (!this.pg) return;
+        try {
+            await this.pg.query(
+                `UPDATE apex_validations
+                 SET claude_approve = $1, claude_confidence = $2, claude_reason = $3, claude_model = $4
+                 WHERE id = $5`,
+                [result.approve, result.confidence, result.reason, this.config.ab_test.claude_model, validationId],
+            );
+        } catch (err) {
+            console.warn('[APEX/ab] Claude result update failed:', err instanceof Error ? err.message : err);
         }
     }
 
