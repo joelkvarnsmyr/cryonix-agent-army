@@ -102,10 +102,10 @@ discovery_interval_hours = 24
 
 [consensus]
 min_wallets_strong = 3
-# DEPRECATED: medium consensus disabled (25% WR, -$46 PnL). Kept for config compat.
-min_wallets_medium = 2
-# Reduced from 15min to 5min — if wallets don't agree within 5min,
-# the opportunity has likely passed. Tighter window = fresher consensus.
+# Medium consensus DISABLED: set to 3 = same as strong.
+# Data: medium (2 wallets) had 25% WR, -$67 P&L over 6 days.
+# Strong (3+) had 42% WR — still bad but 2x better.
+min_wallets_medium = 3
 time_window_minutes = 5
 cooldown_hours = 4
 
@@ -119,42 +119,47 @@ max_portfolio_exposure_pct = 0.20
 max_risk_per_trade_pct = 0.02
 
 [limits]
-max_open_positions = 5
-max_trades_per_day = 10
+# Reduced from 5 to 3 — concentrate on fewer, higher-quality trades
+max_open_positions = 3
+# Reduced from 10 to 5 — quality over quantity
+max_trades_per_day = 5
 
 [risk]
-min_confidence = 0.50
+# Raised from 0.50 to 0.70 — only trade high-confidence consensus
+min_confidence = 0.70
 max_daily_loss_pct = 0.10
 max_weekly_loss_pct = 0.20
-max_consecutive_losses = 4
+# Reduced from 4 to 3 — stop faster when losing streak hits
+max_consecutive_losses = 3
 
 [safety]
-# Lesson learned: 3 of 4 positions had $0 liquidity = unsellable.
-# Min $5K liquidity ensures we can actually exit positions.
-min_token_age_hours = 12
-min_liquidity_usd = 50000
-min_holders = 100
+# Raised token age from 12h to 24h — avoid pump & dump schemes
+min_token_age_hours = 24
+# Raised liquidity from $50K to $100K — need real exit liquidity
+min_liquidity_usd = 100000
+# Raised min holders from 100 to 200 — avoid concentrated ownership
+min_holders = 200
 max_fdv_liquidity_ratio = 50
 min_lp_burnt_pct = 0
 require_immutable_supply = false
 
 [exits]
-take_profit_pct = 25.0
-# Time-aware stop loss: fast dumps = rug detection, slow declines = wider tolerance
-# Phase 1 (0-2 min): rug detection — exit if loss > 15%
-rug_sl_pct = 15.0
+# Reduced TP from 25% to 15% — data shows avg win is only $5.46.
+# Capturing smaller gains more often > holding for moonshots that never come.
+take_profit_pct = 15.0
+# Tighter stop losses across all phases — avg loss was -$10.37
+rug_sl_pct = 12.0
 rug_window_minutes = 2
-# Phase 2 (2-30 min): standard SL
-standard_sl_pct = 25.0
-# Phase 3 (>30 min): wide SL — memecoins need room to breathe
-wide_sl_pct = 35.0
+standard_sl_pct = 18.0
+wide_sl_pct = 25.0
 wide_sl_after_minutes = 30
-trailing_stop_pct = 12.0
-trailing_activation_pct = 15.0
+trailing_stop_pct = 8.0
+trailing_activation_pct = 10.0
 leader_exit_enabled = true
 leader_exit_timeout_s = 60
-stagnation_timeout_hours = 24
-stagnation_min_pnl_pct = 3.0
+# Reduced stagnation from 24h to 12h — memecoins that don't move fast are dead
+stagnation_timeout_hours = 12
+stagnation_min_pnl_pct = 2.0
 
 [timing]
 # Main loop: 30s — controls exits, prices, state, AND priority wallet polling
