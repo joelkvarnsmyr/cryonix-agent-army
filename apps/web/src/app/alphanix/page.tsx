@@ -207,7 +207,7 @@ export default function AlphanixPage() {
                       <div className="rounded-lg bg-white/[0.03] p-2 text-center">
                         <div className="text-muted-foreground/50 text-[10px] mb-0.5">DAILY P&L</div>
                         <div className={dailyPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                          {dailyPnl >= 0 ? '+' : ''}{dailyPnl.toFixed(2)}%
+                          {dailyPnl >= 0 ? '+' : ''}{(dailyPnl ?? 0).toFixed(2)}%
                         </div>
                       </div>
                       <div className="rounded-lg bg-white/[0.03] p-2 text-center">
@@ -279,10 +279,10 @@ export default function AlphanixPage() {
                           <div key={`${podId}-${pos.symbol}`} className="grid grid-cols-5 gap-2 text-xs font-mono px-1 py-0.5 rounded hover:bg-white/[0.02]">
                             <span className="text-foreground/80">{pos.symbol}</span>
                             <span className="text-right text-muted-foreground">{pos.qty}</span>
-                            <span className="text-right text-muted-foreground">${pos.entryPrice.toFixed(2)}</span>
-                            <span className={`text-right ${plColor}`}>${pos.currentPrice.toFixed(2)}</span>
+                            <span className="text-right text-muted-foreground">${(pos.entryPrice ?? 0).toFixed(2)}</span>
+                            <span className={`text-right ${plColor}`}>${(pos.currentPrice ?? 0).toFixed(2)}</span>
                             <span className={`text-right ${plColor}`}>
-                              {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
+                              {pnlPct >= 0 ? '+' : ''}{(pnlPct ?? 0).toFixed(2)}%
                             </span>
                           </div>
                         );
