@@ -1,0 +1,34 @@
+# Dockerfile.alphanix — Alphanix multi-asset AI trading army
+FROM node:20-alpine
+
+RUN apk add --no-cache git python3
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN npm install --no-save \
+    dotenv@16 \
+    ccxt@4 \
+    @iarna/toml@2 \
+    ioredis@5 \
+    pg@8 \
+    zod@3 \
+    openai@4 \
+    technicalindicators@3 \
+    node-fetch@3
+
+# Stub for @cryonix/types — all imports are `import type` (erased by tsx at runtime)
+RUN mkdir -p node_modules/@cryonix/types && \
+    echo '{"name":"@cryonix/types","version":"1.0.0","main":"index.js"}' > node_modules/@cryonix/types/package.json && \
+    echo 'module.exports = {};' > node_modules/@cryonix/types/index.js
+
+# Copy agent source (maintains relative import paths from scripts/)
+COPY packages/agents/src/ ./packages/agents/src/
+
+# Copy runner script
+COPY scripts/services/alphanix-runner.ts ./scripts/services/
+
+# Copy config
+COPY alphanix.toml ./
+
+CMD ["npx", "tsx", "scripts/services/alphanix-runner.ts"]
