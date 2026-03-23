@@ -8,7 +8,7 @@ const RSI_PERIOD = 14;
 const VOLUME_AVG_PERIOD = 20;
 const VOLUME_SPIKE_MULT = 1.5;
 const DIP_LOOKBACK = 5;
-const DIP_THRESHOLD = 0.03; // 3%
+const DIP_THRESHOLD = 0.015; // 1.5% — more sensitive for paper testing
 const BOLLINGER_PERIOD = 20;
 const BOLLINGER_STD = 2;
 const DEEP_VALUE_LOOKBACK = 10;
@@ -33,10 +33,10 @@ export class QuantAgent {
     // --- RSI ---
     if (this.models.includes('rsi')) {
       const rsi = this.calcRSI(candles);
-      if (rsi < 35) {
+      if (rsi < 40) {
         signals.push('rsi_oversold');
-        confidence += 40;
-      } else if (rsi > 70) {
+        confidence += 35;
+      } else if (rsi > 65) {
         signals.push('rsi_overbought');
         confidence -= 20;
       }
