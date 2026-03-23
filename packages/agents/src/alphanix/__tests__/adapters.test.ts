@@ -90,3 +90,33 @@ describe('AdapterRegistry', () => {
     expect(a1.disconnect).toHaveBeenCalledOnce();
   });
 });
+
+// --- BinanceAdapter ---
+
+import { BinanceAdapter } from '../adapters/binance-adapter';
+
+describe('BinanceAdapter', () => {
+  it('should have correct id and asset class', () => {
+    const adapter = new BinanceAdapter({ paper: true });
+    expect(adapter.id).toBe('binance');
+    expect(adapter.assetClass).toBe('crypto');
+  });
+
+  it('should return always-open trading hours', () => {
+    const adapter = new BinanceAdapter({ paper: true });
+    expect(adapter.getTradingHours().alwaysOpen).toBe(true);
+  });
+
+  it('should return fee structure', () => {
+    const adapter = new BinanceAdapter({ paper: true });
+    const fees = adapter.getFees();
+    expect(fees.maker).toBeLessThan(0.01);
+    expect(fees.taker).toBeLessThan(0.01);
+  });
+
+  it('should report disconnected before connect', async () => {
+    const adapter = new BinanceAdapter({ paper: true });
+    const health = await adapter.healthCheck();
+    expect(health.connected).toBe(false);
+  });
+});
