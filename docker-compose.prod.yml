@@ -119,6 +119,7 @@ services:
       - "3000:3000"
     volumes:
       - ./cryonix.toml:/app/cryonix.toml:ro
+      - ~/.claude:/home/nextjs/.claude:ro
     environment:
       - NODE_ENV=production
       - CRYONIX_ENV=production

@@ -1208,3 +1208,9 @@ max_entries_per_symbol = 2
 second_entry_min_confidence = 0.75
 dip_threshold_pct = 2.0
 max_symbol_exposure_pct = 60
+
+# ── A/B Test: Claude Shadow Validation ─────────────────────
+[ab_test]
+enabled = true
+claude_model = "claude-sonnet-4-6"
+shadow_mode = true                    # true = Claude logs only, false = Claude controls trades

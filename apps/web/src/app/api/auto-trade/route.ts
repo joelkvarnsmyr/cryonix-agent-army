@@ -6,6 +6,7 @@ import { fullConfig, loadConfig } from '@/lib/config';
 import { getConfigVersion } from '@/lib/config-version';
 import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
+import { spawn } from 'child_process';
 
 import { TimingService } from '@/lib/trading/timing';
 import { updatePosterior, getBayesianAdjustment, rankSignalsBySoftmax } from '@/lib/trading/bayesian';
@@ -2529,6 +2530,104 @@ TP distance: ${tpDistancePct}%`;
 }
 
 // ============================================================================
+// CLAUDE SHADOW VALIDATION — A/B test (never blocks trade execution)
+// ============================================================================
+
+let claudeShadowRunning = false;
+
+async function getClaudeShadowValidation(
+  signal: Signal,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<void> {
+  // Check if A/B testing is enabled via cryonix.toml
+  const abEnabled = (TOML as any)?.ab_test?.enabled ?? false;
+  if (!abEnabled) return;
+
+  // Semaphore: max 1 concurrent Claude validation
+  if (claudeShadowRunning) {
+    console.log(`[CLAUDE/ab] Shadow validation already running, skipping ${signal.symbol}`);
+    return;
+  }
+  claudeShadowRunning = true;
+
+  try {
+    const model = (TOML as any)?.ab_test?.claude_model ?? 'claude-sonnet-4-6';
+    // Combine system + user prompt for Claude CLI (no separate system role)
+    const fullPrompt = systemPrompt + '\n\n' + userPrompt;
+
+    const child = spawn('claude', [
+      '-p', '--model', model, '--output-format', 'text',
+      '--system-prompt', 'You are a crypto trade validator for the Cryonix autonomous trading system. Evaluate signals and decide whether to approve or reject trades. Reply with JSON only.',
+    ], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'inherit'],
+      env: { ...process.env },
+    });
+
+    child.stdin.write(fullPrompt);
+    child.stdin.end();
+
+    const chunks: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+    const timeoutHandle = setTimeout(() => child.kill('SIGTERM'), 120_000);
+
+    const exitCode = await new Promise<number>((resolve) => {
+      child.on('close', (code) => { clearTimeout(timeoutHandle); resolve(code ?? 1); });
+      child.on('error', () => { clearTimeout(timeoutHandle); resolve(1); });
+    });
+
+    const output = Buffer.concat(chunks).toString('utf-8');
+
+    if (exitCode !== 0) {
+      console.warn(`[CLAUDE/ab] CLI exited with code ${exitCode} for ${signal.symbol}`);
+      return;
+    }
+
+    // Parse JSON from response
+    const jsonMatch = output.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.warn(`[CLAUDE/ab] Response not parseable as JSON for ${signal.symbol}`);
+      return;
+    }
+
+    const result = JSON.parse(jsonMatch[0]);
+    const claudeApproved = result.approve === true;
+    const claudeConfidence = (result.confidence || 50) / 100;
+
+    console.log(`[CLAUDE/ab] ${signal.symbol}: ${claudeApproved ? 'APPROVED' : 'REJECTED'} (${result.confidence}%) - ${result.reasoning}`);
+
+    // Save to validation_history with agentId 'claude-shadow'
+    await saveValidation({
+      signalId: undefined,
+      symbol: signal.symbol,
+      action: signal.action,
+      originalConfidence: String(signal.confidence),
+      adjustedConfidence: String(claudeConfidence),
+      consensusLevel: 'SHADOW',
+      sourceVotes: [],
+      technicalIndicators: signal.indicators,
+      priceTargets: {
+        original: { entry: signal.entry_price, sl: signal.stop_loss, tp: signal.target_price },
+        adjusted: { sl: result.sl || undefined, tp: result.tp || undefined },
+      },
+      entryTiming: 'SHADOW',
+      riskLevel: 'SHADOW',
+      approved: claudeApproved,
+      reasoning: result.reasoning || 'No reasoning',
+      agentId: 'claude-shadow',
+      usage: { model },
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[CLAUDE/ab] Shadow validation error: ${msg}`);
+  } finally {
+    claudeShadowRunning = false;
+  }
+}
+
+// ============================================================================
 // POST-TRADE ANALYSIS — Learn from every exit
 // ============================================================================
 
@@ -3873,6 +3972,34 @@ export async function POST() {
         };
       } else {
         aiResult = await getAIValidation(signal);
+      }
+
+      // STEP 3c: Claude Shadow Validation (A/B test — fire-and-forget, never blocks)
+      {
+        const valuePatterns: string[] = (TOML as any)?.patterns?.value_patterns ?? ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'];
+        const isDeepVal = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
+        const isDip = signal.patterns?.some((p: string) => valuePatterns.includes(p) && p !== 'DEEP_VALUE_CRASH');
+        const signalType = isDeepVal ? 'CRASH_BUY' : isDip ? 'DIP_BUY' : 'TECHNICAL';
+
+        const tpDist = signal.entry_price > 0
+          ? ((signal.target_price - signal.entry_price) / signal.entry_price * 100).toFixed(1)
+          : '?';
+
+        const sysPrompt = isDeepVal
+          ? 'Test hypothesis: "This drawdown is PANIC SELLING (buy opportunity), not a FALLING KNIFE." List contradictions and invalidation criteria.'
+          : isDip
+          ? 'Test hypothesis: "This dip is a mean-reversion opportunity, not the start of a larger decline." List contradictions and invalidation criteria.'
+          : 'Test hypothesis: "This technical setup will produce a profitable trade within the expected time horizon." List contradictions and invalidation criteria.';
+
+        const userPrompt = `${signalType}: ${signal.action} ${signal.symbol}\n` +
+          `Patterns: ${signal.patterns?.join(' + ')}\n` +
+          `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n` +
+          `Entry: $${signal.entry_price.toFixed(4)} | SL: $${signal.stop_loss.toFixed(4)} | TP: $${signal.target_price.toFixed(4)}\n` +
+          `TP distance: ${tpDist}%\n` +
+          `Respond JSON: {"approve":bool,"confidence":0-100,"reasoning":"string","contradictions":["..."],"invalidation_criteria":["..."]}`;
+
+        // Fire-and-forget — never awaited, never blocks
+        getClaudeShadowValidation(signal, sysPrompt, userPrompt).catch(() => {});
       }
 
       // Calculate consensus from confidence delta

@@ -53,6 +53,9 @@ COPY --from=builder /app/scripts/lib/ ./scripts/lib/
 COPY --from=builder /app/cryonix.toml ./cryonix.toml
 COPY --from=builder /app/copynix.toml ./copynix.toml
 
+# Claude Code CLI for A/B validation (shadow mode)
+RUN npm install -g @anthropic-ai/claude-code
+
 USER nextjs
 EXPOSE 3000
 
