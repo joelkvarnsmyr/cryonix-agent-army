@@ -395,22 +395,16 @@ export class ApexAgent {
         }
 
         if (!grokResult) {
-            // A/B: log Grok rejection + fire shadow Claude
-            if (this.config.ab_test.enabled) {
-                const cacheKey = `${opp.symbol}:${opp.direction}:${opp.mode}`;
-                const cachedGrok = this.grokCache.get(cacheKey);
-                if (cachedGrok) {
-                    const grokRejection = { approve: cachedGrok.approve, confidence: cachedGrok.confidence, reason: cachedGrok.reason };
-                    const claudePromise = this.validateWithClaude(opp);
-                    const validationId = await this.insertValidation(opp, grokRejection, false, null);
-                    if (validationId && claudePromise) {
-                        claudePromise.then((claudeResult) => {
-                            if (claudeResult) {
-                                this.updateClaudeResult(validationId, claudeResult);
-                                console.log(`[APEX/ab] Claude (shadow): ${claudeResult.approve ? 'APPROVE' : 'REJECT'} (${claudeResult.confidence}%) — Grok rejected this one`);
-                            }
-                        }).catch(() => { /* fail-silent */ });
-                    }
+            // A/B: log Grok rejection — reuse the already-fired abClaudePromise
+            if (this.config.ab_test.enabled && abGrokResult) {
+                const validationId = await this.insertValidation(opp, abGrokResult, false, null);
+                if (validationId && abClaudePromise) {
+                    abClaudePromise.then((claudeResult) => {
+                        if (claudeResult) {
+                            this.updateClaudeResult(validationId, claudeResult);
+                            console.log(`[APEX/ab] Claude (shadow): ${claudeResult.approve ? 'APPROVE' : 'REJECT'} (${claudeResult.confidence}%) — Grok rejected this one`);
+                        }
+                    }).catch(() => { /* fail-silent */ });
                 }
             }
             return;
@@ -646,6 +640,10 @@ export class ApexAgent {
                 child.on('close', (code) => {
                     clearTimeout(timeoutHandle);
                     resolve(code ?? 1);
+                });
+                child.on('error', () => {
+                    clearTimeout(timeoutHandle);
+                    resolve(1);
                 });
             });
 
