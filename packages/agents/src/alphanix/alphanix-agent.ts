@@ -167,6 +167,8 @@ export class AlphanixAgent extends BaseAgent {
         }
       }
 
+      // Refresh global status every cycle (TTL = 300s)
+      await this.publisher?.publishStatus('running');
       await this.publisher?.publishOrchestratorState({
         pods: this.orchestrator.getPodStates(),
         totalCapital: this.allocator.getTotalCapital(),
