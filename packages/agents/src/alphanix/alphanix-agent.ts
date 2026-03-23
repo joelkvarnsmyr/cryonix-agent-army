@@ -154,11 +154,10 @@ export class AlphanixAgent extends BaseAgent {
           await this.publisher?.publishPodPositions(id, pod.getPositions());
           await this.publisher?.publishPodRisk(id, pod.getRiskState());
 
-          if (result.executed > 0) {
-            this.log('info', `Pod ${id}: ${result.executed} trade(s)`, result);
-          }
-          if (result.exited > 0) {
-            this.log('info', `Pod ${id}: ${result.exited} exit(s)`, result);
+          // Always log cycle summary
+          this.log('info', `[${id}] cycle: scanned=${result.scannedSymbols} signals=${result.proposalsGenerated} approved=${result.approved} vetoed=${result.vetoed} executed=${result.executed} exited=${result.exited} errors=${result.errors.length}`);
+          if (result.errors.length > 0) {
+            for (const err of result.errors) this.log('warn', `[${id}] ${err}`);
           }
         } catch (err: any) {
           this.log('error', `Pod ${id} error: ${err.message}`);
