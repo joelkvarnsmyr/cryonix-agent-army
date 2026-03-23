@@ -3,18 +3,23 @@
 import { randomUUID } from 'crypto';
 import type { Candle, TradeProposal } from '../types.js';
 
-const MIN_CANDLES = 14;
+const MIN_CANDLES = 26; // need 26 candles for MACD (26-EMA)
 const RSI_PERIOD = 14;
 const VOLUME_AVG_PERIOD = 20;
 const VOLUME_SPIKE_MULT = 1.5;
 const DIP_LOOKBACK = 5;
 const DIP_THRESHOLD = 0.03; // 3%
+const BOLLINGER_PERIOD = 20;
+const BOLLINGER_STD = 2;
+const DEEP_VALUE_LOOKBACK = 10;
+const DEEP_VALUE_THRESHOLD = 0.08; // 8%
+const DEFAULT_MODELS = ['rsi', 'volume', 'macd', 'bollinger', 'ema', 'deep_value', 'dip'];
 
 export class QuantAgent {
   readonly podId: string;
   readonly models: string[];
 
-  constructor(podId: string, models: string[]) {
+  constructor(podId: string, models: string[] = DEFAULT_MODELS) {
     this.podId = podId;
     this.models = models;
   }
@@ -49,14 +54,86 @@ export class QuantAgent {
       }
     }
 
+    // --- MACD crossover ---
+    if (this.models.includes('macd')) {
+      const closes = candles.map((c) => c.close);
+      const ema12 = this.calcEMA(closes, 12);
+      const ema26 = this.calcEMA(closes, 26);
+      if (ema12.length >= 2 && ema26.length >= 2) {
+        // Align arrays: both have same length (candles.length)
+        const macdLine = ema12.map((v, i) => v - ema26[i]);
+        const signalLine = this.calcEMA(macdLine, 9);
+        const len = signalLine.length;
+        if (len >= 2) {
+          const curr = macdLine[len - 1] - signalLine[len - 1];
+          const prev = macdLine[len - 2] - signalLine[len - 2];
+          if (curr > 0 && prev <= 0) {
+            signals.push('macd_bullish');
+            confidence += 30;
+          } else if (curr < 0 && prev >= 0) {
+            signals.push('macd_bearish');
+            confidence -= 15;
+          }
+        }
+      }
+    }
+
+    // --- Bollinger Squeeze ---
+    if (this.models.includes('bollinger')) {
+      const closes = candles.map((c) => c.close);
+      if (closes.length >= BOLLINGER_PERIOD) {
+        const window = closes.slice(-BOLLINGER_PERIOD);
+        const sma = window.reduce((s, v) => s + v, 0) / BOLLINGER_PERIOD;
+        const variance =
+          window.reduce((s, v) => s + (v - sma) ** 2, 0) / BOLLINGER_PERIOD;
+        const std = Math.sqrt(variance);
+        const lowerBand = sma - BOLLINGER_STD * std;
+        const lastClose = closes[closes.length - 1];
+        if (lastClose < lowerBand) {
+          signals.push('bollinger_squeeze');
+          confidence += 35;
+        }
+      }
+    }
+
+    // --- EMA Cross ---
+    if (this.models.includes('ema')) {
+      const closes = candles.map((c) => c.close);
+      const ema9 = this.calcEMA(closes, 9);
+      const ema21 = this.calcEMA(closes, 21);
+      if (ema9.length >= 2 && ema21.length >= 2) {
+        const len = ema9.length;
+        const currDiff = ema9[len - 1] - ema21[len - 1];
+        const prevDiff = ema9[len - 2] - ema21[len - 2];
+        if (currDiff > 0 && prevDiff <= 0) {
+          signals.push('ema_bullish');
+          confidence += 25;
+        }
+      }
+    }
+
+    // --- Deep Value Crash ---
+    if (this.models.includes('deep_value')) {
+      const recentForDV = candles.slice(-DEEP_VALUE_LOOKBACK);
+      const dvHigh = Math.max(...recentForDV.map((c) => c.high));
+      const dvClose = candles[candles.length - 1].close;
+      const dvDrop = (dvHigh - dvClose) / dvHigh;
+      if (dvDrop > DEEP_VALUE_THRESHOLD) {
+        signals.push('deep_value_crash');
+        confidence += 40;
+      }
+    }
+
     // --- Dip detection ---
-    const recentCandles = candles.slice(-DIP_LOOKBACK);
-    const recentHigh = Math.max(...recentCandles.map((c) => c.high));
-    const lastClose = candles[candles.length - 1].close;
-    const dipPct = (recentHigh - lastClose) / recentHigh;
-    if (dipPct > DIP_THRESHOLD) {
-      signals.push('dip_buy');
-      confidence += 25;
+    if (this.models.includes('dip')) {
+      const recentCandles = candles.slice(-DIP_LOOKBACK);
+      const recentHigh = Math.max(...recentCandles.map((c) => c.high));
+      const lastClose = candles[candles.length - 1].close;
+      const dipPct = (recentHigh - lastClose) / recentHigh;
+      if (dipPct > DIP_THRESHOLD) {
+        signals.push('dip_buy');
+        confidence += 25;
+      }
     }
 
     // Clamp confidence 0-100
@@ -79,6 +156,23 @@ export class QuantAgent {
     };
 
     return [proposal];
+  }
+
+  private calcEMA(data: number[], period: number): number[] {
+    if (data.length < period) return [...data];
+    const k = 2 / (period + 1);
+    const result: number[] = new Array(data.length);
+    // Seed with SMA of first `period` values
+    let sum = 0;
+    for (let i = 0; i < period; i++) {
+      sum += data[i];
+      result[i] = data[i]; // placeholder for pre-seed values
+    }
+    result[period - 1] = sum / period;
+    for (let i = period; i < data.length; i++) {
+      result[i] = data[i] * k + result[i - 1] * (1 - k);
+    }
+    return result;
   }
 
   private calcRSI(candles: Candle[]): number {
