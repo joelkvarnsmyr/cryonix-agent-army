@@ -141,7 +141,7 @@ export class MacroClassifierAgent {
 
         try {
             const response = await this.grok!.chat.completions.create({
-                model: 'grok-3-mini',
+                model: 'grok-4-1-fast-non-reasoning',
                 messages: [
                     { role: 'system', content: SYSTEM_PROMPT },
                     { role: 'user', content: `Analyze these ${articles.length} articles:\n\n${articleText}` },

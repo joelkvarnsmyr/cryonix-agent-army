@@ -6,7 +6,7 @@ Replaces the broken HTTP-based cron that called /api/x-sentiment every 15 min.
 This script connects directly to Redis, bypassing Caddy -> Docker routing issues.
 
 Mirrors the logic in apps/web/src/app/api/x-sentiment/route.ts:
-  1. Calls Grok xAI API (grok-3-mini) with live X/Twitter search
+  1. Calls Grok xAI API (grok-4-1-fast-non-reasoning) with live X/Twitter search
   2. Asks for sentiment scores (-3 to +3) for the watchlist
   3. Stores result in Redis key 'x-sentiment:latest' (900s TTL)
   4. Stores individual 'sentiment:{SYMBOL}' keys (3600s TTL)
@@ -131,10 +131,10 @@ def call_grok() -> dict:
 
     client = OpenAI(api_key=api_key, base_url='https://api.x.ai/v1')
 
-    print('[X-SENTIMENT] Calling Grok API (grok-3-mini with live search)...')
+    print('[X-SENTIMENT] Calling Grok API (grok-4-1-fast-non-reasoning with live search)...')
 
     response = client.chat.completions.create(
-        model='grok-3-mini',
+        model='grok-4-1-fast-non-reasoning',
         messages=[
             {'role': 'system', 'content': SYSTEM_PROMPT},
             {'role': 'user', 'content': build_user_prompt()},
@@ -145,7 +145,7 @@ def call_grok() -> dict:
     )
 
     content = response.choices[0].message.content or ''
-    model_used = response.model or 'grok-3-mini'
+    model_used = response.model or 'grok-4-1-fast-non-reasoning'
     tokens_used = response.usage.total_tokens if response.usage else 0
 
     # Extract JSON from response (may be wrapped in markdown code fences)

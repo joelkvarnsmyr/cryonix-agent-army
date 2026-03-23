@@ -36,7 +36,7 @@ export class XIngestionService {
 
         try {
             const response = await (this.grok.chat.completions.create as any)({
-                model: 'grok-3-mini',
+                model: 'grok-4-1-fast-non-reasoning',
                 messages: [{
                     role: 'user',
                     content: `Search X for breaking financial/macro news from these accounts posted in the last 2 hours.

@@ -149,7 +149,7 @@ Respond in this exact JSON format (no markdown, no code blocks):
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    model: 'grok-3-mini',
+                    model: 'grok-4-1-fast-non-reasoning',
                     messages: [{ role: 'user', content: prompt }],
                     temperature: 0.3,
                     max_tokens: 500,

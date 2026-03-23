@@ -83,7 +83,7 @@ def _make_grok_filter(symbol, toml):
         return None
 
     ai_cfg = toml.get('ai', {})
-    model = ai_cfg.get('model', 'grok-3-mini-fast')
+    model = ai_cfg.get('model', 'grok-4-1-fast-non-reasoning')
     temperature = float(ai_cfg.get('temperature', 0.1))
     ta_weight = float(ai_cfg.get('ta_weight', 0.6))
     ai_weight = float(ai_cfg.get('ai_weight', 0.4))
@@ -206,7 +206,7 @@ def quick_backtest(symbol: str, days: int = 14, config_overrides: dict = None,
     signal_filter = _make_grok_filter(symbol, toml) if with_ai else None
 
     if with_ai and signal_filter:
-        print(f'  [AI] Grok validation enabled (model: {toml.get("ai", {}).get("model", "grok-3-mini-fast")})')
+        print(f'  [AI] Grok validation enabled (model: {toml.get("ai", {}).get("model", "grok-4-1-fast-non-reasoning")})')
     elif with_ai and not signal_filter:
         pass  # Warning already printed by _make_grok_filter
 

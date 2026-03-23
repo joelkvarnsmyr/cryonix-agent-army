@@ -785,8 +785,6 @@ const MODEL_PRICING = {
   'grok-4-fast-reasoning': [1.00, 4.00],
   'grok-4-fast-non-reasoning': [1.00, 4.00],
   'grok-4-0709': [3.00, 15.00],
-  'grok-3': [3.00, 15.00],
-  'grok-3-mini': [0.03, 0.10],
 };
 
 async function cmdCost() {
@@ -814,7 +812,7 @@ async function cmdCost() {
     if (!res.rows.length) return '💰 <b>AI Cost Tracker</b>\n\nNo API calls recorded yet.';
 
     function calcCost(model, promptTok, compTok) {
-      const pricing = MODEL_PRICING[model] || MODEL_PRICING['grok-3-mini'];
+      const pricing = MODEL_PRICING[model] || MODEL_PRICING['grok-4-1-fast-non-reasoning'];
       const inCost = (parseInt(promptTok) || 0) / 1_000_000 * pricing[0];
       const outCost = (parseInt(compTok) || 0) / 1_000_000 * pricing[1];
       return inCost + outCost;

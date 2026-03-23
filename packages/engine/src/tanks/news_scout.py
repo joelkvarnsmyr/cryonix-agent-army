@@ -135,7 +135,7 @@ Use ! only for hacks, exploits, or emergencies happening NOW."""
                     "https://api.x.ai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                     json={
-                        "model": "grok-3-mini",
+                        "model": "grok-4-1-fast-non-reasoning",
                         "messages": [
                             {"role": "system", "content": "You are a crypto market sentiment analyst. Respond with JSON only."},
                             {"role": "user", "content": prompt},

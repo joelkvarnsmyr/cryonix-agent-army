@@ -104,7 +104,7 @@ async def ai_parse_signal(text: str, channel_name: str) -> 'ParsedSignal | None'
                     'Content-Type': 'application/json',
                 },
                 json={
-                    'model': 'grok-3-mini-fast',
+                    'model': 'grok-4-1-fast-non-reasoning',
                     'messages': [{'role': 'user', 'content': prompt}],
                     'temperature': 0,
                 },

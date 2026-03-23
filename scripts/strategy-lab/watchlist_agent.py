@@ -27,7 +27,7 @@ from db import get_pg, get_redis
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 TOML_PATH = os.path.join(PROJECT_ROOT, 'cryonix.toml')
 GROK_API_URL = 'https://api.x.ai/v1/chat/completions'
-GROK_MODEL = 'grok-3-mini'
+GROK_MODEL = 'grok-4-1-fast-non-reasoning'
 
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_EVOLUTION_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID   = os.environ.get('TELEGRAM_CHAT_ID', '')

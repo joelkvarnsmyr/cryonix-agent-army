@@ -130,7 +130,7 @@ export const APEX_DEFAULTS: ApexTomlConfig = {
     },
     orakel: { enabled: true, direction_weight: 15, regime_weight: 10, vol_spike_veto: true },
     staleness: { momentary_seconds: 300, ambient_seconds: 86400 },
-    grok: { enabled: true, model: 'grok-3-mini', cache_ttl_seconds: 300, max_calls_per_minute: 4 },
+    grok: { enabled: true, model: 'grok-4-1-fast-non-reasoning', cache_ttl_seconds: 300, max_calls_per_minute: 4 },
     telegram: { enabled: true, alert_on_entry: true, alert_on_exit: true, alert_on_circuit_breaker: true },
     ab_test: {
         enabled: true,

@@ -9,12 +9,10 @@ const MODEL_PRICING: Record<string, [number, number]> = {
   'grok-4-fast-reasoning': [1.00, 4.00],
   'grok-4-fast-non-reasoning': [1.00, 4.00],
   'grok-4-0709': [3.00, 15.00],
-  'grok-3': [3.00, 15.00],
-  'grok-3-mini': [0.03, 0.10],
 };
 
 function calcCost(model: string, promptTokens: number, completionTokens: number): number {
-  const pricing = MODEL_PRICING[model] || MODEL_PRICING['grok-3-mini'];
+  const pricing = MODEL_PRICING[model] || MODEL_PRICING['grok-4-1-fast-non-reasoning'];
   return (promptTokens / 1_000_000) * pricing[0] + (completionTokens / 1_000_000) * pricing[1];
 }
 

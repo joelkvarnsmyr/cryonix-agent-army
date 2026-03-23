@@ -39,7 +39,7 @@ export class WatchlistCurator {
             const grok = new OpenAI({ apiKey: this.xaiApiKey, baseURL: 'https://api.x.ai/v1' });
             const date = new Date().toISOString().slice(0, 10);
             const response = await grok.chat.completions.create({
-                model: 'grok-3-latest',
+                model: 'grok-4-1-fast-non-reasoning',
                 messages: [
                     {
                         role: 'user',

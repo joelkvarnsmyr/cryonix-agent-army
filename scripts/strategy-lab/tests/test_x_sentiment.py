@@ -39,7 +39,7 @@ def test_onchain_alert_writes_json():
             }
         }
     }
-    write_to_redis(r, sentiment_data, 'grok-3-mini', 100)
+    write_to_redis(r, sentiment_data, 'grok-4-1-fast-non-reasoning', 100)
     assert 'sentiment:alert:BTC' in r.calls
     payload = json.loads(r.calls['sentiment:alert:BTC']['value'])
     assert payload['severity'] == 'warning'
@@ -67,7 +67,7 @@ def test_critical_onchain_alert_writes_json():
             }
         }
     }
-    write_to_redis(r, sentiment_data, 'grok-3-mini', 100)
+    write_to_redis(r, sentiment_data, 'grok-4-1-fast-non-reasoning', 100)
     payload = json.loads(r.calls['sentiment:alert:ETH']['value'])
     assert payload['severity'] == 'critical'
 
@@ -85,7 +85,7 @@ def test_plain_alert_writes_string_when_no_onchain():
             'onchain_alert': None,
         }
     }
-    write_to_redis(r, sentiment_data, 'grok-3-mini', 100)
+    write_to_redis(r, sentiment_data, 'grok-4-1-fast-non-reasoning', 100)
     assert 'sentiment:alert:SOL' in r.calls
     # Should be plain string, not JSON
     value = r.calls['sentiment:alert:SOL']['value']
@@ -105,7 +105,7 @@ def test_no_alert_writes_nothing():
             'onchain_alert': None,
         }
     }
-    write_to_redis(r, sentiment_data, 'grok-3-mini', 100)
+    write_to_redis(r, sentiment_data, 'grok-4-1-fast-non-reasoning', 100)
     assert 'sentiment:alert:BTC' not in r.calls
 
 
@@ -133,6 +133,6 @@ def test_onchain_alert_idempotent_same_severity():
             }
         }
     }
-    write_to_redis(r, sentiment_data, 'grok-3-mini', 100)
+    write_to_redis(r, sentiment_data, 'grok-4-1-fast-non-reasoning', 100)
     # setex should NOT have been called — same severity already in Redis
     assert 'sentiment:alert:BTC' not in r.calls

@@ -91,7 +91,7 @@ export class EventLifecycleTracker {
             const bullish = event.causal_chain.immediate.bullish_tickers.join(', ');
 
             const response = await (this.grok.chat.completions.create as any)({
-                model: 'grok-3-mini',
+                model: 'grok-4-1-fast-non-reasoning',
                 messages: [{
                     role: 'user',
                     content: `Re-evaluate this macro event for a US equity trading system.

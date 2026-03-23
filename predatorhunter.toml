@@ -1,0 +1,127 @@
+# ═══════════════════════════════════════════════════════════════════
+#  PREDATOR HUNTER — Counter-Exploitation Trading Agent
+#  
+#  Detects manipulation campaigns (pump & dumps, coordinated shills,
+#  whale games) and profits by entering during early pump phases
+#  with ultra-tight risk controls.
+#
+#  ⚠️  Starts in PAPER TRADING mode. Switch to live only after
+#      proven consistent profitability.
+# ═══════════════════════════════════════════════════════════════════
+
+[broker]
+paper_trading = true
+
+# ─── Scanner Configuration ────────────────────────────────────────
+[scanner]
+# Grok model for manipulation detection (live X search enabled)
+model = "grok-4-1-fast-non-reasoning"
+temperature = 0.2
+max_tokens = 1200
+
+# How often to scan X/Telegram/trending for manipulation signals (ms)
+scan_interval_ms = 300000  # 5 minutes
+
+# Minimum shill accounts detected to consider it a campaign
+min_shill_accounts = 5
+
+# Minimum mentions within time window to flag as coordinated
+min_coordinated_mentions = 8
+coordination_window_minutes = 15
+
+# Keywords that indicate pump campaigns (scored by the AI)
+pump_keywords = [
+    "1000x", "moonshot", "undervalued gem", "next 100x",
+    "buy now before", "get in early", "easy money",
+    "whale alert", "insider info", "about to pump",
+    "loading bags", "accumulating", "don't miss",
+    "moon", "rocket", "lambo", "pump incoming",
+]
+
+# Known pump-and-dump Telegram channels to monitor
+# (Reads from existing telegram:signal:* Redis keys + these specific channels)
+known_pump_channels = [
+    # These are monitored via the existing Telegram scraper
+    # Add IDs of known pump groups here as they are discovered
+]
+
+# ─── Detection Thresholds ─────────────────────────────────────────
+[detection]
+# Volume spike relative to 24h average to confirm pump is real
+min_volume_spike_ratio = 3.0
+
+# Price velocity (% per minute) — sweet spot for early pump
+min_price_velocity = 1.0   # Below this = organic, not a pump
+max_price_velocity = 10.0  # Above this = already peaking, too late
+
+# Max price increase from pre-pump baseline before we reject entry
+max_already_pumped_pct = 20.0
+
+# Manipulation type confidence thresholds (0-100)
+min_pnd_confidence = 70       # Pump & dump
+min_shill_confidence = 65     # Coordinated shill campaign
+min_whale_confidence = 75     # Whale accumulation play
+
+# CMC market cap rank filter — only trade top N coins
+# Avoids micro-cap rug pulls that are truly dangerous
+max_cmc_rank = 500
+
+# Max bid-ask spread to ensure we can exit
+max_spread_pct = 0.5
+
+# ─── Capital Management ──────────────────────────────────────────
+[capital]
+virtual_balance = 100          # Paper trading virtual USDC
+max_position_size_usd = 25     # Max per trade
+max_capital_per_trade_pct = 0.25
+min_order_value = 5.00
+
+# ─── Position Limits ─────────────────────────────────────────────
+[limits]
+max_open_positions = 2         # Max simultaneous predator hunts
+max_trades_per_day = 5         # Avoid overtrading
+cooldown_after_loss_minutes = 30  # Pause after a loss to avoid tilt
+
+# ─── Risk Management ─────────────────────────────────────────────
+[risk]
+max_daily_loss_pct = 0.15      # 15% daily loss circuit breaker
+max_weekly_loss_pct = 0.25     # 25% weekly loss circuit breaker
+max_consecutive_losses = 3     # Pause trading after 3 losses
+
+# ─── Exit Strategy ───────────────────────────────────────────────
+[exits]
+# Stop loss — tight because pump reversals are violent
+sl_pct = 5.0
+
+# Take profit — capture the pump
+tp_pct = 20.0
+
+# Trailing stop — lock in gains as pump progresses
+trailing_stop_pct = 5.0
+trailing_activation_pct = 8.0  # Activate trailing after +8%
+
+# Dump velocity exit — instant sell if price drops too fast
+# If price drops > dump_velocity_pct in dump_velocity_window_seconds → EXIT
+dump_velocity_pct = 3.0
+dump_velocity_window_seconds = 60
+
+# Volume reversal exit — sell volume exceeding buy volume
+volume_reversal_checks = 3     # Exit after N consecutive sell-heavy checks
+
+# Maximum hold time — most P&D cycles are 5-20 minutes
+max_hold_minutes = 30
+
+# Shill activity exit — if social mentions drop > 50%, tighten trailing
+shill_drop_threshold_pct = 50.0
+shill_drop_trailing_pct = 3.0  # Tighter trailing when shills go quiet
+
+# ─── Timing ──────────────────────────────────────────────────────
+[timing]
+# Price/position monitoring when in a position (fast because pumps are fast)
+position_check_ms = 5000       # 5 seconds
+
+# Binance API timeout
+api_timeout_ms = 10000
+
+# Minimum time between scans of same symbol (avoid duplicate entries)
+symbol_cooldown_minutes = 60

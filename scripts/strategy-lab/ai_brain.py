@@ -457,7 +457,7 @@ def call_grok(context, is_acute=False):
                 GROK_API_URL,
                 headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
                 json={
-                    'model': 'grok-3-mini-fast',
+                    'model': 'grok-4-1-fast-non-reasoning',
                     'messages': [
                         {'role': 'system', 'content': SYSTEM_PROMPT},
                         {'role': 'user', 'content': user_msg},

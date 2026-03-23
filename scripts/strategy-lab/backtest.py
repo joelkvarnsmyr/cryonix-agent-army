@@ -71,7 +71,7 @@ class GrokValidator:
         self.dip_focus = get_toml('patterns', 'dip_focus_mode', True)
         self.ta_weight = get_toml('ai', 'ta_weight', 0.60)
         self.ai_weight = get_toml('ai', 'ai_weight', 0.40)
-        self.model = get_toml('ai', 'model', 'grok-3-mini-fast')
+        self.model = get_toml('ai', 'model', 'grok-4-1-fast-non-reasoning')
 
     def validate(self, signal: Dict, result: Dict) -> Dict[str, Any]:
         """Validate a signal with Grok AI. Returns {approved, confidence, reasoning}."""

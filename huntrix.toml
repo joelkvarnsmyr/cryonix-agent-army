@@ -15,7 +15,7 @@ capital = 100.0
 currency = "USDC"
 
 [scanner]
-grok_model = "grok-3-mini"
+grok_model = "grok-4-1-fast-non-reasoning"
 manipulation_keywords = ["pump", "100x", "moon", "gem", "alpha call", "next big", "load up", "accumulate"]
 min_shill_accounts = 5
 min_coordination_score = 60

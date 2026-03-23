@@ -82,7 +82,7 @@ Return ONLY pure JSON in this format:
 No markdown wrapping, no thinking text, just the JSON array.`;
 
             const response = await this.grok.chat.completions.create({
-                model: 'grok-3-mini', // Fast, reasoning model
+                model: 'grok-4-1-fast-non-reasoning',
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: 'Execute a live X search now for breaking macro events and return the JSON array.' }

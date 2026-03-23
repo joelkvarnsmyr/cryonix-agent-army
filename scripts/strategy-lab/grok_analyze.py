@@ -426,7 +426,7 @@ Use x_search and web_search to find real-time data before answering."""
     )
     web_tool = web_search()
 
-    # Use grok-3-mini-fast for cost efficiency with reasoning
+    # Use grok-4-1-fast-reasoning for cost efficiency with reasoning
     model = "grok-4-1-fast-reasoning"
     print(
         f"\n[GROK] Calling {model} with x_search + web_search (mode: {mode})...",

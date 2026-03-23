@@ -14,7 +14,7 @@ export const HUNTRIX_DEFAULTS: HuntrixConfig = {
     currency: 'USDC',
   },
   scanner: {
-    grok_model: 'grok-3-mini',
+    grok_model: 'grok-4-1-fast-non-reasoning',
     manipulation_keywords: [
       'pump', '100x', 'moon', 'gem', 'alpha call',
       'next big', 'load up', 'accumulate',

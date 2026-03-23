@@ -684,7 +684,7 @@ enabled = true
 # Which GROK model to use.
 #   "grok-4-1-fast-reasoning" — Best: 2M context, reasoning mode, $0.20/$0.50/1M tokens
 #   "grok-4-1-fast-non-reasoning" — Same model without thinking (faster, no reasoning tokens)
-#   "grok-3-mini" — Cheapest fallback
+#   "grok-4-1-fast-non-reasoning" — Same model without thinking (faster, cheaper for simple tasks)
 # Reasoning mode enables multi-step thinking before answering.
 # reasoning_effort controls depth: "low" (fast), "high" (thorough).
 model = "grok-4-1-fast-reasoning"
