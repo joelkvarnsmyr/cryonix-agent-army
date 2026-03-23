@@ -91,6 +91,8 @@ export class Pod {
       result.scannedSymbols++;
       try {
         const candles = await this.adapter.getOHLCV(symbol, this.getTimeframe(), 30);
+        if (candles.length === 0) continue;  // No data (market closed, etc.)
+
         const proposals = this.quant.analyze(symbol, this.adapter.id, candles);
         result.proposalsGenerated += proposals.length;
 
