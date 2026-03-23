@@ -477,6 +477,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./apex.toml:/app/apex.toml:ro
+      - ~/.claude:/home/node/.claude:ro
     environment:
       - NODE_ENV=production
       - KV_URL=redis://redis:6379

@@ -26,5 +26,7 @@ COPY packages/agents/src/ ./packages/agents/src/
 # Copy runner script
 COPY scripts/services/apex-runner.ts ./scripts/services/
 
+RUN npm install -g @anthropic-ai/claude-code
+
 USER node
 CMD ["npx", "tsx", "scripts/services/apex-runner.ts"]
