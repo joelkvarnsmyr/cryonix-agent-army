@@ -32,12 +32,15 @@ interface StatusResponse {
 interface Position {
   symbol: string;
   qty: number;
-  entryPrice: number;
-  currentPrice: number;
-  unrealizedPnl: number;
-  unrealizedPnlPct: number;
-  side: string;
+  avgEntryPrice?: number;
+  entryPrice?: number;
+  currentPrice?: number;
+  marketValue?: number;
+  unrealizedPnl?: number;
+  unrealizedPnlPct?: number;
+  adapter?: string;
   openedAt?: string;
+  holdingHours?: number;
 }
 
 interface PositionsResponse {
@@ -273,16 +276,18 @@ export default function AlphanixPage() {
                       {podPositions.map((pos) => {
                         const pnl = pos.unrealizedPnl ?? 0;
                         const pnlPct = pos.unrealizedPnlPct ?? 0;
+                        const entry = pos.avgEntryPrice ?? pos.entryPrice ?? 0;
+                        const current = pos.currentPrice ?? 0;
                         const plColor = pnl >= 0 ? 'text-emerald-400' : 'text-red-400';
 
                         return (
                           <div key={`${podId}-${pos.symbol}`} className="grid grid-cols-5 gap-2 text-xs font-mono px-1 py-0.5 rounded hover:bg-white/[0.02]">
                             <span className="text-foreground/80">{pos.symbol}</span>
-                            <span className="text-right text-muted-foreground">{pos.qty}</span>
-                            <span className="text-right text-muted-foreground">${(pos.entryPrice ?? 0).toFixed(2)}</span>
-                            <span className={`text-right ${plColor}`}>${(pos.currentPrice ?? 0).toFixed(2)}</span>
+                            <span className="text-right text-muted-foreground">{typeof pos.qty === 'number' ? pos.qty.toFixed(4) : pos.qty}</span>
+                            <span className="text-right text-muted-foreground">${entry.toFixed(2)}</span>
+                            <span className={`text-right ${plColor}`}>${current.toFixed(2)}</span>
                             <span className={`text-right ${plColor}`}>
-                              {pnlPct >= 0 ? '+' : ''}{(pnlPct ?? 0).toFixed(2)}%
+                              {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
                             </span>
                           </div>
                         );
