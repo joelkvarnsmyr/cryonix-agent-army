@@ -27,22 +27,37 @@ New async method in `apex-agent.ts`. Mirrors `validateWithGrok()` but calls Clau
 
 **Invocation:**
 ```typescript
-const child = execFile('claude', ['-p', '--model', model], {
-    timeout: 60_000,
+const child = spawn('claude', ['-p', '--model', model, '--output-format', 'text'], {
     cwd: process.cwd(),
-    maxBuffer: 2 * 1024 * 1024,
+    stdio: ['pipe', 'pipe', 'inherit'],  // stderr → parent logs for debugging
+    env: { ...process.env },
 });
 child.stdin.write(prompt);
 child.stdin.end();
+
+// Collect stdout
+const chunks: Buffer[] = [];
+child.stdout.on('data', (chunk) => chunks.push(chunk));
+
+// 120s timeout
+const timeout = setTimeout(() => child.kill('SIGTERM'), 120_000);
+
+const exitCode = await new Promise<number>((resolve) => {
+    child.on('close', (code) => { clearTimeout(timeout); resolve(code ?? 1); });
+});
+const output = Buffer.concat(chunks).toString('utf-8');
 ```
 
 **Key behaviors:**
+- Uses `spawn` (not `execFile`) — correct API for stdin piping
+- `--output-format text` — plain text output (no markdown formatting)
+- 120s timeout (Claude CLI startup + reasoning takes longer than Grok API)
 - Runs async (non-blocking) — does NOT delay Grok validation or trade execution
 - Same prompt as Grok (fair comparison)
 - Parses JSON response: `{"approve": bool, "confidence": 0-100, "reason": "..."}`
 - Fail-silent: errors are logged but never affect trades
 - No caching (we want every opportunity evaluated fresh for comparison)
-- No rate limiting (Claude CLI handles this internally)
+- Concurrency limit: max 1 Claude validation at a time (semaphore). If a previous validation is still running, skip the new one and log `claude_approve = null`
 
 **Prompt (identical to Grok):**
 ```
@@ -72,12 +87,13 @@ CREATE TABLE IF NOT EXISTS apex_validations (
     grok_approve BOOLEAN,
     grok_confidence DECIMAL(5,2),
     grok_reason TEXT,
+    grok_model VARCHAR(100),
 
     -- Claude result
     claude_approve BOOLEAN,
     claude_confidence DECIMAL(5,2),
     claude_reason TEXT,
-    claude_model VARCHAR(50),
+    claude_model VARCHAR(100),
 
     -- Outcome
     trade_executed BOOLEAN DEFAULT FALSE,
@@ -90,24 +106,32 @@ CREATE TABLE IF NOT EXISTS apex_validations (
 
 CREATE INDEX IF NOT EXISTS idx_apex_validations_symbol ON apex_validations(symbol);
 CREATE INDEX IF NOT EXISTS idx_apex_validations_date ON apex_validations(validated_at);
+CREATE INDEX IF NOT EXISTS idx_apex_validations_position ON apex_validations(position_id);
 ```
 
-**PnL tracking:** When a position closes in `monitorPositions()`, update `apex_validations` with `actual_pnl` by matching `position_id`.
+**PnL tracking:**
+- **On INSERT:** `trade_executed` and `position_id` are known at insert time (step 4 above), so they're written in the initial INSERT — no separate UPDATE needed.
+- **On position close:** In `monitorPositions()`, add a second UPDATE query (alongside the existing `apex_trades` UPDATE) to set `actual_pnl` and `actual_pnl_pct` in `apex_validations` by matching `position_id`.
 
 ### 3. Execution flow in `tick()`
 
 ```
 for each opportunity:
   1. validateWithGrok()        → grokResult (sync, blocking)
-  2. validateWithClaude()      → fire-and-forget (async, non-blocking)
+  2. claudePromise = validateWithClaude()  → fire-and-forget (async, non-blocking)
   3. if grokResult.approve:
-       execute trade
-       trade_executed = true
-  4. await claudeResult (with 60s timeout)
-  5. INSERT INTO apex_validations (both results + trade_executed)
+       execute trade → get position_id
+  4. INSERT INTO apex_validations (grok results + trade_executed + position_id)
+     ← claude_approve = null initially
+  5. claudePromise.then(result =>
+       UPDATE apex_validations SET claude_approve, claude_confidence, claude_reason
+       WHERE id = inserted_id
+     )  ← runs async, never blocks tick
 ```
 
-Claude validation runs concurrently with trade execution. If Claude times out, log `claude_approve = null`.
+**Key design:** Claude validation NEVER blocks the tick loop. The row is inserted immediately with Grok results + trade outcome. Claude's result is backfilled asynchronously when it completes (up to 120s later). This ensures position monitoring and subsequent scans are never delayed.
+
+Only one Claude validation runs at a time (semaphore) — if previous validation still in progress, new one is skipped and `claude_approve` stays null.
 
 ### 4. Config in `apex.toml`
 
@@ -164,21 +188,27 @@ ORDER BY validated_at DESC LIMIT 20;
 
 ## Docker changes
 
-Apex Dockerfile needs Claude Code CLI installed:
+Apex Dockerfile needs Claude Code CLI installed. Must be installed BEFORE any `USER node` directive (global npm install requires root):
 ```dockerfile
 RUN npm install -g @anthropic-ai/claude-code
+# ... later ...
+USER node
 ```
 
-Apex container needs Claude auth volume mount:
+Apex container runs as `node` user (node:20-alpine default). Volume mount must match:
 ```yaml
 volumes:
-  - ~/.claude:/root/.claude:ro
+  - ~/.claude:/home/node/.claude:ro
 ```
+
+If Apex Dockerfile uses `USER node`, the Claude CLI will read auth from `/home/node/.claude`. If it runs as root, use `/root/.claude` instead. Check the Dockerfile's USER directive and match accordingly.
 
 ## Constraints
 
 - Claude validation must NEVER block or delay Grok validation or trade execution
-- Claude timeout: 60 seconds (vs Grok ~2-5s)
+- Claude timeout: 120 seconds (vs Grok ~2-5s) — CLI startup + model reasoning
+- Max 1 concurrent Claude validation (semaphore) — prevents resource exhaustion
+- `-p` flag — non-interactive mode, no tool calls (pure prompt → response)
 - If Claude CLI is not installed or fails, the feature degrades silently
 - No additional API keys needed (Claude CLI uses account auth from volume mount)
 - Table creation is idempotent (CREATE IF NOT EXISTS)
