@@ -606,21 +606,16 @@ export class ApexAgent {
 
         try {
             const model = this.config.ab_test.claude_model;
-            const signalList = opp.contributingSignals
-                .map((s, i) => `${i + 1}. [${s.source}] ${s.signalType} — confidence ${s.confidence}%`)
-                .join('\n');
-
-            const prompt = [
-                `You are a crypto trade validator. APEX detected confluence for ${opp.symbol} (${opp.direction}).`,
-                `Each signal below is from a DIFFERENT source (already deduplicated — no duplicates):`,
-                signalList,
-                `Unique sources: ${new Set(opp.contributingSignals.map(s => s.source)).size}`,
-                `Confluence score: ${opp.score}/100`,
-                ``,
-                `Should we enter this trade? Consider: macro environment, technical setup,`,
-                `risk/reward. Approve if the setup has positive expected value.`,
-                `Reply JSON only: {"approve": true/false, "confidence": 0-100, "reason": "..."}`,
-            ].join('\n');
+            // Prompt MUST be identical to Grok's (fair A/B comparison)
+            const prompt =
+                `You are a crypto trade validator. APEX detected confluence for ${opp.symbol} (${opp.direction}).\n` +
+                `Each signal below is from a DIFFERENT source (already deduplicated — no duplicates):\n` +
+                `${opp.contributingSignals.map(s => `- ${s.source}:${s.signalType} (conf=${s.confidence})`).join('\n')}\n` +
+                `Unique sources: ${new Set(opp.contributingSignals.map(s => s.source)).size}\n` +
+                `Confluence score: ${opp.score}/100\n\n` +
+                `Should we enter this trade? Consider: macro environment, technical setup, ` +
+                `risk/reward. Approve if the setup has positive expected value.\n` +
+                `Reply JSON: {"approve": true/false, "confidence": 0-100, "reason": "..."}`;
 
             const child = spawn('claude', ['-p', '--model', model, '--output-format', 'text'], {
                 cwd: process.cwd(),
