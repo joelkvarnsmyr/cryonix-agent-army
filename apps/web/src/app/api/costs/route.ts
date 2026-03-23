@@ -9,6 +9,7 @@ const MODEL_PRICING: Record<string, [number, number]> = {
   'grok-4-fast-reasoning': [1.00, 4.00],
   'grok-4-fast-non-reasoning': [1.00, 4.00],
   'grok-4-0709': [3.00, 15.00],
+  'grok-4.20-0309-reasoning': [2.00, 6.00],
 };
 
 function calcCost(model: string, promptTokens: number, completionTokens: number): number {

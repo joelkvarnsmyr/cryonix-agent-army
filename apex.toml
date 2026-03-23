@@ -91,7 +91,7 @@ ambient_seconds = 86400
 
 [grok]
 enabled = true
-model = "grok-4-1-fast-non-reasoning"
+model = "grok-4.20-0309-reasoning"
 cache_ttl_seconds = 300
 max_calls_per_minute = 4
 
