@@ -120,3 +120,35 @@ describe('BinanceAdapter', () => {
     expect(health.connected).toBe(false);
   });
 });
+
+// --- AlpacaAdapter ---
+
+import { AlpacaAdapter } from '../adapters/alpaca-adapter';
+
+describe('AlpacaAdapter', () => {
+  it('should have correct id and asset class', () => {
+    const adapter = new AlpacaAdapter({ paper: true });
+    expect(adapter.id).toBe('alpaca');
+    expect(adapter.assetClass).toBe('stock');
+  });
+
+  it('should return trading hours (not always open)', () => {
+    const adapter = new AlpacaAdapter({ paper: true });
+    const hours = adapter.getTradingHours();
+    expect(hours.alwaysOpen).toBeUndefined();
+    expect(hours.hours).toContain('09:30');
+  });
+
+  it('should return zero fees', () => {
+    const adapter = new AlpacaAdapter({ paper: true });
+    const fees = adapter.getFees();
+    expect(fees.maker).toBe(0);
+    expect(fees.taker).toBe(0);
+  });
+
+  it('should report disconnected before connect', async () => {
+    const adapter = new AlpacaAdapter({ paper: true });
+    const health = await adapter.healthCheck();
+    expect(health.connected).toBe(false);
+  });
+});
