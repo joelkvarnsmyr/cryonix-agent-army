@@ -5,6 +5,8 @@ import type { MarketAdapter } from '../adapters/types.js';
 import { QuantAgent } from './quant-agent.js';
 import { RiskAgent } from './risk-agent.js';
 import { ExecutionAgent } from './execution-agent.js';
+import { ExitMonitor, type ExitConfig } from './exit-monitor.js';
+import { PositionTracker } from './position-tracker.js';
 
 export interface CycleResult {
   scannedSymbols: number;
@@ -12,6 +14,7 @@ export interface CycleResult {
   approved: number;
   vetoed: number;
   executed: number;
+  exited: number;
   errors: string[];
 }
 
@@ -23,6 +26,8 @@ export class Pod {
   private quant: QuantAgent;
   private risk: RiskAgent;
   private execution: ExecutionAgent;
+  private exitMonitor: ExitMonitor;
+  private positionTracker: PositionTracker;
   private positions = new Map<string, any>();
 
   constructor(config: PodConfig, adapter: MarketAdapter, capitalBudget: number) {
@@ -36,6 +41,14 @@ export class Pod {
       minConfidence: 60,
     });
     this.execution = new ExecutionAgent(config.id);
+    this.exitMonitor = new ExitMonitor({
+      takeProfitPct: 5.0,
+      stopLossPct: 3.0,
+      trailingStopActivation: 2.0,
+      trailingStopDistance: 1.0,
+      stagnationHours: 48,
+    });
+    this.positionTracker = new PositionTracker();
   }
 
   getId(): string {
@@ -62,6 +75,7 @@ export class Pod {
       approved: 0,
       vetoed: 0,
       executed: 0,
+      exited: 0,
       errors: [],
     };
 
@@ -92,6 +106,17 @@ export class Pod {
               const execResult = await this.execution.execute(sized, decision, this.adapter);
               if (execResult.orderId) {
                 result.executed++;
+                this.positionTracker.open({
+                  symbol,
+                  qty: execResult.fillQty,
+                  avgEntryPrice: execResult.fillPrice,
+                  currentPrice: execResult.fillPrice,
+                  marketValue: execResult.fillQty * execResult.fillPrice,
+                  unrealizedPnl: 0,
+                  unrealizedPnlPct: 0,
+                  adapter: this.adapter.id,
+                });
+                this.exitMonitor.track(symbol, execResult.fillPrice);
                 this.positions.set(symbol, {
                   orderId: execResult.orderId,
                   entryPrice: execResult.fillPrice,
@@ -107,6 +132,41 @@ export class Pod {
         result.errors.push(`Scan failed for ${symbol}: ${err.message}`);
       }
     }
+
+    // Check exits for tracked positions
+    for (const sym of this.exitMonitor.getTrackedSymbols()) {
+      try {
+        const candles = await this.adapter.getOHLCV(sym, '15m', 5);
+        if (candles.length === 0) continue;
+        const currentPrice = candles[candles.length - 1].close;
+        this.positionTracker.update(this.adapter.id, sym, currentPrice);
+
+        const exitSignal = this.exitMonitor.check(sym, currentPrice);
+        if (exitSignal) {
+          try {
+            const exitResult = await this.adapter.submitOrder({
+              symbol: sym,
+              side: 'SELL',
+              type: 'MARKET',
+              qty: this.positions.get(sym)?.qty || 0,
+            });
+            if (exitResult.success) {
+              const pos = this.positions.get(sym);
+              const pnlDollar = pos ? (currentPrice - pos.entryPrice) * pos.qty : 0;
+              this.risk.recordExit(pnlDollar);
+              this.positionTracker.close(this.adapter.id, sym);
+              this.exitMonitor.untrack(sym);
+              this.positions.delete(sym);
+              result.exited++;
+              console.log(`[Pod:${this.config.id}] EXIT ${sym}: ${exitSignal.reason} (${exitSignal.pnlPct.toFixed(2)}%)`);
+            }
+          } catch (err: any) {
+            result.errors.push(`Exit failed for ${sym}: ${err.message}`);
+          }
+        }
+      } catch { /* skip failed exit check */ }
+    }
+
     return result;
   }
 
@@ -129,6 +189,14 @@ export class Pod {
       }
     }
     return totalPnl < 0 ? Math.abs(totalPnl) : 0;
+  }
+
+  getPositions() {
+    return this.positionTracker.getAll();
+  }
+
+  getRiskState() {
+    return this.risk.getState();
   }
 
   async stop(): Promise<void> {

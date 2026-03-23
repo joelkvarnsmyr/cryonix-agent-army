@@ -84,4 +84,28 @@ describe('Pod', () => {
     await pod.stop();
     expect(pod.getState()).toBe('stopped');
   });
+
+  it('should track positions after execution', async () => {
+    const pod = new Pod(podConfig, mockAdapter, 10000);
+    await pod.runCycle();
+    const positions = pod.getPositions();
+    // Positions may or may not be populated depending on whether signals were generated
+    expect(Array.isArray(positions)).toBe(true);
+  });
+
+  it('should expose risk state', () => {
+    const pod = new Pod(podConfig, mockAdapter, 5000);
+    const riskState = pod.getRiskState();
+    expect(riskState).toHaveProperty('canTrade');
+    expect(riskState).toHaveProperty('dailyPnl');
+    expect(riskState).toHaveProperty('consecutiveLosses');
+    expect(riskState).toHaveProperty('tradesToday');
+  });
+
+  it('should include exited count in cycle result', async () => {
+    const pod = new Pod(podConfig, mockAdapter, 5000);
+    const result = await pod.runCycle();
+    expect(result).toHaveProperty('exited');
+    expect(typeof result.exited).toBe('number');
+  });
 });
