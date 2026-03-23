@@ -40,6 +40,8 @@ export class ApexAgent {
 
     // Claude A/B validator semaphore
     private claudeValidationRunning = false;
+    // Cache last built prompt for A/B reuse
+    private lastValidationPrompt: { key: string; prompt: { systemPrompt: string; userPrompt: string } } | null = null;
 
     constructor(private meta: { id: string; name: string }) {}
 
@@ -384,14 +386,17 @@ export class ApexAgent {
         // Grok validation (cached + rate-limited, fail-closed)
         const grokResult = await this.validateWithGrok(opp);
 
-        // --- A/B: fire Claude validation (non-blocking) ---
+        // --- A/B: fire Claude validation (non-blocking, reuse Grok's prompt) ---
         if (this.config.ab_test.enabled) {
             const cacheKey = `${opp.symbol}:${opp.direction}:${opp.mode}`;
             const cachedGrok = this.grokCache.get(cacheKey);
             abGrokResult = cachedGrok
                 ? { approve: cachedGrok.approve, confidence: cachedGrok.confidence, reason: cachedGrok.reason }
                 : null;
-            abClaudePromise = this.validateWithClaude(opp);
+            // Reuse cached prompt from Grok's validation (same market data = fair A/B)
+            const cachedPrompt = this.lastValidationPrompt?.key === cacheKey
+                ? this.lastValidationPrompt.prompt : undefined;
+            abClaudePromise = this.validateWithClaude(opp, cachedPrompt);
         }
 
         if (!grokResult) {
@@ -518,6 +523,112 @@ export class ApexAgent {
     // validateWithGrok — cached + rate-limited
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // buildValidationPrompt — rich context for AI validators
+    // -------------------------------------------------------------------------
+
+    private async buildValidationPrompt(
+        opp: ScoredOpportunity,
+    ): Promise<{ systemPrompt: string; userPrompt: string }> {
+        const pair = `${opp.symbol}/USDC`;
+        const modeParams = this.config.modes[opp.mode];
+        const isDeepValue = opp.contributingSignals.some(s => s.signalType.includes('DEEP_VALUE'));
+        const isDip = opp.contributingSignals.some(s =>
+            s.signalType.includes('DIP_BUY') || s.signalType.includes('BOLLINGER_SQUEEZE'),
+        );
+
+        // Fetch real market data
+        let priceCtx = '';
+        try {
+            const ticker = await this.ccxt.fetchTicker(pair);
+            const price = ticker.last ?? ticker.close ?? 0;
+            const change24h = ticker.percentage ?? 0;
+            const vol24h = ticker.quoteVolume ?? 0;
+            const high24h = ticker.high ?? 0;
+            const low24h = ticker.low ?? 0;
+
+            // Compute basic indicators from recent candles
+            const candles = await this.ccxt.fetchOHLCV(pair, '1h', undefined, 24);
+            let rsi = 0;
+            if (candles.length >= 14) {
+                const closes = candles.map(c => c[4] as number);
+                let gains = 0, losses = 0;
+                for (let i = 1; i < closes.length; i++) {
+                    const diff = closes[i] - closes[i - 1];
+                    if (diff > 0) gains += diff;
+                    else losses -= diff;
+                }
+                const avgGain = gains / (closes.length - 1);
+                const avgLoss = losses / (closes.length - 1);
+                rsi = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+            }
+
+            const slPrice = price * (1 - modeParams.sl_pct / 100);
+            const tpPrice = price * (1 + modeParams.tp_pct / 100);
+            const rr = modeParams.sl_pct > 0 ? (modeParams.tp_pct / modeParams.sl_pct).toFixed(1) : 'N/A';
+
+            priceCtx = [
+                `\nMARKET DATA (live):`,
+                `  Price: $${price.toFixed(price > 100 ? 2 : 4)}`,
+                `  24h change: ${change24h >= 0 ? '+' : ''}${change24h.toFixed(2)}%`,
+                `  24h range: $${low24h.toFixed(price > 100 ? 2 : 4)} — $${high24h.toFixed(price > 100 ? 2 : 4)}`,
+                `  24h volume: $${(vol24h / 1e6).toFixed(1)}M`,
+                `  RSI(24h): ${rsi.toFixed(0)}`,
+                `  SL: $${slPrice.toFixed(price > 100 ? 2 : 4)} (-${modeParams.sl_pct}%)`,
+                `  TP: $${tpPrice.toFixed(price > 100 ? 2 : 4)} (+${modeParams.tp_pct}%)`,
+                `  R:R ratio: 1:${rr}`,
+                `  Max hold: ${modeParams.max_hold_hours}h`,
+            ].join('\n');
+        } catch (err) {
+            priceCtx = '\nMARKET DATA: unavailable (fetch error)';
+        }
+
+        // Portfolio context
+        const deployedPct = this.positions.length > 0
+            ? ((this.positions.length / this.config.risk.max_concurrent_positions) * 100).toFixed(0)
+            : '0';
+        const portfolioCtx = [
+            `\nPORTFOLIO:`,
+            `  Open positions: ${this.positions.length}/${this.config.risk.max_concurrent_positions}`,
+            `  Capacity used: ${deployedPct}%`,
+            `  Session P&L: $${this.totalPnl.toFixed(2)} (${this.tradeCount} trades, ${this.tradeCount > 0 ? ((this.winCount / this.tradeCount) * 100).toFixed(0) : 0}% WR)`,
+        ].join('\n');
+
+        // Signal details
+        const signalList = opp.contributingSignals
+            .map((s, i) => `  ${i + 1}. [${s.source}] ${s.signalType} — confidence ${s.confidence}%`)
+            .join('\n');
+        const uniqueSources = new Set(opp.contributingSignals.map(s => s.source)).size;
+
+        // Build system prompt based on signal type
+        const systemPrompt = isDeepValue
+            ? `You are a crash-hypothesis validator for the APEX autonomous trading system. Test the hypothesis: "This drawdown is PANIC SELLING (buy opportunity), not a FALLING KNIFE."
+List contradictions (reasons NOT to buy) and invalidation criteria (exit triggers).
+Reply JSON only: {"approve":bool,"confidence":0-100,"reason":"string","contradictions":["..."],"invalidation_criteria":["..."]}`
+            : isDip
+            ? `You are a dip-hypothesis validator for the APEX autonomous trading system. Test the hypothesis: "This dip is a mean-reversion opportunity, not the start of a larger decline."
+List contradictions and invalidation criteria.
+Reply JSON only: {"approve":bool,"confidence":0-100,"reason":"string","contradictions":["..."],"invalidation_criteria":["..."]}`
+            : `You are a confluence validator for the APEX autonomous trading system. Test the hypothesis: "This multi-signal confluence setup will produce a profitable trade."
+List contradictions and invalidation criteria.
+Reply JSON only: {"approve":bool,"confidence":0-100,"reason":"string","contradictions":["..."],"invalidation_criteria":["..."]}`;
+
+        const userPrompt = [
+            `CONFLUENCE OPPORTUNITY: ${opp.symbol} ${opp.direction.toUpperCase()}`,
+            `Mode: ${opp.mode} | Confluence score: ${opp.score}/100`,
+            ``,
+            `SIGNALS (${uniqueSources} unique sources):`,
+            signalList,
+            priceCtx,
+            portfolioCtx,
+            ``,
+            `Should we enter this trade? Consider the actual price action, R:R ratio,`,
+            `and whether the confluence of signals justifies the risk.`,
+        ].join('\n');
+
+        return { systemPrompt, userPrompt };
+    }
+
     private async validateWithGrok(opp: ScoredOpportunity): Promise<boolean> {
         if (!this.xai || !this.config.grok.enabled) return false;
 
@@ -542,21 +653,30 @@ export class ApexAgent {
 
         try {
             this.grokCallTimestamps.push(now);
-            const validation = await this.xai.chat.completions.create({
+            const builtPrompt = await this.buildValidationPrompt(opp);
+            const { systemPrompt, userPrompt } = builtPrompt;
+            // Cache for A/B reuse by Claude
+            this.lastValidationPrompt = { key: `${opp.symbol}:${opp.direction}:${opp.mode}`, prompt: builtPrompt };
+
+            const isReasoningModel = this.config.grok.model.includes('reasoning');
+            const requestBody: Record<string, unknown> = {
                 model: this.config.grok.model,
-                messages: [{
-                    role: 'user',
-                    content:
-                        `You are a crypto trade validator. APEX detected confluence for ${opp.symbol} (${opp.direction}).\n` +
-                        `Each signal below is from a DIFFERENT source (already deduplicated — no duplicates):\n` +
-                        `${opp.contributingSignals.map(s => `- ${s.source}:${s.signalType} (conf=${s.confidence})`).join('\n')}\n` +
-                        `Unique sources: ${new Set(opp.contributingSignals.map(s => s.source)).size}\n` +
-                        `Confluence score: ${opp.score}/100\n\n` +
-                        `Should we enter this trade? Consider: macro environment, technical setup, ` +
-                        `risk/reward. Approve if the setup has positive expected value.\n` +
-                        `Reply JSON: {"approve": true/false, "confidence": 0-100, "reason": "..."}`,
-                }],
-            });
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt },
+                ],
+                temperature: 0.1,
+                search: { mode: 'on' },
+            };
+
+            if (isReasoningModel) {
+                requestBody.max_completion_tokens = 800;
+                requestBody.reasoning = { effort: 'high' };
+            } else {
+                requestBody.max_tokens = 800;
+            }
+
+            const validation = await (this.xai as any).chat.completions.create(requestBody);
 
             const raw = validation.choices[0]?.message?.content ?? '';
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -594,6 +714,7 @@ export class ApexAgent {
 
     private async validateWithClaude(
         opp: ScoredOpportunity,
+        prebuiltPrompt?: { systemPrompt: string; userPrompt: string },
     ): Promise<{ approve: boolean; confidence: number; reason: string } | null> {
         if (!this.config.ab_test.enabled) return null;
 
@@ -606,27 +727,19 @@ export class ApexAgent {
 
         try {
             const model = this.config.ab_test.claude_model;
-            // Prompt MUST be identical to Grok's (fair A/B comparison)
-            const prompt =
-                `You are a crypto trade validator. APEX detected confluence for ${opp.symbol} (${opp.direction}).\n` +
-                `Each signal below is from a DIFFERENT source (already deduplicated — no duplicates):\n` +
-                `${opp.contributingSignals.map(s => `- ${s.source}:${s.signalType} (conf=${s.confidence})`).join('\n')}\n` +
-                `Unique sources: ${new Set(opp.contributingSignals.map(s => s.source)).size}\n` +
-                `Confluence score: ${opp.score}/100\n\n` +
-                `Should we enter this trade? Consider: macro environment, technical setup, ` +
-                `risk/reward. Approve if the setup has positive expected value.\n` +
-                `Reply JSON: {"approve": true/false, "confidence": 0-100, "reason": "..."}`;
+            // Use same rich prompt as Grok (fair A/B comparison)
+            const { systemPrompt, userPrompt } = prebuiltPrompt ?? await this.buildValidationPrompt(opp);
 
             const child = spawn('claude', [
                 '-p', '--model', model, '--output-format', 'text',
-                '--system-prompt', 'You are a crypto trade validator for the APEX autonomous trading system. Your job is to evaluate confluence opportunities and decide whether to approve or reject trades. Reply with JSON only.',
+                '--system-prompt', systemPrompt,
             ], {
                 cwd: process.cwd(),
                 stdio: ['pipe', 'pipe', 'inherit'],
                 env: { ...process.env },
             });
 
-            child.stdin.write(prompt);
+            child.stdin.write(userPrompt);
             child.stdin.end();
 
             const chunks: Buffer[] = [];
