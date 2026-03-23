@@ -117,7 +117,7 @@ export class AlpacaAdapter implements MarketAdapter {
     }
   }
 
-  async cancelOrder(orderId: string): Promise<void> {
+  async cancelOrder(orderId: string, _symbol?: string): Promise<void> {
     const client = this.requireClient();
     await client.cancelOrder(orderId);
   }

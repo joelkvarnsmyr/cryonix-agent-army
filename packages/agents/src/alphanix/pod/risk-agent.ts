@@ -75,11 +75,12 @@ export class RiskAgent {
   resetDaily(): void {
     this.dailyPnl = 0;
     this.tradesToday = 0;
+    this.consecutiveLosses = 0;
   }
 
   getState(): RiskState {
     return {
-      canTrade: true,
+      canTrade: this.consecutiveLosses < 3 && this.tradesToday < 20,
       dailyPnl: this.dailyPnl,
       consecutiveLosses: this.consecutiveLosses,
       tradesToday: this.tradesToday,

@@ -38,7 +38,7 @@ export interface MarketAdapter {
   getOrderBook(symbol: string, depth?: number): Promise<OrderBook>;
   getSymbols(): Promise<SymbolInfo[]>;
   submitOrder(order: NormalizedOrder): Promise<OrderResult>;
-  cancelOrder(orderId: string): Promise<void>;
+  cancelOrder(orderId: string, symbol?: string): Promise<void>;
   getPositions(): Promise<NormalizedPosition[]>;
   getOpenOrders(): Promise<NormalizedOrder[]>;
   getAccountState(): Promise<AccountState>;

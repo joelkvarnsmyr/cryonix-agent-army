@@ -118,11 +118,9 @@ export class BinanceAdapter implements MarketAdapter {
     }
   }
 
-  async cancelOrder(orderId: string): Promise<void> {
+  async cancelOrder(orderId: string, symbol?: string): Promise<void> {
     const ex = this.requireExchange();
-    // Binance cancelOrder requires symbol; we fetch the order first
-    // For simplicity, caller should ensure orderId is valid
-    await ex.cancelOrder(orderId);
+    await ex.cancelOrder(orderId, symbol);
   }
 
   async getPositions(): Promise<NormalizedPosition[]> {

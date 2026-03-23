@@ -4,6 +4,7 @@ import type { PodConfig, PodState, TradeProposal } from '../types.js';
 import type { MarketAdapter } from '../adapters/types.js';
 import { QuantAgent } from './quant-agent.js';
 import { RiskAgent } from './risk-agent.js';
+import { ExecutionAgent } from './execution-agent.js';
 
 export interface CycleResult {
   scannedSymbols: number;
@@ -21,6 +22,7 @@ export class Pod {
   private state: PodState = 'starting';
   private quant: QuantAgent;
   private risk: RiskAgent;
+  private execution: ExecutionAgent;
   private positions = new Map<string, any>();
 
   constructor(config: PodConfig, adapter: MarketAdapter, capitalBudget: number) {
@@ -33,6 +35,7 @@ export class Pod {
       maxPositions: config.riskMaxPositions,
       minConfidence: 60,
     });
+    this.execution = new ExecutionAgent(config.id);
   }
 
   getId(): string {
@@ -69,11 +72,13 @@ export class Pod {
         const proposals = this.quant.analyze(symbol, this.adapter.id, candles);
         result.proposalsGenerated += proposals.length;
 
+        const lastPrice = candles[candles.length - 1].close;
+
         for (const proposal of proposals) {
-          const sized = this.sizeOrder(proposal);
+          const sized = this.sizeOrder(proposal, lastPrice);
           const decision = this.risk.evaluate(sized, {
             openPositions: this.positions.size,
-            currentDrawdownPct: 0,
+            currentDrawdownPct: this.computeDrawdownPct(),
           });
 
           if (decision.action === 'veto') {
@@ -81,21 +86,16 @@ export class Pod {
             continue;
           }
 
-          if (decision.action === 'approve') {
+          if (decision.action === 'approve' || decision.action === 'reduce') {
             result.approved++;
             try {
-              const orderResult = await this.adapter.submitOrder({
-                symbol: sized.symbol,
-                side: sized.side,
-                type: 'MARKET',
-                qty: sized.sizing.qty,
-              });
-              if (orderResult.success) {
+              const execResult = await this.execution.execute(sized, decision, this.adapter);
+              if (execResult.orderId) {
                 result.executed++;
                 this.positions.set(symbol, {
-                  ...orderResult,
-                  entryPrice: orderResult.filledAvgPrice,
-                  qty: orderResult.filledQty,
+                  orderId: execResult.orderId,
+                  entryPrice: execResult.fillPrice,
+                  qty: execResult.fillQty,
                 });
               }
             } catch (err: any) {
@@ -110,12 +110,25 @@ export class Pod {
     return result;
   }
 
-  private sizeOrder(proposal: TradeProposal): TradeProposal {
+  private sizeOrder(proposal: TradeProposal, lastPrice: number): TradeProposal {
     const maxPerTrade = this.capitalBudget * 0.1;
+    const notional = Math.min(maxPerTrade, this.capitalBudget * 0.2);
+    const qty = lastPrice > 0 ? notional / lastPrice : 0;
     return {
       ...proposal,
-      sizing: { notional: Math.min(maxPerTrade, this.capitalBudget * 0.2), qty: 0 },
+      sizing: { notional, qty },
     };
+  }
+
+  private computeDrawdownPct(): number {
+    if (this.positions.size === 0) return 0;
+    let totalPnl = 0;
+    for (const [, pos] of this.positions) {
+      if (pos.entryPrice && pos.currentPrice) {
+        totalPnl += ((pos.currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+      }
+    }
+    return totalPnl < 0 ? Math.abs(totalPnl) : 0;
   }
 
   async stop(): Promise<void> {

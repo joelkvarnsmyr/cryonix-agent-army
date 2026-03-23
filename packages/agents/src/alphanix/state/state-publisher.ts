@@ -30,7 +30,7 @@ export class AlphanixStatePublisher {
   async publishPodState(podId: string, state: PodState): Promise<void> {
     try {
       await this.ensureConnected();
-      await this.redis.set(`alphanix:pod:${podId}:state`, state, 'EX', TTL);
+      await this.redis.set(`alphanix:pod:${podId}:state`, JSON.stringify(state), 'EX', TTL);
     } catch (err) { console.error('[AlphanixState] pod state error:', err); }
   }
 
