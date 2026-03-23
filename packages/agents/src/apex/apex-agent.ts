@@ -1,5 +1,6 @@
 import Redis from 'ioredis';
 import { Client as PgClient } from 'pg';
+import { spawn } from 'child_process';
 import { loadApexConfig, type ApexTomlConfig } from './config';
 import { SignalAggregator, type AggregatorSnapshot } from './signal-aggregator';
 import { scoreOpportunities, type ScoredOpportunity } from './confluence-scorer';
@@ -36,6 +37,9 @@ export class ApexAgent {
     // Grok caching + rate limiting
     private grokCache = new Map<string, GrokCacheEntry>();
     private grokCallTimestamps: number[] = [];
+
+    // Claude A/B validator semaphore
+    private claudeValidationRunning = false;
 
     constructor(private meta: { id: string; name: string }) {}
 
@@ -524,6 +528,89 @@ export class ApexAgent {
         } catch (err) {
             console.warn(`[APEX] Grok error for ${opp.symbol} — skip (fail-closed):`, err instanceof Error ? err.message : err);
             return false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // validateWithClaude — shadow A/B validator (fail-silent)
+    // -------------------------------------------------------------------------
+
+    private async validateWithClaude(
+        opp: ScoredOpportunity,
+    ): Promise<{ approve: boolean; confidence: number; reason: string } | null> {
+        if (!this.config.ab_test.enabled) return null;
+
+        // Semaphore: max 1 concurrent Claude validation
+        if (this.claudeValidationRunning) {
+            console.log('[APEX/ab] Claude validation already running, skipping');
+            return null;
+        }
+        this.claudeValidationRunning = true;
+
+        try {
+            const model = this.config.ab_test.claude_model;
+            const signalList = opp.contributingSignals
+                .map((s, i) => `${i + 1}. [${s.source}] ${s.signalType} — confidence ${s.confidence}%`)
+                .join('\n');
+
+            const prompt = [
+                `You are a crypto trade validator. APEX detected confluence for ${opp.symbol} (${opp.direction}).`,
+                `Each signal below is from a DIFFERENT source (already deduplicated — no duplicates):`,
+                signalList,
+                `Unique sources: ${new Set(opp.contributingSignals.map(s => s.source)).size}`,
+                `Confluence score: ${opp.score}/100`,
+                ``,
+                `Should we enter this trade? Consider: macro environment, technical setup,`,
+                `risk/reward. Approve if the setup has positive expected value.`,
+                `Reply JSON only: {"approve": true/false, "confidence": 0-100, "reason": "..."}`,
+            ].join('\n');
+
+            const child = spawn('claude', ['-p', '--model', model, '--output-format', 'text'], {
+                cwd: process.cwd(),
+                stdio: ['pipe', 'pipe', 'inherit'],
+                env: { ...process.env },
+            });
+
+            child.stdin.write(prompt);
+            child.stdin.end();
+
+            const chunks: Buffer[] = [];
+            child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+            const timeoutHandle = setTimeout(() => child.kill('SIGTERM'), 120_000);
+
+            const exitCode = await new Promise<number>((resolve) => {
+                child.on('close', (code) => {
+                    clearTimeout(timeoutHandle);
+                    resolve(code ?? 1);
+                });
+            });
+
+            const output = Buffer.concat(chunks).toString('utf-8');
+
+            if (exitCode !== 0) {
+                console.warn(`[APEX/ab] Claude CLI exited with code ${exitCode}`);
+                return null;
+            }
+
+            // Parse JSON from response (same greedy regex as Grok's validateWithGrok)
+            const jsonMatch = output.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) {
+                console.warn('[APEX/ab] Claude response not parseable as JSON');
+                return null;
+            }
+
+            const parsed = JSON.parse(jsonMatch[0]);
+            return {
+                approve: parsed.approve === true,
+                confidence: Number(parsed.confidence) || 0,
+                reason: String(parsed.reason || ''),
+            };
+        } catch (err) {
+            console.warn('[APEX/ab] Claude validation error:', err instanceof Error ? err.message : err);
+            return null;
+        } finally {
+            this.claudeValidationRunning = false;
         }
     }
 
