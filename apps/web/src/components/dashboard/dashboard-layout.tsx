@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import {
   Activity, Settings, Wifi, WifiOff,
-  TrendingUp, CircleDollarSign, ChevronRight, Target, Moon, Zap, Crosshair,
+  TrendingUp, CircleDollarSign, ChevronRight, Target, Moon, Zap, Crosshair, Layers,
 } from 'lucide-react';
 import { Button } from '@cryonix/ui';
 import { useSystemHealth } from '@/hooks/useSystemHealth';
@@ -115,6 +115,16 @@ export const NAV_GROUPS = [
     glow: 'shadow-[0_0_8px_rgba(251,146,60,0.5)]',
     items: [
       { href: '/huntrix', label: 'Huntrix', icon: Crosshair, desc: 'Manipulation detector' },
+    ],
+  },
+  {
+    id: 'alphanix',
+    label: 'ALPHANIX',
+    accent: 'text-emerald-400',
+    dot: 'bg-emerald-400',
+    glow: 'shadow-[0_0_8px_rgba(52,211,153,0.5)]',
+    items: [
+      { href: '/alphanix', label: 'Alphanix', icon: Layers, desc: 'Alternative data agent' },
     ],
   },
   {

@@ -4,6 +4,10 @@ import { SecEdgarFeed } from '../data/feeds/sec-edgar-feed';
 import { SentimentFeed } from '../data/feeds/sentiment-feed';
 import { OpenSkyFeed } from '../data/feeds/opensky-feed';
 import { TrafikverketFeed } from '../data/feeds/trafikverket-feed';
+import { NoaaFeed } from '../data/feeds/noaa-feed';
+import { AisFeed } from '../data/feeds/ais-feed';
+import { EcbFeed } from '../data/feeds/ecb-feed';
+import { RiksbankenFeed } from '../data/feeds/riksbanken-feed';
 
 describe('FredFeed', () => {
   it('should throw without API key', async () => {
@@ -52,5 +56,34 @@ describe('TrafikverketFeed', () => {
     const feed = new TrafikverketFeed('');
     const status = await feed.getMalmbanenStatus();
     expect(status.trains).toEqual([]);
+  });
+});
+
+describe('NoaaFeed', () => {
+  it('should construct', () => {
+    const feed = new NoaaFeed();
+    expect(feed).toBeDefined();
+  });
+});
+
+describe('AisFeed', () => {
+  it('should return empty port activity stub', async () => {
+    const feed = new AisFeed();
+    const activity = await feed.getPortActivity('Narvik');
+    expect(activity.port).toBe('Narvik');
+  });
+});
+
+describe('EcbFeed', () => {
+  it('should construct', () => {
+    const feed = new EcbFeed();
+    expect(feed).toBeDefined();
+  });
+});
+
+describe('RiksbankenFeed', () => {
+  it('should construct', () => {
+    const feed = new RiksbankenFeed();
+    expect(feed).toBeDefined();
   });
 });
