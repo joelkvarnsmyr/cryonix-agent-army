@@ -18,7 +18,7 @@ describe('loadAlphanixConfig', () => {
         expect(config.swarms.max_concurrent_workers).toBe(5);
         expect(config.pods.crypto.enabled).toBe(true);
         expect(config.pods.crypto.adapter).toBe('binance');
-        expect(config.pods.us_stocks.enabled).toBe(false);
+        expect(config.pods.us_stocks.enabled).toBe(true);
         expect(config.timing.orchestrator_loop_ms).toBe(60000);
     });
 
@@ -57,7 +57,7 @@ describe('toPodConfig', () => {
         expect(pod.id).toBe('crypto');
         expect(pod.enabled).toBe(true);
         expect(pod.adapter).toBe('binance');
-        expect(pod.capitalPct).toBe(100);
+        expect(pod.capitalPct).toBe(60);
         expect(pod.strategy).toBe('momentum_dip');
         expect(pod.symbols).toEqual(['BTC/USDC', 'ETH/USDC', 'SOL/USDC']);
         expect(pod.pollIntervalMs).toBe(30000);

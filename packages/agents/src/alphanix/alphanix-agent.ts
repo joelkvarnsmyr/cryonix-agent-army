@@ -3,6 +3,7 @@ import type { AgentMessage } from '@cryonix/types';
 import { loadAlphanixConfig, resetAlphanixConfig, toPodConfig, type AlphanixTomlConfig } from './config';
 import { AdapterRegistry } from './adapters/adapter-registry';
 import { BinanceAdapter } from './adapters/binance-adapter';
+import { AlpacaAdapter } from './adapters/alpaca-adapter';
 import { Orchestrator } from './orchestrator/orchestrator';
 import { CapitalAllocator } from './orchestrator/capital-allocator';
 import { Pod } from './pod/pod';
@@ -43,6 +44,11 @@ export class AlphanixAgent extends BaseAgent {
         paper: paperTrading,
         apiKey: process.env.BINANCE_API_KEY,
         apiSecret: process.env.BINANCE_API_SECRET,
+    }));
+    this.registry.register(new AlpacaAdapter({
+        paper: paperTrading,
+        apiKey: process.env.ALPACA_API_KEY,
+        apiSecret: process.env.ALPACA_API_SECRET,
     }));
 
     // Connect adapters (non-fatal if fails)

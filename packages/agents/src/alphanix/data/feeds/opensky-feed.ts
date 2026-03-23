@@ -55,6 +55,12 @@ export class OpenSkyFeed {
     const url = `${OPENSKY_BASE}/flights/departure?airport=${airport}&begin=${begin}&end=${end}`;
     const res = await fetch(url);
     if (!res.ok) return [];
-    return await res.json() || [];
+    const data = await res.json();
+    return (data || []).map((f: any) => ({
+      icao24: f.icao24, callsign: (f.callsign || '').trim(),
+      estDepartureAirport: f.estDepartureAirport,
+      estArrivalAirport: f.estArrivalAirport,
+      firstSeen: f.firstSeen, lastSeen: f.lastSeen,
+    }));
   }
 }

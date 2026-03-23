@@ -33,7 +33,8 @@ export class SecEdgarFeed {
     if (!recent) return [];
 
     const filings: Filing[] = [];
-    for (let i = 0; i < Math.min(recent.accessionNumber.length, limit); i++) {
+    const scanLimit = formType ? recent.accessionNumber.length : limit;
+    for (let i = 0; i < Math.min(recent.accessionNumber.length, scanLimit); i++) {
       const form = recent.form[i];
       if (formType && form !== formType) continue;
       filings.push({
@@ -42,6 +43,7 @@ export class SecEdgarFeed {
         filedAt: recent.filingDate[i],
         primaryDocument: recent.primaryDocument[i],
       });
+      if (filings.length >= limit) break;
     }
     return filings;
   }

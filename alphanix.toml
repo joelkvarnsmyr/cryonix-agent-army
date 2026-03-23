@@ -46,7 +46,7 @@ backtest_timeout_ms = 900000
 [pods.crypto]
 enabled = true
 adapter = "binance"
-capital_pct = 100
+capital_pct = 60
 strategy = "momentum_dip"
 symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
 poll_interval_ms = 30000
@@ -54,11 +54,11 @@ risk_max_drawdown_pct = 3.0
 risk_max_positions = 5
 
 [pods.us_stocks]
-enabled = false
+enabled = true
 adapter = "alpaca"
-capital_pct = 0
+capital_pct = 40
 strategy = "value_momentum"
-symbols = ["AAPL", "MSFT", "NVDA"]
+symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META"]
 poll_interval_ms = 60000
 risk_max_drawdown_pct = 2.0
 risk_max_positions = 10

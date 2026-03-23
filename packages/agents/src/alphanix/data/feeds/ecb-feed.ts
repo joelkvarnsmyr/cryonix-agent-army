@@ -8,7 +8,7 @@ export interface EcbRate {
 
 export class EcbFeed {
   async getMainRefinancingRate(): Promise<EcbRate[]> {
-    return this.getSeries('FM/M.U2.EUR.4F.KR.MRR_FR.LEV');
+    return this.getSeries('FM/B.U2.EUR.4F.KR.MRR_FR.LEV');
   }
 
   async getEoniaRate(): Promise<EcbRate[]> {
@@ -25,7 +25,9 @@ export class EcbFeed {
       const res = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!res.ok) return [];
       const data = await res.json();
-      const observations = data?.dataSets?.[0]?.series?.['0:0:0:0:0:0:0']?.observations || {};
+      const series = data?.dataSets?.[0]?.series || {};
+      const firstKey = Object.keys(series)[0];
+      const observations = firstKey ? series[firstKey]?.observations || {} : {};
       const times = data?.structure?.dimensions?.observation?.[0]?.values || [];
       return Object.entries(observations).map(([idx, vals]: any) => ({
         date: times[parseInt(idx)]?.id || '',
