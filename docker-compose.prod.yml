@@ -681,6 +681,37 @@ services:
       redis:
         condition: service_healthy
 
+  # ============================================================
+  # AlphanixBrain — Claude Code CLI autonomous analyst
+  # ============================================================
+
+  alphanix-brain:
+    build:
+      context: .
+      dockerfile: Dockerfile.alphanix
+    container_name: alphanix-brain
+    restart: unless-stopped
+    mem_limit: 512m
+    volumes:
+      - ~/.claude:/root/.claude:ro
+      - ./alphanix.toml:/app/alphanix.toml
+    environment:
+      - NODE_ENV=production
+      - KV_URL=redis://redis:6379
+      - POSTGRES_URL=postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/cryonix
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_INTERACTIVE_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - PROJECT_ROOT=/app
+      - DOCKER_HOST=tcp://docker-proxy:2375
+    command: ["npx", "tsx", "scripts/services/alphanix-brain.ts"]
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+
   # Caddy Reverse Proxy (Handles HTTPS and routing)
   # ============================================================
 

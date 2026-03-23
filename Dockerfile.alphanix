@@ -25,8 +25,9 @@ RUN mkdir -p node_modules/@cryonix/types && \
 # Copy agent source (maintains relative import paths from scripts/)
 COPY packages/agents/src/ ./packages/agents/src/
 
-# Copy runner script
+# Copy runner + brain scripts
 COPY scripts/services/alphanix-runner.ts ./scripts/services/
+COPY scripts/services/alphanix-brain.ts ./scripts/services/
 
 # Copy config
 COPY alphanix.toml ./
