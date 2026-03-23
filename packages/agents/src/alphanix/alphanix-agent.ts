@@ -7,6 +7,8 @@ import { Orchestrator } from './orchestrator/orchestrator';
 import { CapitalAllocator } from './orchestrator/capital-allocator';
 import { Pod } from './pod/pod';
 import { AlphanixStatePublisher } from './state/state-publisher';
+import { AlphanixDB } from './data/postgres';
+import { ScheduleManager } from './orchestrator/schedule-manager';
 
 export class AlphanixAgent extends BaseAgent {
   private toml!: AlphanixTomlConfig;
@@ -15,6 +17,8 @@ export class AlphanixAgent extends BaseAgent {
   private allocator!: CapitalAllocator;
   private pods = new Map<string, Pod>();
   private publisher: AlphanixStatePublisher | null = null;
+  private db: AlphanixDB | null = null;
+  private scheduler = new ScheduleManager();
   private running = false;
 
   async initialize(): Promise<void> {
@@ -75,6 +79,26 @@ export class AlphanixAgent extends BaseAgent {
       this.log('info', `Pod created: ${id} ($${budgets[id]})`);
     }
 
+    // Postgres
+    this.db = new AlphanixDB();
+    await this.db.connect();
+
+    // Schedule events
+    this.scheduler.on('morning_huddle', async () => {
+        this.log('info', '=== MORNING HUDDLE ===');
+        for (const [id, pod] of this.pods) {
+            this.log('info', `Pod ${id}: state=${pod.getState()}, capital=$${pod.getCapitalBudget()}`);
+        }
+    });
+
+    this.scheduler.on('post_mortem', async () => {
+        this.log('info', '=== POST-MORTEM ===');
+        for (const [id, pod] of this.pods) {
+            const risk = pod.getRiskState();
+            this.log('info', `Pod ${id}: dailyPnl=$${risk.dailyPnl.toFixed(2)}, trades=${risk.tradesToday}`);
+        }
+    });
+
     this.log('info', `Alphanix initialized: ${this.pods.size} pod(s)`);
   }
 
@@ -85,14 +109,25 @@ export class AlphanixAgent extends BaseAgent {
     this.log('info', 'Alphanix started');
 
     while (this.running) {
+      // Check scheduled events
+      await this.scheduler.fireDueEvents();
+
       for (const [id, pod] of this.pods) {
         try {
           const result = await pod.runCycle();
           this.orchestrator.updatePodState(id, 'running');
+
+          // Publish full state
           await this.publisher?.publishPodState(id, 'running');
           await this.publisher?.publishHeartbeat(id);
+          await this.publisher?.publishPodPositions(id, pod.getPositions());
+          await this.publisher?.publishPodRisk(id, pod.getRiskState());
+
           if (result.executed > 0) {
             this.log('info', `Pod ${id}: ${result.executed} trade(s)`, result);
+          }
+          if (result.exited > 0) {
+            this.log('info', `Pod ${id}: ${result.exited} exit(s)`, result);
           }
         } catch (err: any) {
           this.log('error', `Pod ${id} error: ${err.message}`);
@@ -116,6 +151,7 @@ export class AlphanixAgent extends BaseAgent {
     await this.registry.disconnectAll();
     await this.publisher?.publishStatus('stopped');
     await this.publisher?.disconnect();
+    await this.db?.close();
     this.setStatus('paused');
     this.log('info', 'Alphanix stopped');
   }
