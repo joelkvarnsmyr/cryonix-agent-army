@@ -61,6 +61,10 @@ export class RiskAgent {
     };
   }
 
+  recordTrade(): void {
+    this.tradesToday++;
+  }
+
   recordExit(pnlDollar: number): void {
     this.dailyPnl += pnlDollar;
     this.tradesToday += 1;

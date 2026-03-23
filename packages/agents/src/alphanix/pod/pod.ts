@@ -89,6 +89,10 @@ export class Pod {
 
     for (const symbol of this.config.symbols) {
       result.scannedSymbols++;
+
+      // Skip symbols we already hold a position in
+      if (this.positions.has(symbol)) continue;
+
       try {
         const candles = await this.adapter.getOHLCV(symbol, this.getTimeframe(), 30);
         if (candles.length === 0) continue;  // No data (market closed, etc.)
@@ -132,7 +136,10 @@ export class Pod {
                   orderId: execResult.orderId,
                   entryPrice: execResult.fillPrice,
                   qty: execResult.fillQty,
+                  enteredAt: Date.now(),
                 });
+                // Count the trade in risk tracking
+                this.risk.recordTrade();
               } else {
                 result.errors.push(`Order not filled for ${symbol} (adapter returned empty orderId)`);
               }
@@ -156,6 +163,12 @@ export class Pod {
 
         const exitSignal = this.exitMonitor.check(sym, currentPrice);
         if (exitSignal) {
+          // Enforce minimum holding time (skip TP/trailing exits if < 5 minutes old)
+          const pos = this.positions.get(sym);
+          const holdingMs = pos?.enteredAt ? Date.now() - pos.enteredAt : Infinity;
+          if (holdingMs < 5 * 60 * 1000 && exitSignal.reason !== 'stop_loss') {
+            continue;  // Too soon for non-SL exits
+          }
           try {
             const exitResult = await this.adapter.submitOrder({
               symbol: sym,
