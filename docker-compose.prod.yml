@@ -120,6 +120,7 @@ services:
     volumes:
       - ./cryonix.toml:/app/cryonix.toml:ro
       - ~/.claude:/home/nextjs/.claude:ro
+      - ~/.claude.json:/home/nextjs/.claude.json:ro
     environment:
       - NODE_ENV=production
       - CRYONIX_ENV=production
@@ -479,6 +480,7 @@ services:
     volumes:
       - ./apex.toml:/app/apex.toml:ro
       - ~/.claude:/home/node/.claude:ro
+      - ~/.claude.json:/home/node/.claude.json:ro
     environment:
       - NODE_ENV=production
       - KV_URL=redis://redis:6379
