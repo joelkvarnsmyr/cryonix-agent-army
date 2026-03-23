@@ -67,6 +67,14 @@ export class Pod {
     this.capitalBudget = amount;
   }
 
+  /** Get adapter-appropriate timeframe string */
+  private getTimeframe(): string {
+    // Alpaca uses '15Min', '1Hour', '1Day'; Binance/CCXT uses '15m', '1h', '1d'
+    const assetClass = this.adapter.assetClass;
+    if (assetClass === 'stock') return '15Min';
+    return '15m';
+  }
+
   async runCycle(): Promise<CycleResult> {
     this.state = 'running';
     const result: CycleResult = {
@@ -82,7 +90,7 @@ export class Pod {
     for (const symbol of this.config.symbols) {
       result.scannedSymbols++;
       try {
-        const candles = await this.adapter.getOHLCV(symbol, '15m', 30);
+        const candles = await this.adapter.getOHLCV(symbol, this.getTimeframe(), 30);
         const proposals = this.quant.analyze(symbol, this.adapter.id, candles);
         result.proposalsGenerated += proposals.length;
 
@@ -136,7 +144,7 @@ export class Pod {
     // Check exits for tracked positions
     for (const sym of this.exitMonitor.getTrackedSymbols()) {
       try {
-        const candles = await this.adapter.getOHLCV(sym, '15m', 5);
+        const candles = await this.adapter.getOHLCV(sym, this.getTimeframe(), 5);
         if (candles.length === 0) continue;
         const currentPrice = candles[candles.length - 1].close;
         this.positionTracker.update(this.adapter.id, sym, currentPrice);
