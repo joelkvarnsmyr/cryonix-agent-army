@@ -521,6 +521,26 @@ export class SolanaAgent extends BaseAgent {
             }
         }
 
+        // 6b. Huntrix pump signal relay (cross-instance intelligence)
+        try {
+            const huntrixRaw = await this.statePublisher?.get('huntrix:trade_signal');
+            if (huntrixRaw) {
+                const huntrixSignal = JSON.parse(huntrixRaw);
+                if (huntrixSignal.action === 'BUY' && huntrixSignal.confidence >= 70) {
+                    this.log('info', `[HUNTRIX-RELAY] Pump signal: ${huntrixSignal.symbol} conf=${huntrixSignal.confidence} (${huntrixSignal.reason})`);
+                    await this.evaluateSignal({
+                        symbol: huntrixSignal.symbol,
+                        action: 'BUY',
+                        confidence: huntrixSignal.confidence / 100,
+                        reasoning: `Huntrix pump detection: ${huntrixSignal.reason}`,
+                        currentPrice: 0, // Solanix will fetch via Jupiter
+                    });
+                    // Consume signal so we don't re-process
+                    await this.statePublisher?.set('huntrix:trade_signal:consumed', huntrixRaw, 300);
+                }
+            }
+        } catch { /* Huntrix relay non-critical */ }
+
         // 7. Process queued messages
         while (this.messageQueue.length > 0) {
             const msg = this.messageQueue.shift()!;

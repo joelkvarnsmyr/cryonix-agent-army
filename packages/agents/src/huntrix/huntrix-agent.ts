@@ -310,7 +310,9 @@ export class HuntrixAgent {
         } else {
             targetExchange = this.exchangeManager.getExchange(targetExchangeId);
             if (!targetExchange) {
-                console.log(`[HUNTRIX] No exchange available for ${signal.symbol} — skipping`);
+                // No CEX exchange → relay to Solanix for DEX execution
+                console.log(`[HUNTRIX] No CEX exchange for ${signal.symbol} — relaying to Solanix`);
+                await this.relayToSolanix(signal);
                 return;
             }
         }
@@ -398,8 +400,13 @@ export class HuntrixAgent {
                 const exchangeId = position.exchange ?? 'binance';
                 const ex = this.exchangeManager.getExchange(exchangeId);
                 if (!ex) continue;
-                const ticker = await ex.fetchTicker(position.symbol);
-                const currentPrice = ticker.last ?? ticker.close ?? 0;
+                const ticker = await ex.fetchTicker(position.symbol).catch(() => null);
+                let currentPrice = ticker?.last ?? ticker?.close ?? 0;
+
+                // DexScreener fallback for DEX tokens not listed on CEX
+                if (currentPrice <= 0 && (position.signal as any)?.tokenAddress) {
+                    currentPrice = await this.fetchDexScreenerPrice((position.signal as any).tokenAddress);
+                }
                 if (currentPrice <= 0) continue;
 
                 position.current_price = currentPrice;
@@ -433,6 +440,57 @@ export class HuntrixAgent {
 
         for (const { position, reason } of toClose) {
             await this.closePosition(position, reason);
+        }
+    }
+
+    /**
+     * Fetch price from DexScreener for DEX tokens not on CEX.
+     * Uses Solana chain by default (most pump tokens are Solana).
+     */
+    private async fetchDexScreenerPrice(tokenAddress: string): Promise<number> {
+        try {
+            const url = `https://api.dexscreener.com/tokens/v1/solana/${tokenAddress}`;
+            const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+            if (!res.ok) return 0;
+            const pairs = await res.json() as Array<{
+                baseToken: { address: string };
+                priceUsd: string;
+                chainId: string;
+                liquidity?: { usd: number };
+            }>;
+            if (!Array.isArray(pairs) || pairs.length === 0) return 0;
+
+            // Pick highest-liquidity pair
+            const best = pairs
+                .filter(p => p.chainId === 'solana')
+                .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
+            return best ? parseFloat(best.priceUsd) || 0 : 0;
+        } catch {
+            return 0;
+        }
+    }
+
+    /**
+     * Relay a pump signal to Solanix via Redis for DEX execution.
+     * Called when Huntrix detects a pump on a token not tradeable on CEX.
+     */
+    private async relayToSolanix(signal: any): Promise<void> {
+        try {
+            const relayData = {
+                symbol: signal.symbol || signal.token,
+                tokenAddress: signal.tokenAddress || signal.mint,
+                action: 'BUY',
+                confidence: signal.coordinationScore || signal.score || 50,
+                source: 'huntrix_pump',
+                detectedAt: Date.now(),
+                maxHoldMinutes: 30,
+                reason: `Pump detected: ${signal.type || 'coordination'} (score ${signal.coordinationScore || 0})`,
+            };
+
+            await this.redis.set('huntrix:trade_signal', JSON.stringify(relayData), 'EX', 300);
+            console.log(`[HUNTRIX] Relayed pump signal to Solanix: ${relayData.symbol} (conf=${relayData.confidence})`);
+        } catch (err) {
+            console.warn('[HUNTRIX] Failed to relay signal to Solanix:', err);
         }
     }
 
