@@ -35,6 +35,9 @@ export interface AlphanixTomlConfig {
         risk_max_positions: number;
         trading_hours?: string;
     }>;
+    broker?: {
+        paper_trading: boolean;
+    };
     timing: {
         orchestrator_loop_ms: number;
         pod_default_loop_ms: number;
@@ -97,6 +100,9 @@ const DEFAULTS: AlphanixTomlConfig = {
             risk_max_positions: 8,
             trading_hours: '09:00-17:30 CET',
         },
+    },
+    broker: {
+        paper_trading: true,
     },
     timing: {
         orchestrator_loop_ms: 60_000,

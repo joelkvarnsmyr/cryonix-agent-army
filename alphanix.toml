@@ -7,6 +7,9 @@ rebalance_interval_hours = 6
 global_max_drawdown_pct = 5.0
 morning_huddle_utc = "06:00"
 
+[broker]
+paper_trading = true
+
 [orchestrator.esg]
 enabled = false
 planetary_boundary_checks = false

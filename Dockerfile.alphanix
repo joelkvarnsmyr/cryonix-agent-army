@@ -5,6 +5,9 @@ RUN apk add --no-cache git python3
 
 WORKDIR /app
 
+# Install tsx globally so CMD doesn't fetch at runtime
+RUN npm install -g tsx
+
 # Install runtime dependencies
 RUN npm install --no-save \
     dotenv@16 \

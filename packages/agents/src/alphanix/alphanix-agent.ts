@@ -31,7 +31,12 @@ export class AlphanixAgent extends BaseAgent {
     this.allocator = new CapitalAllocator(this.toml.orchestrator.capital_total_usd);
 
     // Register adapters
-    this.registry.register(new BinanceAdapter({ paper: true }));
+    const paperTrading = this.toml.broker?.paper_trading ?? true;
+    this.registry.register(new BinanceAdapter({
+        paper: paperTrading,
+        apiKey: process.env.BINANCE_API_KEY,
+        apiSecret: process.env.BINANCE_API_SECRET,
+    }));
 
     // Connect adapters (non-fatal if fails)
     try {

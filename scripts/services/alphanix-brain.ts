@@ -8,7 +8,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 import Redis from 'ioredis';
 import { Client as PgClient } from 'pg';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 
@@ -341,10 +341,9 @@ async function runBrain(triggerReason: string) {
 
     if (tomlChanged) {
         try {
-            execSync(
-                `git add alphanix.toml && git commit -m "brain(${runId}): ${actions.join(', ')}"`,
-                { cwd: PROJECT_ROOT, encoding: 'utf-8' }
-            );
+            execSync('git add alphanix.toml', { cwd: PROJECT_ROOT, encoding: 'utf-8' });
+            const commitMsg = `brain(${runId}): ${actions.map(a => a.replace(/[^\w\s,.-]/g, '')).join(', ')}`;
+            spawnSync('git', ['commit', '-m', commitMsg], { cwd: PROJECT_ROOT, stdio: 'inherit' });
             console.log('[alphanix-brain] Committed alphanix.toml changes.');
         } catch (e: any) { console.error('[alphanix-brain] git commit failed:', e.message); }
 
