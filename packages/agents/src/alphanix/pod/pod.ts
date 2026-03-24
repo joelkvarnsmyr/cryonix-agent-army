@@ -34,7 +34,7 @@ export class Pod {
     this.config = config;
     this.adapter = adapter;
     this.capitalBudget = capitalBudget;
-    this.quant = new QuantAgent(config.id, ['rsi', 'volume']);
+    this.quant = new QuantAgent(config.id, this.getModelsForStrategy(config.strategy));
     this.risk = new RiskAgent(config.id, {
       maxDrawdownPct: config.riskMaxDrawdownPct,
       maxPositions: config.riskMaxPositions,
@@ -223,6 +223,31 @@ export class Pod {
 
   getRiskState() {
     return this.risk.getState();
+  }
+
+  getSymbols(): string[] {
+    return this.config.symbols;
+  }
+
+  getQuant(): QuantAgent {
+    return this.quant;
+  }
+
+  private getModelsForStrategy(strategy: string): string[] {
+    const strategies: Record<string, string[]> = {
+      'momentum': ['rsi', 'macd', 'ema', 'volume'],
+      'dip_hunter': ['rsi', 'bollinger', 'deep_value', 'dip', 'volume'],
+      'tech_momentum': ['macd', 'ema', 'volume', 'rsi'],
+      'defense_value': ['rsi', 'bollinger', 'deep_value', 'dip'],
+      'energy_momentum': ['macd', 'ema', 'volume', 'rsi'],
+      'healthcare_value': ['rsi', 'bollinger', 'deep_value'],
+      'finance_momentum': ['macd', 'ema', 'rsi', 'volume'],
+      'nordic_value': ['rsi', 'bollinger', 'deep_value', 'dip'],
+      'nordic_growth': ['macd', 'ema', 'volume'],
+      'altcoin_momentum': ['rsi', 'macd', 'volume', 'ema', 'dip'],
+      'value_momentum': ['rsi', 'macd', 'bollinger', 'volume'],
+    };
+    return strategies[strategy] || ['rsi', 'volume', 'macd', 'bollinger', 'ema', 'deep_value', 'dip'];
   }
 
   async stop(): Promise<void> {

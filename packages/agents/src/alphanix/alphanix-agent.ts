@@ -25,6 +25,7 @@ export class AlphanixAgent extends BaseAgent {
   private scheduler = new ScheduleManager();
   private swarmSpawner: SwarmSpawner | null = null;
   private running = false;
+  private cycleCount = 0;
 
   async initialize(): Promise<void> {
     this.log('info', 'Initializing Alphanix...');
@@ -144,6 +145,35 @@ export class AlphanixAgent extends BaseAgent {
     while (this.running) {
       // Check scheduled events
       await this.scheduler.fireDueEvents();
+
+      this.cycleCount++;
+
+      // Every 5 cycles (~5 min), run sentiment scan
+      if (this.cycleCount % 5 === 0 && this.swarmSpawner) {
+        try {
+          const symbols = [...new Set(
+            Array.from(this.pods.values()).flatMap(p => p.getSymbols())
+          )].slice(0, 10);  // Top 10 unique symbols
+
+          if (symbols.length > 0) {
+            const result = await this.swarmSpawner.spawn({
+              id: `sentiment-${Date.now()}`,
+              type: 'sentiment',
+              requester: { podId: 'orchestrator', role: 'scheduler' },
+              task: 'Periodic sentiment scan',
+              params: { symbols },
+              workerCount: 1,
+              maxDuration: 30000,
+              priority: 'normal',
+            });
+            if (result.status === 'completed') {
+              this.log('info', `Sentiment scan: ${JSON.stringify(result.data).slice(0, 200)}`);
+            }
+          }
+        } catch (err: any) {
+          this.log('warn', `Sentiment scan failed: ${err.message}`);
+        }
+      }
 
       for (const [id, pod] of this.pods) {
         try {

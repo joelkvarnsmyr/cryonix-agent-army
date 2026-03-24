@@ -18,10 +18,17 @@ const DEFAULT_MODELS = ['rsi', 'volume', 'macd', 'bollinger', 'ema', 'deep_value
 export class QuantAgent {
   readonly podId: string;
   readonly models: string[];
+  private sentimentBoost: number = 0;
 
   constructor(podId: string, models: string[] = DEFAULT_MODELS) {
     this.podId = podId;
     this.models = models;
+  }
+
+  setSentimentBoost(score: number): void {
+    // score: -100 to 100 from sentiment feed
+    // Convert to confidence modifier: -20 to +20
+    this.sentimentBoost = Math.round(score * 0.2);
   }
 
   analyze(symbol: string, adapter: string, candles: Candle[]): TradeProposal[] {
@@ -135,6 +142,9 @@ export class QuantAgent {
         confidence += 25;
       }
     }
+
+    // Apply sentiment boost/penalty
+    confidence += this.sentimentBoost;
 
     // Clamp confidence 0-100
     confidence = Math.max(0, Math.min(100, confidence));

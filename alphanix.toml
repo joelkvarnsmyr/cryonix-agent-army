@@ -43,37 +43,112 @@ max_concurrent_workers = 5
 default_timeout_ms = 300000
 backtest_timeout_ms = 900000
 
-[pods.crypto]
+[pods.crypto_momentum]
 enabled = true
 adapter = "binance"
-capital_pct = 50
-strategy = "momentum_dip"
+capital_pct = 15
+strategy = "momentum"
 symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
 poll_interval_ms = 30000
 risk_max_drawdown_pct = 3.0
 risk_max_positions = 5
 
-[pods.us_stocks]
+[pods.crypto_dip_hunter]
+enabled = true
+adapter = "binance"
+capital_pct = 10
+strategy = "dip_hunter"
+symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC", "AVAX/USDC", "LINK/USDC"]
+poll_interval_ms = 30000
+risk_max_drawdown_pct = 4.0
+risk_max_positions = 5
+
+[pods.us_tech]
 enabled = true
 adapter = "alpaca"
-capital_pct = 30
-strategy = "value_momentum"
-symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META"]
+capital_pct = 15
+strategy = "tech_momentum"
+symbols = ["NVDA", "AAPL", "MSFT", "GOOGL", "META", "AMZN", "TSLA"]
 poll_interval_ms = 60000
-risk_max_drawdown_pct = 2.0
-risk_max_positions = 10
+risk_max_drawdown_pct = 2.5
+risk_max_positions = 7
 trading_hours = "09:30-16:00 ET"
 
-[pods.eu_stocks]
+[pods.us_defense]
+enabled = true
+adapter = "alpaca"
+capital_pct = 10
+strategy = "defense_value"
+symbols = ["LMT", "RTX", "NOC", "GD", "BA", "HII"]
+poll_interval_ms = 60000
+risk_max_drawdown_pct = 2.0
+risk_max_positions = 5
+trading_hours = "09:30-16:00 ET"
+
+[pods.us_energy]
+enabled = true
+adapter = "alpaca"
+capital_pct = 8
+strategy = "energy_momentum"
+symbols = ["XOM", "CVX", "COP", "SLB", "EOG", "OXY"]
+poll_interval_ms = 60000
+risk_max_drawdown_pct = 3.0
+risk_max_positions = 5
+trading_hours = "09:30-16:00 ET"
+
+[pods.us_healthcare]
+enabled = true
+adapter = "alpaca"
+capital_pct = 7
+strategy = "healthcare_value"
+symbols = ["UNH", "JNJ", "LLY", "PFE", "ABBV", "MRK"]
+poll_interval_ms = 60000
+risk_max_drawdown_pct = 2.0
+risk_max_positions = 5
+trading_hours = "09:30-16:00 ET"
+
+[pods.us_finance]
+enabled = true
+adapter = "alpaca"
+capital_pct = 7
+strategy = "finance_momentum"
+symbols = ["JPM", "GS", "MS", "BAC", "WFC", "BLK"]
+poll_interval_ms = 60000
+risk_max_drawdown_pct = 2.5
+risk_max_positions = 5
+trading_hours = "09:30-16:00 ET"
+
+[pods.nordic_value]
 enabled = true
 adapter = "ibkr"
-capital_pct = 20
+capital_pct = 10
 strategy = "nordic_value"
-symbols = ["HM-B.ST", "VOLV-B.ST", "SAND.ST", "ERIC-B.ST"]
+symbols = ["HM-B.ST", "VOLV-B.ST", "SAND.ST", "ERIC-B.ST", "ABB.ST", "ASSA-B.ST", "SEB-A.ST", "ATCO-A.ST"]
 poll_interval_ms = 60000
 risk_max_drawdown_pct = 2.0
 risk_max_positions = 8
 trading_hours = "09:00-17:30 CET"
+
+[pods.nordic_growth]
+enabled = true
+adapter = "ibkr"
+capital_pct = 8
+strategy = "nordic_growth"
+symbols = ["EVO.ST", "SINCH.ST", "SAAB-B.ST", "EMBRAC-B.ST", "HEXA-B.ST"]
+poll_interval_ms = 60000
+risk_max_drawdown_pct = 3.0
+risk_max_positions = 5
+trading_hours = "09:00-17:30 CET"
+
+[pods.crypto_altcoins]
+enabled = true
+adapter = "binance"
+capital_pct = 10
+strategy = "altcoin_momentum"
+symbols = ["AVAX/USDC", "LINK/USDC", "DOT/USDC", "MATIC/USDC", "UNI/USDC", "AAVE/USDC"]
+poll_interval_ms = 30000
+risk_max_drawdown_pct = 5.0
+risk_max_positions = 6
 
 [timing]
 orchestrator_loop_ms = 60000
