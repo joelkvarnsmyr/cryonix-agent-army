@@ -279,8 +279,9 @@ export class PolynixAgent extends BaseAgent {
             }
         }
 
-        // 4b. Check crypto markets for directional opportunities
-        for (const market of cryptoMarkets) {
+        // 4b. Check crypto markets for directional opportunities (can be disabled via config)
+        const directionalEnabled = (this.tomlConfig.strategy as any).directional_enabled !== false;
+        for (const market of directionalEnabled ? cryptoMarkets : []) {
             // Dedup: skip markets we already hold
             const alreadyHolding = this.positionTracker.getOpen()
                 .some(p => p.market.conditionId === market.conditionId);

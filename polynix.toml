@@ -4,26 +4,27 @@ clob_api_url = "https://clob.polymarket.com"
 gamma_api_url = "https://gamma-api.polymarket.com"
 
 [capital]
-starting_balance_usd = 2000
+starting_balance_usd = 3000        # Added $1000 more (was 2000)
 max_bet_size_usd = 25
 max_concurrent_positions = 80
 max_exposure_pct = 95
 
 [strategy]
-arb_threshold = 0.95
+arb_threshold = 0.97              # Lowered from 0.95 → catch more arbs (3% gross, ~0% net minimum)
 min_edge_pct = 2.0
 momentum_lookback_seconds = 60
 min_time_to_expiry_s = 300
-max_time_to_expiry_s = 1209600     # 14 days max
+max_time_to_expiry_s = 1209600
 scan_all_for_arb = true
-min_liquidity_usd = 100
-max_markets_per_scan = 250
+min_liquidity_usd = 50            # Lowered from 100 → wider net
+max_markets_per_scan = 400        # Increased from 250 → scan more markets
+directional_enabled = false       # DISABLED: net -$29, Bayesian vetoes anyway
 
-# ARB-FIRST STRATEGY: arb is 100% WR, +$4.49/trade — maximize it
-arb_max_bet_size_usd = 25          # Full bet size (was 10 — arb is risk-free)
-arb_max_positions = 60             # 60 of 80 slots for arb (was 30)
-arb_max_exposure_pct = 80          # 80% of bankroll in arb (was 50%)
-arb_max_expiry_s = 604800          # 7 days max (was 3 days — more opportunities)
+# ARB-FIRST: 52/52 wins, +$231, avg +$4.45/trade
+arb_max_bet_size_usd = 25
+arb_max_positions = 70            # 70 of 80 slots (was 60)
+arb_max_exposure_pct = 85         # 85% of bankroll (was 80%)
+arb_max_expiry_s = 604800         # 7 days max
 
 [risk]
 kelly_fraction = 0.25
@@ -32,11 +33,11 @@ max_consecutive_losses = 5
 fee_rate = 0.0156
 
 [timing]
-scan_interval_ms = 30000
+scan_interval_ms = 20000          # 20s (was 30s — faster arb discovery)
 settlement_check_ms = 300000
 
 [micro_markets]
-enabled = false                    # DISABLED: 20% WR, -$34 — proven unprofitable
+enabled = false
 
 [data_sources]
 binance_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
@@ -53,4 +54,4 @@ min_hold_seconds = 300
 enabled = false
 
 [whale_detection]
-enabled = false                    # Disabled: only boosts directional which loses money
+enabled = false

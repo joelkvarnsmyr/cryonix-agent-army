@@ -91,15 +91,36 @@ export class MarketScanner {
      * Uses the /markets endpoint sorted by liquidity.
      */
     private async scanAllMarketsForArb(config: PolynixConfig): Promise<CryptoMicroMarket[]> {
-        const url = `${this.gammaUrl}/markets?closed=false&active=true&limit=${config.strategy.max_markets_per_scan}&order=liquidity&ascending=false`;
-        try {
-            const res = await fetch(url, {
-                headers: { 'Accept': 'application/json' },
-                signal: AbortSignal.timeout(15_000),
-            });
-            if (!res.ok) return [];
-            const markets = await res.json() as GammaMarketDirect[];
-            if (!Array.isArray(markets)) return [];
+        // Fetch from multiple sort orders to maximize arb discovery
+        const limit = Math.floor(config.strategy.max_markets_per_scan / 2);
+        const urls = [
+            `${this.gammaUrl}/markets?closed=false&active=true&limit=${limit}&order=liquidity&ascending=false`,
+            `${this.gammaUrl}/markets?closed=false&active=true&limit=${limit}&order=volume24hr&ascending=false`,
+        ];
+
+        const allMarkets: GammaMarketDirect[] = [];
+        const seenIds = new Set<string>();
+
+        for (const url of urls) {
+            try {
+                const res = await fetch(url, {
+                    headers: { 'Accept': 'application/json' },
+                    signal: AbortSignal.timeout(15_000),
+                });
+                if (!res.ok) continue;
+                const data = await res.json() as GammaMarketDirect[];
+                if (!Array.isArray(data)) continue;
+                for (const m of data) {
+                    if (!seenIds.has(m.conditionId)) {
+                        seenIds.add(m.conditionId);
+                        allMarkets.push(m);
+                    }
+                }
+            } catch { continue; }
+        }
+
+        const markets = allMarkets;
+        if (markets.length === 0) return [];
 
             const now = Date.now();
             const results: CryptoMicroMarket[] = [];
