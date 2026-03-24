@@ -366,10 +366,14 @@ export class PsinixAgent {
         const signals = await this.collector.collect(symbol, prices);
         if (signals.length < this.config.signals.min_signals) return;
 
-        // Apply dynamic Bayesian weights before Ψ computation
+        // Apply dynamic Bayesian weights + recency boost for fast-updating signals
+        // Price + equity signals update every minute → 1.3× weight boost
+        // Polymarket + macro update every 15min+ → no boost (they lag on reversals)
+        const fastSources = new Set(['price:hurst', 'price:ou', 'price:momentum', 'equity:spx_qqq', 'macro:dxy']);
         for (const sig of signals) {
             const dynWeight = this.weights.getWeight(sig.sourceId);
-            sig.weight = dynWeight;
+            const recencyBoost = fastSources.has(sig.sourceId) ? 1.3 : 1.0;
+            sig.weight = dynWeight * recencyBoost;
         }
         const entropy = PsiEngine.computeMarketEntropy(prices, this.config.psi.entropy_bins);
 
@@ -631,7 +635,22 @@ export class PsinixAgent {
                     }
                 }
             }
-            // Priority 4: Stagnation — position stuck ±1% for 24h, free up capital
+            // Priority 4: Signal reversal — fast signals contradict position direction
+            // If we're SHORT but equity (SPY/QQQ) flipped strongly bullish → exit early
+            // This catches trend reversals faster than waiting for SL
+            if (!exitReason && this.collector) {
+                try {
+                    const equitySig = await this.getEquityDirection();
+                    if (equitySig !== null) {
+                        const posDir = pos.side === 'LONG' ? 1 : -1;
+                        // Strong contra-signal: equity moved >0.5% against our position
+                        if (equitySig * posDir < -0.25) {
+                            exitReason = `Signal reversal (equity ${equitySig > 0 ? '+' : ''}${(equitySig * 100).toFixed(0)}% vs ${pos.side})`;
+                        }
+                    }
+                } catch { /* non-critical */ }
+            }
+            // Priority 5: Stagnation — position stuck ±1% for 24h, free up capital
             if (!exitReason) {
                 const hoursHeld = (Date.now() - pos.entryTime) / (60 * 60 * 1000);
                 if (hoursHeld >= 24 && Math.abs(pnlPct) < 1.0) {
@@ -724,6 +743,31 @@ export class PsinixAgent {
     }
 
     // ── Price Data ───────────────────────────────────────────────────
+
+    /**
+     * Get equity market direction from Redis (SPY+QQQ weighted).
+     * Returns direction ∈ [-1, +1] or null if unavailable.
+     * Used for signal-reversal exit detection.
+     */
+    private async getEquityDirection(): Promise<number | null> {
+        if (!this.redis) return null;
+        try {
+            let weightedChange = 0;
+            let totalWeight = 0;
+            for (const [key, weight] of [['psinix:equity:spy', 0.4], ['psinix:equity:qqq', 0.6]] as const) {
+                const raw = await this.redis.get(key);
+                if (!raw) continue;
+                const data = JSON.parse(raw);
+                const age = Date.now() - (data.timestamp ?? 0);
+                if (age > 15 * 60_000) continue;
+                const changePct = data.changePct ?? 0;
+                weightedChange += Math.max(-1, Math.min(1, changePct / 2)) * weight;
+                totalWeight += weight;
+            }
+            if (totalWeight < 0.3) return null;
+            return weightedChange / totalWeight;
+        } catch { return null; }
+    }
 
     private async updatePrices(): Promise<void> {
         // Fetch 50 candles (shared cache with getRecentPrices), use last for price
