@@ -63,3 +63,9 @@ docs/img/*.png
 # Problematic files
 nul
 .vercel
+
+# Master Orchestrator reports (keep structure, ignore output)
+reports/master-orchestrator/*/
+!reports/master-orchestrator/.gitkeep
+!reports/master-orchestrator/.cycle_counter
+!reports/master-orchestrator/pending_red_actions.json
