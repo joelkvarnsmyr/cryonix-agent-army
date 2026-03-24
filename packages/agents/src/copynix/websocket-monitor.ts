@@ -107,22 +107,25 @@ export class WebSocketMonitor {
     private subscribe(): void {
         if (!this.ws || !this.connected) return;
 
-        // Subscribe to each wallet individually using logsSubscribe
-        // (Solana public WS doesn't support batch accountInclude)
-        for (let i = 0; i < this.wallets.length; i++) {
+        // Subscribe to priority wallets only (first 20) to stay under
+        // Solana/Helius WS subscription limit (~25 per connection).
+        // 40 subscriptions caused immediate disconnection.
+        const maxSubs = 20;
+        const walletsToSub = this.wallets.slice(0, maxSubs);
+        for (let i = 0; i < walletsToSub.length; i++) {
             const subscribeMsg = {
                 jsonrpc: '2.0',
                 id: i + 1,
                 method: 'logsSubscribe',
                 params: [
-                    { mentions: [this.wallets[i]] },
+                    { mentions: [walletsToSub[i]] },
                     { commitment: 'confirmed' },
                 ],
             };
             this.ws.send(JSON.stringify(subscribeMsg));
         }
 
-        console.log(`[WS-Monitor] Subscribed to ${this.wallets.length} wallets via logsSubscribe`);
+        console.log(`[WS-Monitor] Subscribed to ${walletsToSub.length}/${this.wallets.length} wallets via logsSubscribe (limit: ${maxSubs})`);
     }
 
     /**

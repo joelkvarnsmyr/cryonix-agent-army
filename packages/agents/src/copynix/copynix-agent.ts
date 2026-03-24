@@ -1230,8 +1230,8 @@ export class CopynixAgent extends BaseAgent {
                 updatedAt: Date.now(),
             });
             await this.statePublisher.publishStatus('running');
-        } catch {
-            // Non-critical, skip
+        } catch (err) {
+            this.log('warn', `publishState failed: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
 }
