@@ -102,8 +102,11 @@ function stateDot(state: string | null): string {
 /* ── Page ──────────────────────────────────────────────────────────────────── */
 
 export default function AlphanixPage() {
+  const [mounted, setMounted] = useState(false);
   const [statusData, setStatusData] = useState<StatusResponse | null>(null);
   const [positionsData, setPositionsData] = useState<PositionsResponse | null>(null);
+
+  useEffect(() => setMounted(true), []);
 
   const fetchData = useCallback(async () => {
     try {
@@ -117,10 +120,27 @@ export default function AlphanixPage() {
   }, []);
 
   useEffect(() => {
+    if (!mounted) return;
     fetchData();
     const id = setInterval(fetchData, 30_000);
     return () => clearInterval(id);
-  }, [fetchData]);
+  }, [mounted, fetchData]);
+
+  if (!mounted) {
+    return (
+      <DashboardLayout>
+        <div className="max-w-5xl mx-auto space-y-4 animate-pulse">
+          <div className="grid grid-cols-3 gap-3">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="rounded-xl border border-white/[0.06] bg-card/60 h-20" />
+            ))}
+          </div>
+          <div className="rounded-xl border border-white/[0.06] bg-card/60 h-40" />
+          <div className="rounded-xl border border-white/[0.06] bg-card/60 h-40" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   const agentStatus = statusData?.status ?? 'offline';
   const orchestrator = statusData?.orchestrator;
