@@ -735,16 +735,16 @@ Reply JSON only: {"approve":bool,"confidence":0-100,"reason":"string","contradic
             // Use same rich prompt as Grok (fair A/B comparison)
             const { systemPrompt, userPrompt } = prebuiltPrompt ?? await this.buildValidationPrompt(opp);
 
-            // Use --bare to prevent CLAUDE.md / hooks from overriding the
-            // system prompt with "software engineering assistant" instructions.
+            // --system-prompt overrides default behavior.
+            // NOTE: --bare disables OAuth (requires ANTHROPIC_API_KEY), so we
+            // don't use it. Run from /tmp to avoid CLAUDE.md auto-discovery.
             const child = spawn('claude', [
                 '-p', '--model', model, '--output-format', 'text',
-                '--bare',
                 '--system-prompt', systemPrompt,
             ], {
-                cwd: process.cwd(),
+                cwd: '/tmp',
                 stdio: ['pipe', 'pipe', 'inherit'],
-                env: { ...process.env },
+                env: { ...process.env, HOME: '/home/node' },
             });
 
             child.stdin.write(userPrompt);

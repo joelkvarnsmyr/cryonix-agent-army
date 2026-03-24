@@ -85,6 +85,22 @@ function meetsThreshold(signal: NormalizedSignal, entry: WeightEntry): boolean {
     return (signal[entry.minField] as number) >= entry.minValue;
 }
 
+/**
+ * Confidence-scaled weight: signals with higher confidence score proportionally
+ * more than signals barely meeting the threshold.
+ *
+ *   base=20, conf=0.82, threshold=0.65 → 20 × (0.82 / 0.65) = 25.2
+ *   base=20, conf=0.65, threshold=0.65 → 20 × 1.0 = 20 (no boost)
+ *   Signals without a confidence threshold get flat weight (ratio = 1).
+ *   Capped at 1.5× to prevent runaway scores from 99% confidence signals.
+ */
+function scaledWeight(baseWeight: number, signal: NormalizedSignal, entry: WeightEntry): number {
+    if (!entry.minField || entry.minValue === undefined || entry.minValue === 0) return baseWeight;
+    const value = (signal[entry.minField] as number) ?? entry.minValue;
+    const ratio = Math.min(1.5, value / entry.minValue);
+    return Math.round(baseWeight * ratio * 10) / 10;
+}
+
 const MOMENTUM_TYPES = new Set(['MACD_BULLISH_CROSS', 'EMA_BULLISH_CROSS', 'VOLUME_SPIKE_UP']);
 
 function determineMode(
@@ -158,8 +174,8 @@ export function scoreOpportunities(
             const entry = BULLISH_WEIGHTS[sig.signalType];
             if (!entry) continue;
             if (!meetsThreshold(sig, entry)) continue;
-            const w = weights[entry.weight] ?? 0;
-            bullishScore += w;
+            const base = weights[entry.weight] ?? 0;
+            bullishScore += scaledWeight(base, sig, entry);
             bullishContributors.push(sig);
         }
 
@@ -172,8 +188,8 @@ export function scoreOpportunities(
             const entry = BEARISH_WEIGHTS[sig.signalType];
             if (!entry) continue;
             if (!meetsThreshold(sig, entry)) continue;
-            const w = weights[entry.weight] ?? 0;
-            bearishScore += w;
+            const base = weights[entry.weight] ?? 0;
+            bearishScore += scaledWeight(base, sig, entry);
             bearishContributors.push(sig);
         }
 

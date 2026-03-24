@@ -501,6 +501,7 @@ services:
       - ~/.claude:/home/node/.claude:ro
       - ~/.claude.json:/home/node/.claude.json:ro
     environment:
+      - HOME=/home/node
       - NODE_ENV=production
       - KV_URL=redis://redis:6379
       - BINANCE_API_KEY=${BINANCE_API_KEY:-}
