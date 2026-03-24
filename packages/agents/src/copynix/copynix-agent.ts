@@ -466,9 +466,10 @@ export class CopynixAgent extends BaseAgent {
             await this.executeSignal(signal);
         } else {
             // Single-whale mode: high-score wallets can trigger alone.
-        // Medium consensus disabled — only strong (3+) or single whale trades.
+            // Threshold configurable via [single_whale] min_score in copynix.toml.
             const walletScore = this.tomlConfig.wallets.scores[trade.walletAddress] ?? 0;
-            if (walletScore >= 80) {
+            const whaleThreshold = (this.tomlConfig as any).single_whale?.min_score ?? 75;
+            if (walletScore >= whaleThreshold) {
                 const whaleSignal = this.consensusEngine!.createSingleWhaleSignal(trade, walletScore);
                 if (whaleSignal) {
                     this.log('info', `[WHALE] Single-whale signal from ${trade.walletAddress.slice(0, 8)}... (score ${walletScore})`);
@@ -825,14 +826,15 @@ export class CopynixAgent extends BaseAgent {
         });
 
         // Check for promotions/demotions after update
+        const whaleMin = (this.tomlConfig as any).single_whale?.min_score ?? 75;
         for (const addr of pos.copiedFrom) {
             const belief = this.bayesian.getBelief(addr);
             if (!belief) continue;
 
             if (this.bayesian.shouldPromote(addr)) {
                 const oldScore = this.tomlConfig.wallets.scores[addr] ?? 0;
-                if (oldScore < 80) {
-                    this.tomlConfig.wallets.scores[addr] = 80;
+                if (oldScore < whaleMin) {
+                    this.tomlConfig.wallets.scores[addr] = whaleMin;
                     this.log('info', `[BAYESIAN] PROMOTED ${addr.slice(0, 8)}... to single-whale (score ${belief.score.toFixed(0)}, ${belief.wins}W/${belief.losses}L)`);
                 }
             }
@@ -840,8 +842,8 @@ export class CopynixAgent extends BaseAgent {
                 // Downgrade = lose single-whale privileges, NOT removal.
                 // Wallet stays tracked but needs consensus to trigger trades.
                 const oldScore = this.tomlConfig.wallets.scores[addr] ?? 0;
-                if (oldScore >= 80) {
-                    this.tomlConfig.wallets.scores[addr] = 60; // Below whale threshold
+                if (oldScore >= whaleMin) {
+                    this.tomlConfig.wallets.scores[addr] = whaleMin - 15; // Below whale threshold
                     this.log('warn', `[BAYESIAN] DOWNGRADED ${addr.slice(0, 8)}... from single-whale to consensus-only (score ${belief.score.toFixed(0)} after ${belief.totalTrades} trades)`);
                 }
             }
@@ -1197,8 +1199,9 @@ export class CopynixAgent extends BaseAgent {
             for (const w of newWallets) {
                 this.walletMonitor!.addWallet(w.address);
                 // Give discovered wallets a starting score of 70 (below single-whale threshold)
-                // They need to prove themselves before getting single-whale privileges
-                this.tomlConfig.wallets.scores[w.address] = w.score >= 80 ? w.score : 70;
+                // CopyTracker will promote them if they perform well (>= whale threshold)
+                const wt = (this.tomlConfig as any).single_whale?.min_score ?? 75;
+                this.tomlConfig.wallets.scores[w.address] = w.score >= wt ? w.score : 70;
                 this.log('info', `[DISCOVERY] Added wallet ${w.label} (${w.address.slice(0, 8)}...) score=${w.score} WR=${w.winRate.toFixed(0)}%`);
             }
 
