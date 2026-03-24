@@ -119,59 +119,53 @@ export class MarketScanner {
             } catch { continue; }
         }
 
-        const markets = allMarkets;
-        if (markets.length === 0) return [];
+        const now = Date.now();
+        const results: CryptoMicroMarket[] = [];
 
-            const now = Date.now();
-            const results: CryptoMicroMarket[] = [];
+        for (const m of allMarkets) {
+            if (m.closed || !m.active) continue;
 
-            for (const m of markets) {
-                if (m.closed || !m.active) continue;
+            // Must be binary (outcomes is a JSON string)
+            let outcomes: string[];
+            try {
+                outcomes = typeof m.outcomes === 'string'
+                    ? JSON.parse(m.outcomes)
+                    : m.outcomes;
+            } catch { continue; }
+            if (!outcomes || outcomes.length !== 2) continue;
 
-                // Must be binary (outcomes is a JSON string)
-                let outcomes: string[];
-                try {
-                    outcomes = typeof m.outcomes === 'string'
-                        ? JSON.parse(m.outcomes)
-                        : m.outcomes;
-                } catch { continue; }
-                if (!outcomes || outcomes.length !== 2) continue;
+            // Must have token IDs
+            const tokenIds = this.extractTokenIds(m);
+            if (!tokenIds) continue;
 
-                // Must have token IDs
-                const tokenIds = this.extractTokenIds(m);
-                if (!tokenIds) continue;
+            // Must have minimum liquidity
+            const liquidity = parseFloat(m.liquidity) || 0;
+            if (liquidity < config.strategy.min_liquidity_usd) continue;
 
-                // Must have minimum liquidity
-                const liquidity = parseFloat(m.liquidity) || 0;
-                if (liquidity < config.strategy.min_liquidity_usd) continue;
+            // Check expiry
+            if (!m.endDate) continue;
+            const expiresAt = new Date(m.endDate).getTime();
+            if (isNaN(expiresAt)) continue;
+            const timeToExpiry = (expiresAt - now) / 1000;
+            if (timeToExpiry < config.strategy.min_time_to_expiry_s) continue;
+            if (timeToExpiry > config.strategy.max_time_to_expiry_s) continue;
 
-                // Check expiry
-                if (!m.endDate) continue;
-                const expiresAt = new Date(m.endDate).getTime();
-                if (isNaN(expiresAt)) continue;
-                const timeToExpiry = (expiresAt - now) / 1000;
-                if (timeToExpiry < config.strategy.min_time_to_expiry_s) continue;
-                if (timeToExpiry > config.strategy.max_time_to_expiry_s) continue;
-
-                results.push({
-                    conditionId: m.conditionId,
-                    questionId: m.questionID ?? m.id,
-                    title: m.question,
-                    asset: this.extractAsset(m.question) ?? 'MACRO',
-                    expiresAt,
-                    timeToExpiry,
-                    yesTokenId: tokenIds.yes,
-                    noTokenId: tokenIds.no,
-                    liquidity,
-                    volume24hr: m.volume24hr || 0,
-                    ...this.extractPriceTarget(m.question),
-                });
-            }
-
-            return results;
-        } catch {
-            return [];
+            results.push({
+                conditionId: m.conditionId,
+                questionId: m.questionID ?? m.id,
+                title: m.question,
+                asset: this.extractAsset(m.question) ?? 'MACRO',
+                expiresAt,
+                timeToExpiry,
+                yesTokenId: tokenIds.yes,
+                noTokenId: tokenIds.no,
+                liquidity,
+                volume24hr: m.volume24hr || 0,
+                ...this.extractPriceTarget(m.question),
+            });
         }
+
+        return results;
     }
 
     private async fetchEvents(): Promise<GammaEvent[]> {
