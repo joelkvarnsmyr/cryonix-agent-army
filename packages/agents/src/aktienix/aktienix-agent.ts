@@ -735,6 +735,9 @@ export class AktienixAgent extends BaseAgent {
                 });
                 await this.statePublisher?.publishStatus('running');
 
+                // 11. Publish cross-market signal for Cryonix consumption
+                await this.publishCrossMarketSignal();
+
             } catch (error: any) {
                 this.log('error', `Trading loop error: ${error.message}`);
             }
@@ -801,6 +804,44 @@ export class AktienixAgent extends BaseAgent {
         } catch (err: any) {
             this.log('warn', `[SYNC] Trade sync failed: ${err.message}`);
         }
+    }
+
+    // ── Publish cross-market summary for Cryonix crypto consumption ──────────
+    private async publishCrossMarketSignal(): Promise<void> {
+        if (!this.statePublisher) return;
+        try {
+            const stateRaw = await this.statePublisher.get('aktienix:state');
+            if (!stateRaw) return;
+            const state = JSON.parse(stateRaw);
+
+            const portfolio = state.portfolio || {};
+            const positions = state.positions || [];
+            const dailyPnlPct = portfolio.equity > 0
+                ? ((portfolio.daily_pnl || 0) / portfolio.equity) * 100
+                : 0;
+
+            // Calculate aggregate position performance
+            const avgPnlPct = positions.length > 0
+                ? positions.reduce((sum: number, p: any) => sum + (p.unrealized_pnl_pct || 0), 0) / positions.length
+                : 0;
+
+            const signal = {
+                dailyPnlPct: Math.round(dailyPnlPct * 100) / 100,
+                avgPositionPnlPct: Math.round(avgPnlPct * 100) / 100,
+                openPositions: positions.length,
+                direction: dailyPnlPct >= 1.5 ? 'strong_rally' as const
+                         : dailyPnlPct >= 0.5 ? 'rally' as const
+                         : dailyPnlPct <= -1.5 ? 'strong_selloff' as const
+                         : dailyPnlPct <= -0.5 ? 'selloff' as const
+                         : 'flat' as const,
+                timestamp: Date.now(),
+            };
+
+            await this.statePublisher.set('crossmarket:stocks', JSON.stringify(signal), 14400); // 4h TTL
+            if (signal.direction === 'strong_rally' || signal.direction === 'strong_selloff') {
+                this.log('info', `[CROSS-MARKET] Published: ${signal.direction} (daily PnL: ${signal.dailyPnlPct}%)`);
+            }
+        } catch { /* non-critical */ }
     }
 
     async stop(): Promise<void> {
