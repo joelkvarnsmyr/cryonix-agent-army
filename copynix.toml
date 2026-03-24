@@ -101,17 +101,14 @@ discovery_interval_hours = 24
 "Bi4rd5FH5bYEN8scZ7wevxNZyNmKHdaBcvewdPFxYdLt" = 70
 
 [consensus]
-min_wallets_strong = 3
-# MUTATION 2026-03-25: Re-enable medium consensus at 2 wallets.
-# Previous data (25% WR) was with untested Dune wallets. Now we have
-# Bayesian scoring + CopyTracker auto-rotation. 2-wallet consensus from
-# scored wallets (>=75) should perform better. Gated by min_confidence=0.70.
-min_wallets_medium = 2
-# MUTATION 2026-03-25: Widened from 5min → 12min. 5min was too tight —
-# wallets are scanned every 2min, so 3 wallets buying same token within
-# 5min requires near-simultaneous entry. 12min gives 6 scan cycles.
-time_window_minutes = 12
-cooldown_hours = 4
+min_wallets_strong = 2
+# DATA COLLECTION MODE: Strong=2 (was 3), Medium=1 (single wallet + consensus engine).
+# Paper trading — maximize signal count for Bayesian training data.
+min_wallets_medium = 1
+# 15min window — generous, captures slow-following wallets.
+time_window_minutes = 15
+# 1h cooldown (was 4h) — allow re-entry on same token after exit
+cooldown_hours = 1
 
 [capital]
 # MUTATION 2026-03-25: Raised from $50 → $100. At $50, even a +15% TP win
@@ -119,27 +116,24 @@ cooldown_hours = 4
 max_position_size_usd = 100
 # MUTATION 2026-03-25: Raised from 0.20 → 0.30. With 3 max positions at $100,
 # worst case = $300 deployed = 60% of $500. Manageable risk.
-max_capital_per_trade_pct = 0.30
+max_capital_per_trade_pct = 0.40
 min_order_value = 5.00
-# Max 60% of portfolio locked in open positions at any time
-max_portfolio_exposure_pct = 0.60
-# Max 3% of portfolio risked per trade (based on distance to SL)
-max_risk_per_trade_pct = 0.03
+# DATA COLLECTION MODE: Allow full portfolio deployment
+max_portfolio_exposure_pct = 0.90
+max_risk_per_trade_pct = 0.10
 
 [limits]
-# MUTATION 2026-03-25: Raised from 3 → 5. With medium consensus re-enabled
-# and wider window, more signals will pass. 5 positions × $100 = $500 max.
-max_open_positions = 5
-# MUTATION 2026-03-25: Raised from 5 → 8. More opportunities, still bounded.
-max_trades_per_day = 8
+# DATA COLLECTION MODE: Maximize trades for Bayesian training
+max_open_positions = 8
+max_trades_per_day = 25
 
 [risk]
-# Raised from 0.50 to 0.70 — only trade high-confidence consensus
-min_confidence = 0.70
-max_daily_loss_pct = 0.10
-max_weekly_loss_pct = 0.20
-# Reduced from 4 to 3 — stop faster when losing streak hits
-max_consecutive_losses = 3
+# DATA COLLECTION MODE: Low gates, let everything through.
+# Goal: collect 100+ trades for statistical significance on wallet scoring.
+min_confidence = 0.40
+max_daily_loss_pct = 0.50
+max_weekly_loss_pct = 0.80
+max_consecutive_losses = 20
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  COPY TRACKER — Wallet Performance Auto-Rotation                       ║
@@ -150,16 +144,14 @@ max_consecutive_losses = 3
 
 [copy_tracker]
 enabled = true
-# Promote to single-whale (score >=75) after this many profitable trades
-promote_threshold = 75
-# Demote (reduce score, remove from priority) if score drops below this
-demote_threshold = 40
-# Remove wallet entirely if performance is terrible
-remove_threshold = 25
-# Minimum trades before promote/demote decisions
-min_trades_promote = 5
-min_trades_demote = 10
-min_trades_remove = 20
+# DATA COLLECTION MODE: Fast learning — promote/demote after fewer trades
+promote_threshold = 70
+demote_threshold = 35
+remove_threshold = 20
+# Snabbare beslut: promote efter 3 trades, demote efter 5, remove efter 10
+min_trades_promote = 3
+min_trades_demote = 5
+min_trades_remove = 10
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  SINGLE-WHALE MODE                                                     ║
@@ -172,19 +164,18 @@ enabled = true
 # MUTATION 2026-03-25: Lowered from 80 → 75. At 80, only 3 manual seed
 # wallets qualified. At 75, CopyTracker can promote Dune wallets after
 # 5 profitable trades. This unlocks the self-improving feedback loop.
-min_score = 75
-# Single-whale positions are smaller (higher risk, unconfirmed)
-max_position_pct = 0.15
-# Require extra safety: min 48h token age for single-whale trades
-min_token_age_hours = 48
+min_score = 70
+# DATA COLLECTION MODE: Same size as consensus — want comparable data
+max_position_pct = 0.30
+# Relaxed for data collection (main safety gate still applies)
+min_token_age_hours = 4
 
 [safety]
-# Raised token age from 12h to 24h — avoid pump & dump schemes
-min_token_age_hours = 24
-# Raised liquidity from $50K to $100K — need real exit liquidity
-min_liquidity_usd = 100000
-# Raised min holders from 100 to 200 — avoid concentrated ownership
-min_holders = 200
+# DATA COLLECTION MODE: Relaxed safety — paper trading, want data on ALL token types
+# including risky ones (to train scam detection in CopyTracker/Bayesian)
+min_token_age_hours = 2
+min_liquidity_usd = 10000
+min_holders = 50
 max_fdv_liquidity_ratio = 50
 min_lp_burnt_pct = 0
 require_immutable_supply = false
