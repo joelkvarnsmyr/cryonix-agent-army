@@ -25,6 +25,16 @@ export interface CopynixTomlConfig {
         stagnation_min_pnl_pct: number;
     };
     timing: { poll_interval_ms: number; wallet_scan_interval_ms: number; discovery_interval_ms: number };
+    copy_tracker?: {
+        enabled: boolean;
+        reprofile_interval_hours: number;
+        promote_threshold: number;
+        demote_threshold: number;
+        remove_threshold: number;
+        min_trades_promote: number;
+        min_trades_demote: number;
+        min_trades_remove: number;
+    };
 }
 
 export const COPYNIX_DEFAULTS: CopynixTomlConfig = {
@@ -43,6 +53,16 @@ export const COPYNIX_DEFAULTS: CopynixTomlConfig = {
         stagnation_timeout_hours: 24, stagnation_min_pnl_pct: 3.0,
     },
     timing: { poll_interval_ms: 30_000, wallet_scan_interval_ms: 30_000, discovery_interval_ms: 604_800_000 },
+    copy_tracker: {
+        enabled: true,
+        reprofile_interval_hours: 6,
+        promote_threshold: 80,
+        demote_threshold: 40,
+        remove_threshold: 25,
+        min_trades_promote: 10,
+        min_trades_demote: 15,
+        min_trades_remove: 30,
+    },
 };
 
 export function loadCopynixConfig(filePath?: string): CopynixTomlConfig {
@@ -61,6 +81,7 @@ export function loadCopynixConfig(filePath?: string): CopynixTomlConfig {
             safety: { ...COPYNIX_DEFAULTS.safety, ...parsed.safety },
             exits: { ...COPYNIX_DEFAULTS.exits, ...parsed.exits },
             timing: { ...COPYNIX_DEFAULTS.timing, ...parsed.timing },
+            copy_tracker: { ...COPYNIX_DEFAULTS.copy_tracker!, ...parsed.copy_tracker },
         };
     } catch {
         console.warn('[copynix] Failed to parse copynix.toml, using defaults');

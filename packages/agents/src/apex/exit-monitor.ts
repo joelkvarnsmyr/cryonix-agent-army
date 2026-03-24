@@ -4,7 +4,7 @@ export interface ApexPosition {
     id: string;
     symbol: string;
     direction: 'long' | 'short';
-    mode: 'venus_rx' | 'dip_sniper' | 'momentum' | 'confluence';
+    mode: 'venus_rx' | 'dip_sniper' | 'confluence';
     entryPrice: number;
     currentPrice: number;
     quantity: number;
@@ -12,7 +12,9 @@ export interface ApexPosition {
     highWatermark: number;
     trailingActive: boolean;
     confluenceScore: number;
-    contributingSignals: (string | { source: string; signalType: string; confidence: number; score: number })[];
+    contributingSignals: Array<{ source: string; signalType: string; confidence: number; score: number }>;
+    /** @deprecated Use contributingSignals array objects instead */
+    contributingSignalNames?: string[];  // legacy source names
 }
 
 export interface ExitDecision {
