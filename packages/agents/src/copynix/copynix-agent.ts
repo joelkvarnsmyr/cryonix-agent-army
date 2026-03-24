@@ -12,6 +12,7 @@ import { WalletDiscovery } from './wallet-discovery';
 import { BayesianScorer } from './bayesian-scorer';
 import { PostTradeAnalyzer, type TradeContext } from './post-trade-analyzer';
 import { WebSocketMonitor } from './websocket-monitor';
+import { CopyTracker } from './copy-tracker';
 import type { CopyPosition, CopySignal, WalletTrade } from './types';
 
 // ── Telegram Alert Helper ─────────────────────────────────────────────
@@ -171,6 +172,7 @@ export class CopynixAgent extends BaseAgent {
     private polymarket = new PolymarketIntelligence(300_000);
     private tradeLogger = new CopynixTradeLogger();
     private bayesian = new BayesianScorer();
+    private copyTracker: CopyTracker | null = null;
     private wsMonitor: WebSocketMonitor | null = null;
     private postTradeAnalyzer: PostTradeAnalyzer | null = null;
 
@@ -298,6 +300,12 @@ export class CopynixAgent extends BaseAgent {
             .map(([addr]) => addr);
         this.walletMonitor.setPriorityWallets(priorityAddresses);
         this.log('info', `Priority wallets: ${priorityAddresses.length} (polled every cycle)`);
+
+        // Initialize CopyTracker for wallet performance auto-rotation
+        if (this.tomlConfig.copy_tracker?.enabled !== false) {
+            this.copyTracker = new CopyTracker(this.tomlConfig);
+            this.log('info', `CopyTracker enabled: promote>=${this.tomlConfig.copy_tracker?.promote_threshold ?? 75}, demote<=${this.tomlConfig.copy_tracker?.demote_threshold ?? 40}`);
+        }
 
         this.log('info', `Tracked wallets: ${this.walletMonitor.walletCount}`);
         this.log('info', `Single-whale mode: ${Object.keys(config.wallets.scores).length} scored wallets`);
@@ -857,6 +865,14 @@ export class CopynixAgent extends BaseAgent {
                 })),
             },
         });
+
+        // Feed CopyTracker — auto-promote/demote wallets based on results
+        if (this.copyTracker) {
+            const won = pnl > 0;
+            for (const addr of pos.copiedFrom) {
+                this.copyTracker.recordCopyOutcome(addr, pnl / pos.copiedFrom.length, won);
+            }
+        }
 
         const emoji = pnl >= 0 ? '🟢' : '🔴';
         const walletScores = pos.copiedFrom.map(a => `${a.slice(0, 6)}:${this.bayesian.getScore(a).toFixed(0)}`).join(', ');

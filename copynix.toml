@@ -102,27 +102,36 @@ discovery_interval_hours = 24
 
 [consensus]
 min_wallets_strong = 3
-# Medium consensus DISABLED: set to 3 = same as strong.
-# Data: medium (2 wallets) had 25% WR, -$67 P&L over 6 days.
-# Strong (3+) had 42% WR — still bad but 2x better.
-min_wallets_medium = 3
-time_window_minutes = 5
+# MUTATION 2026-03-25: Re-enable medium consensus at 2 wallets.
+# Previous data (25% WR) was with untested Dune wallets. Now we have
+# Bayesian scoring + CopyTracker auto-rotation. 2-wallet consensus from
+# scored wallets (>=75) should perform better. Gated by min_confidence=0.70.
+min_wallets_medium = 2
+# MUTATION 2026-03-25: Widened from 5min → 12min. 5min was too tight —
+# wallets are scanned every 2min, so 3 wallets buying same token within
+# 5min requires near-simultaneous entry. 12min gives 6 scan cycles.
+time_window_minutes = 12
 cooldown_hours = 4
 
 [capital]
-max_position_size_usd = 50
-max_capital_per_trade_pct = 0.20
+# MUTATION 2026-03-25: Raised from $50 → $100. At $50, even a +15% TP win
+# yields only $7.50. At $100, TP win = $15 — enough to cover losses.
+max_position_size_usd = 100
+# MUTATION 2026-03-25: Raised from 0.20 → 0.30. With 3 max positions at $100,
+# worst case = $300 deployed = 60% of $500. Manageable risk.
+max_capital_per_trade_pct = 0.30
 min_order_value = 5.00
-# Max 20% of portfolio locked in open positions at any time
-max_portfolio_exposure_pct = 0.20
-# Max 2% of portfolio risked per trade (based on distance to SL)
-max_risk_per_trade_pct = 0.02
+# Max 60% of portfolio locked in open positions at any time
+max_portfolio_exposure_pct = 0.60
+# Max 3% of portfolio risked per trade (based on distance to SL)
+max_risk_per_trade_pct = 0.03
 
 [limits]
-# Reduced from 5 to 3 — concentrate on fewer, higher-quality trades
-max_open_positions = 3
-# Reduced from 10 to 5 — quality over quantity
-max_trades_per_day = 5
+# MUTATION 2026-03-25: Raised from 3 → 5. With medium consensus re-enabled
+# and wider window, more signals will pass. 5 positions × $100 = $500 max.
+max_open_positions = 5
+# MUTATION 2026-03-25: Raised from 5 → 8. More opportunities, still bounded.
+max_trades_per_day = 8
 
 [risk]
 # Raised from 0.50 to 0.70 — only trade high-confidence consensus
@@ -131,6 +140,43 @@ max_daily_loss_pct = 0.10
 max_weekly_loss_pct = 0.20
 # Reduced from 4 to 3 — stop faster when losing streak hits
 max_consecutive_losses = 3
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  COPY TRACKER — Wallet Performance Auto-Rotation                       ║
+# ║  Tracks per-wallet P&L and auto-promotes/demotes based on results.     ║
+# ║  Wallets that consistently lose get removed; winners get promoted      ║
+# ║  to single-whale status.                                               ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[copy_tracker]
+enabled = true
+# Promote to single-whale (score >=75) after this many profitable trades
+promote_threshold = 75
+# Demote (reduce score, remove from priority) if score drops below this
+demote_threshold = 40
+# Remove wallet entirely if performance is terrible
+remove_threshold = 25
+# Minimum trades before promote/demote decisions
+min_trades_promote = 5
+min_trades_demote = 10
+min_trades_remove = 20
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  SINGLE-WHALE MODE                                                     ║
+# ║  Wallets with score >= threshold can trigger trades WITHOUT consensus.  ║
+# ║  This is the key to Copynix's edge — follow the best wallets instantly.║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+[single_whale]
+enabled = true
+# MUTATION 2026-03-25: Lowered from 80 → 75. At 80, only 3 manual seed
+# wallets qualified. At 75, CopyTracker can promote Dune wallets after
+# 5 profitable trades. This unlocks the self-improving feedback loop.
+min_score = 75
+# Single-whale positions are smaller (higher risk, unconfirmed)
+max_position_pct = 0.15
+# Require extra safety: min 48h token age for single-whale trades
+min_token_age_hours = 48
 
 [safety]
 # Raised token age from 12h to 24h — avoid pump & dump schemes

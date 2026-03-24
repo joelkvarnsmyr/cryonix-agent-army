@@ -107,10 +107,10 @@ export class WebSocketMonitor {
     private subscribe(): void {
         if (!this.ws || !this.connected) return;
 
-        // Subscribe to priority wallets only (first 20) to stay under
-        // Solana/Helius WS subscription limit (~25 per connection).
-        // 40 subscriptions caused immediate disconnection.
-        const maxSubs = 20;
+        // Subscribe to wallets up to Solana/Helius WS limit (~25 per connection).
+        // Priority wallets (first in array) get subscribed first.
+        // Remaining wallets are covered by polling.
+        const maxSubs = 25;
         const walletsToSub = this.wallets.slice(0, maxSubs);
         for (let i = 0; i < walletsToSub.length; i++) {
             const subscribeMsg = {
