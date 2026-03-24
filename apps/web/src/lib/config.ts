@@ -165,6 +165,19 @@ export interface CryonixConfig {
     mercury_rx_penalty?: number;    // Mercury Rx: mild drag (default 0.05)
     high_retro_penalty?: number;    // 3+ retrogrades penalty (default 0.04)
   };
+  headlines?: {
+    bullish_boost?: number;
+    bearish_penalty?: number;
+    contrarian_dv_boost?: number;
+    scan_interval_seconds?: number;
+  };
+  crossmarket?: {
+    rally_boost?: number;
+    selloff_penalty?: number;
+    correlated_assets?: string[];
+    lag_window_start_hours?: number;
+    lag_window_end_hours?: number;
+  };
 }
 
 let _tomlConfig: CryonixConfig | null = null;

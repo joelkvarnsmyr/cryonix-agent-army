@@ -3874,6 +3874,90 @@ export async function POST() {
       }
     } catch { /* Polymarket data unavailable — skip */ }
 
+    // STEP 3h: Breaking news headline adjustments
+    try {
+      const headlineRaw = await redis.get('headlines:active');
+      if (headlineRaw) {
+        const headline = JSON.parse(headlineRaw);
+        const scan = headline.scan;
+        const ageMin = (Date.now() - headline.timestamp) / 60000;
+
+        // Headlines decay — full boost in first 15min, half after 15min
+        const freshness = ageMin <= 15 ? 1.0 : ageMin <= 30 ? 0.5 : 0.25;
+
+        for (const p of parsed) {
+          const baseAsset = p.signal.symbol.split('/')[0];
+          const isAffected = scan.affectedAssets.includes(baseAsset)
+              || scan.affectedAssets.includes('CRYPTO')
+              || scan.affectedAssets.includes('STOCKS'); // cross-market
+
+          if (!isAffected) continue;
+
+          if (headline.direction === 'bullish' && scan.impact >= 2) {
+            // Bullish headline — boost BUY signals
+            const boost = (TOML?.headlines?.bullish_boost ?? 0.10) * freshness;
+            p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
+            p.signal.reason += ` | 📰 Headline bullish (${scan.impact}) +${(boost * 100).toFixed(0)}%: ${scan.summary.slice(0, 60)}`;
+            console.log(`[HEADLINES] 📰 ${p.signal.symbol}: bullish boost +${(boost * 100).toFixed(0)}% (impact=${scan.impact}, age=${ageMin.toFixed(0)}min)`);
+          } else if (headline.direction === 'bearish' && scan.impact <= -2) {
+            // Bearish headline — penalize BUY signals (or boost if deep value dip)
+            const patterns = p.signal.patterns || [];
+            const isDeepValue = patterns.some((pt: string) => ['DEEP_VALUE_CRASH', 'DIP_BUY'].includes(pt));
+
+            if (isDeepValue && scan.category !== 'hack') {
+              // Deep value + bearish headlines (not hack) = contrarian opportunity
+              const boost = (TOML?.headlines?.contrarian_dv_boost ?? 0.08) * freshness;
+              p.signal.confidence = Math.min(0.95, p.signal.confidence + boost);
+              p.signal.reason += ` | 📰 Headline bearish contrarian DV +${(boost * 100).toFixed(0)}%: ${scan.summary.slice(0, 60)}`;
+              console.log(`[HEADLINES] 📰 ${p.signal.symbol}: contrarian DV boost +${(boost * 100).toFixed(0)}% (impact=${scan.impact})`);
+            } else {
+              // Normal bearish penalty
+              const penalty = (TOML?.headlines?.bearish_penalty ?? 0.12) * freshness;
+              p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+              p.signal.reason += ` | 📰 Headline bearish (${scan.impact}) -${(penalty * 100).toFixed(0)}%: ${scan.summary.slice(0, 60)}`;
+              console.log(`[HEADLINES] 📰 ${p.signal.symbol}: bearish penalty -${(penalty * 100).toFixed(0)}% (impact=${scan.impact})`);
+            }
+          }
+        }
+      }
+    } catch { /* Headlines data unavailable — skip */ }
+
+    // STEP 3i: Cross-market lag trader (stocks rally → crypto boost)
+    try {
+      const stocksRaw = await redis.get('crossmarket:stocks');
+      if (stocksRaw) {
+        const stocks = JSON.parse(stocksRaw);
+        const ageHours = (Date.now() - stocks.timestamp) / 3600000;
+
+        // Only effective in the 0.5-4h window after stock move
+        if (ageHours >= 0.5 && ageHours <= 4) {
+          for (const p of parsed) {
+            if (stocks.direction === 'strong_rally') {
+              // Stocks strong rally → boost correlated crypto (BTC/ETH/SOL most correlated)
+              const baseAsset = p.signal.symbol.split('/')[0];
+              const correlatedAssets = TOML?.crossmarket?.correlated_assets ?? ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK'];
+              const isCorrelated = correlatedAssets.includes(baseAsset);
+
+              if (isCorrelated) {
+                const boost = TOML?.crossmarket?.rally_boost ?? 0.08;
+                const lagBonus = ageHours >= 1 && ageHours <= 2 ? 1.0 : 0.6; // Peak lag window 1-2h
+                const effectiveBoost = boost * lagBonus;
+                p.signal.confidence = Math.min(0.95, p.signal.confidence + effectiveBoost);
+                p.signal.reason += ` | 📈 Stocks ${stocks.direction} (${stocks.dailyPnlPct}%, ${ageHours.toFixed(1)}h ago) +${(effectiveBoost * 100).toFixed(0)}%`;
+                console.log(`[CROSS-MARKET] 📈 ${p.signal.symbol}: stocks rally boost +${(effectiveBoost * 100).toFixed(0)}% (stocks: ${stocks.dailyPnlPct}%, lag: ${ageHours.toFixed(1)}h)`);
+              }
+            } else if (stocks.direction === 'strong_selloff') {
+              // Stocks strong selloff → penalize all crypto (risk-off)
+              const penalty = TOML?.crossmarket?.selloff_penalty ?? 0.10;
+              p.signal.confidence = Math.max(0, p.signal.confidence - penalty);
+              p.signal.reason += ` | 📉 Stocks ${stocks.direction} (${stocks.dailyPnlPct}%) -${(penalty * 100).toFixed(0)}%`;
+              console.log(`[CROSS-MARKET] 📉 ${p.signal.symbol}: stocks selloff penalty -${(penalty * 100).toFixed(0)}% (stocks: ${stocks.dailyPnlPct}%, lag: ${ageHours.toFixed(1)}h)`);
+            }
+          }
+        }
+      }
+    } catch { /* Cross-market data unavailable — skip */ }
+
     // STEP 3f: Vedic V3 — DISABLED (letting Vedic instance stabilize independently)
     // Re-enable when Vedic has proven edge with sufficient sample size.
     // See ADR-028 and cross-instance-intelligence.md for context.
