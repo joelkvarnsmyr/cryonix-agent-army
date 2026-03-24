@@ -1,4 +1,4 @@
-export type SwarmType = 'osint' | 'backtest' | 'macro' | 'altdata' | 'esg' | 'sentiment' | 'custom';
+export type SwarmType = 'osint' | 'backtest' | 'macro' | 'altdata' | 'esg' | 'sentiment' | 'news' | 'custom';
 export type SwarmPriority = 'low' | 'normal' | 'high' | 'critical';
 export type SwarmStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
