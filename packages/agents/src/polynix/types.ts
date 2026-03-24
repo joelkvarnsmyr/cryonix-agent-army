@@ -89,6 +89,7 @@ export interface PolynixAccountState {
     wins: number;
     losses: number;
     winRate: number;
+    startingBalance?: number;
 }
 
 export interface OrderResult {

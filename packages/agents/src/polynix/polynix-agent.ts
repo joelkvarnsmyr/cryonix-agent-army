@@ -65,6 +65,7 @@ export class PolynixAgent extends BaseAgent {
             wins: 0,
             losses: 0,
             winRate: 0,
+            startingBalance: this.tomlConfig.capital.starting_balance_usd,
         };
     }
 
@@ -99,6 +100,16 @@ export class PolynixAgent extends BaseAgent {
             this.accountState.winRate = this.accountState.tradesTotal > 0
                 ? (this.accountState.wins / this.accountState.tradesTotal) * 100 : 0;
             this.accountState.balance = startBal + this.accountState.totalPnl - openExposure;
+
+            // Detect capital deposits/withdrawals: compare current starting_balance vs last known
+            const lastKnownStartBal = restored.accountState.startingBalance ?? startBal;
+            const capitalDelta = startBal - lastKnownStartBal;
+            if (Math.abs(capitalDelta) > 1) {
+                const action = capitalDelta > 0 ? 'DEPOSIT' : 'WITHDRAWAL';
+                this.log('info', `💰 CAPITAL ${action}: $${Math.abs(capitalDelta).toFixed(0)} (starting_balance: $${lastKnownStartBal} → $${startBal})`);
+            }
+            this.accountState.startingBalance = startBal;
+
             this.log('info', `Restored from DB: ${restored.openPositions.length} open positions, ${this.accountState.tradesTotal} settled, P&L $${this.accountState.totalPnl.toFixed(2)}, balance $${this.accountState.balance.toFixed(2)}`);
         }
 
