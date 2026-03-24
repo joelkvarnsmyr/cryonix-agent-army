@@ -332,7 +332,10 @@ export class PsinixAgent {
                     }
                 }
 
-                // Heartbeat every 5 minutes
+                // Publish state to Redis every loop (dashboard polls every 10s)
+                await this.publishState();
+
+                // Heartbeat log every 5 minutes
                 if (now - this.lastHeartbeat >= 300_000) {
                     const posCount = this.positions.size;
                     const portfolioValue = this.getPortfolioValue();
@@ -340,9 +343,6 @@ export class PsinixAgent {
                     const dd = this.peakEquity > 0 ? ((this.peakEquity - portfolioValue) / this.peakEquity * 100).toFixed(1) : '0.0';
                     console.log(`[psinix] [HEARTBEAT] poll #${this.pollCount} | ${posCount} pos | $${portfolioValue.toFixed(0)} value | ${this.wins}W/${this.losses}L (${wr}% WR) | PnL: $${this.totalPnl.toFixed(2)} | Fees: $${this.totalFees.toFixed(2)} | DD: ${dd}%`);
                     this.lastHeartbeat = now;
-
-                    // Publish state to Redis
-                    await this.publishState();
                 }
 
                 this.pollCount++;

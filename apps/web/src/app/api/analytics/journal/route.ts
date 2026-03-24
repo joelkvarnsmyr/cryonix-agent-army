@@ -24,17 +24,74 @@ export async function GET(request: Request) {
       .orderBy(desc(configChanges.createdAt))
       .limit(50);
 
-    // Primary: position_history (has holdingPeriod, closeReason, fees)
-    const conditions: any[] = [gte(positionHistory.closedAt, cutoff)];
-    if (patternFilter) conditions.push(eq(positionHistory.pattern, patternFilter));
+    // Primary: trades table (reliable source with status tracking)
+    const tradeConditions: any[] = [
+      gte(trades.timestamp, cutoff),
+      eq(trades.status, 'CLOSED'),
+    ];
+    if (patternFilter) tradeConditions.push(eq(trades.pattern, patternFilter));
 
-    let rows = await db.select().from(positionHistory)
-      .where(and(...conditions))
+    const tradeRows = await db.select().from(trades)
+      .where(and(...tradeConditions))
+      .orderBy(desc(trades.timestamp))
+      .limit(200);
+
+    // Try to enrich from position_history (has holdingPeriod, closeReason, fees)
+    const phConditions: any[] = [gte(positionHistory.closedAt, cutoff)];
+    if (patternFilter) phConditions.push(eq(positionHistory.pattern, patternFilter));
+
+    const phRows = await db.select().from(positionHistory)
+      .where(and(...phConditions))
       .orderBy(desc(positionHistory.closedAt))
       .limit(200);
 
-    if (rows.length > 0) {
-      const journalTrades = rows.map(r => {
+    // Build a lookup map from position_history by symbol+approximate time
+    const phMap = new Map<string, typeof phRows[number]>();
+    for (const r of phRows) {
+      // Key by symbol — if multiple, latest wins (already sorted desc)
+      if (!phMap.has(r.symbol)) phMap.set(r.symbol, r);
+    }
+
+    if (tradeRows.length > 0) {
+      const journalTrades = tradeRows.map(t => {
+        // Try to find matching position_history entry for richer data
+        const ph = phMap.get(t.symbol);
+        const phMeta = (ph?.metadata && typeof ph.metadata === 'object') ? ph.metadata as Record<string, any> : {};
+
+        return {
+          symbol: t.symbol,
+          pattern: t.pattern,
+          confidence: parseFloat(t.confidence || '0'),
+          entry_price: parseFloat(t.entryPrice || '0'),
+          exit_price: parseFloat(t.exitPrice || ph?.exitPrice || '0'),
+          pnl: parseFloat(t.pnl || '0'),
+          pnl_percent: ph ? parseFloat(ph.pnlPercent || '0') : 0,
+          exit_reason: ph?.closeReason || t.status,
+          holding_period_h: ph?.holdingPeriod ? Math.round((ph.holdingPeriod) / 360) / 10 : 0,
+          config_version: t.configVersion || phMeta.configVersion || 'pre-tracking',
+          reasoning: t.reasoning || phMeta.exitReason || '',
+          opened_at: ph?.openedAt || t.timestamp,
+          closed_at: ph?.closedAt || t.timestamp,
+        };
+      });
+
+      const filtered = configFilter
+        ? journalTrades.filter(t => t.config_version === configFilter)
+        : journalTrades;
+
+      return NextResponse.json({
+        trades: filtered,
+        summary: computeSummary(filtered),
+        config_comparison: computeConfigComparison(filtered),
+        config_timeline: configTimeline,
+        source: 'trades',
+        days,
+      });
+    }
+
+    // Fallback: position_history only (if trades table has no CLOSED entries)
+    if (phRows.length > 0) {
+      const journalTrades = phRows.map(r => {
         const meta = (r.metadata && typeof r.metadata === 'object') ? r.metadata as Record<string, any> : {};
         return {
           symbol: r.symbol,
@@ -67,41 +124,13 @@ export async function GET(request: Request) {
       });
     }
 
-    // Fallback: trades table
-    const tradeConditions: any[] = [gte(trades.timestamp, cutoff)];
-    if (patternFilter) tradeConditions.push(eq(trades.pattern, patternFilter));
-
-    const tradeRows = await db.select().from(trades)
-      .where(and(...tradeConditions))
-      .orderBy(desc(trades.timestamp))
-      .limit(200);
-
-    const journalTrades = tradeRows.map(t => ({
-      symbol: t.symbol,
-      pattern: t.pattern,
-      confidence: parseFloat(t.confidence || '0'),
-      entry_price: parseFloat(t.entryPrice || '0'),
-      exit_price: parseFloat(t.exitPrice || '0'),
-      pnl: parseFloat(t.pnl || '0'),
-      pnl_percent: 0,
-      exit_reason: t.status,
-      holding_period_h: 0,
-      config_version: t.configVersion || 'pre-tracking',
-      reasoning: t.reasoning,
-      opened_at: t.timestamp,
-      closed_at: t.timestamp,
-    }));
-
-    const filtered = configFilter
-      ? journalTrades.filter(t => t.config_version === configFilter)
-      : journalTrades;
-
+    // No data in either table
     return NextResponse.json({
-      trades: filtered,
-      summary: computeSummary(filtered),
-      config_comparison: computeConfigComparison(filtered),
+      trades: [],
+      summary: computeSummary([]),
+      config_comparison: [],
       config_timeline: configTimeline,
-      source: 'trades',
+      source: 'none',
       days,
     });
   } catch (error: any) {
