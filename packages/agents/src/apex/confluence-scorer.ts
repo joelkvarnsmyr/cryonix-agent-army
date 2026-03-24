@@ -21,7 +21,7 @@ export interface ScoredOpportunity {
     symbol: string;
     direction: SignalDirection;
     score: number;
-    mode: 'venus_rx' | 'dip_sniper' | 'confluence';
+    mode: 'venus_rx' | 'dip_sniper' | 'momentum' | 'confluence';
     contributingSignals: NormalizedSignal[];
     timestamp: number;
 }
@@ -50,6 +50,10 @@ const BULLISH_WEIGHTS: Record<string, WeightEntry> = {
     'dex_momentum':            { weight: 'solanix_volume_spike' },
     'macro_bullish':           { weight: 'aktienix_macro_bullish' },
     'btc_dom':                 { weight: 'cmc_btc_dom_falling' },
+    // Momentum patterns (uptrend signals from QuantGuild)
+    'MACD_BULLISH_CROSS':      { weight: 'cryonix_macd_bullish',         minField: 'confidence', minValue: 0.65 },
+    'EMA_BULLISH_CROSS':       { weight: 'cryonix_ema_bullish',          minField: 'confidence', minValue: 0.65 },
+    'VOLUME_SPIKE_UP':         { weight: 'cryonix_volume_spike_up',      minField: 'confidence', minValue: 0.60 },
     // ORAKEL bullish
     'orakel_direction_up':     { weight: 'orakel_direction' },
     'orakel_regime_bull':      { weight: 'orakel_regime' },
@@ -81,15 +85,22 @@ function meetsThreshold(signal: NormalizedSignal, entry: WeightEntry): boolean {
     return (signal[entry.minField] as number) >= entry.minValue;
 }
 
+const MOMENTUM_TYPES = new Set(['MACD_BULLISH_CROSS', 'EMA_BULLISH_CROSS', 'VOLUME_SPIKE_UP']);
+
 function determineMode(
     signals: NormalizedSignal[],
     direction: SignalDirection,
-): 'venus_rx' | 'dip_sniper' | 'confluence' {
+): 'venus_rx' | 'dip_sniper' | 'momentum' | 'confluence' {
     if (direction === 'bearish' && signals.some(s => s.signalType === 'venus_rx')) {
         return 'venus_rx';
     }
     if (signals.some(s => s.signalType === 'DEEP_VALUE_CRASH' || s.signalType === 'DIP_BUY')) {
         return 'dip_sniper';
+    }
+    // Momentum mode: 2+ momentum signals without any dip/crash signals
+    const momentumCount = signals.filter(s => MOMENTUM_TYPES.has(s.signalType)).length;
+    if (momentumCount >= 2) {
+        return 'momentum';
     }
     return 'confluence';
 }

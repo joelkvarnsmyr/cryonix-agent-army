@@ -31,7 +31,7 @@ async function main() {
     console.log(`[APEX] Scan interval: ${config.general.scan_interval_seconds}s`);
     console.log(`[APEX] Confluence thresholds: full=${config.confluence.min_score_full_kelly}, half=${config.confluence.min_score_half_kelly}`);
     console.log(`[APEX] Max positions: ${config.risk.max_concurrent_positions}`);
-    console.log(`[APEX] Modes: venus_rx=${config.modes.venus_rx.enabled}, dip_sniper=${config.modes.dip_sniper.enabled}, confluence=${config.modes.confluence.enabled}`);
+    console.log(`[APEX] Modes: venus_rx=${config.modes.venus_rx.enabled}, dip_sniper=${config.modes.dip_sniper.enabled}, momentum=${config.modes.momentum.enabled}, confluence=${config.modes.confluence.enabled}`);
     console.log();
 
     const agent = new ApexAgent({

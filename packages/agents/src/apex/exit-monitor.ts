@@ -4,7 +4,7 @@ export interface ApexPosition {
     id: string;
     symbol: string;
     direction: 'long' | 'short';
-    mode: 'venus_rx' | 'dip_sniper' | 'confluence';
+    mode: 'venus_rx' | 'dip_sniper' | 'momentum' | 'confluence';
     entryPrice: number;
     currentPrice: number;
     quantity: number;

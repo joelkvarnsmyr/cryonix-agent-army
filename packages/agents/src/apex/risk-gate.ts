@@ -108,7 +108,7 @@ export class RiskGate {
     // -------------------------------------------------------------------------
     // computeSize — Adaptive Kelly-adjusted position size in USDC
     // -------------------------------------------------------------------------
-    computeSize(mode: 'venus_rx' | 'dip_sniper' | 'confluence', score: number): number {
+    computeSize(mode: 'venus_rx' | 'dip_sniper' | 'momentum' | 'confluence', score: number): number {
         const modeConfig = this.modesConfig[mode];
         const sizingPct = modeConfig.sizing_pct / 100;
         const kellyFraction = this.config.kelly_fraction;

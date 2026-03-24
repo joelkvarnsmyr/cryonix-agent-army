@@ -47,6 +47,7 @@ export interface ApexTomlConfig {
     modes: {
         venus_rx: ApexModeConfig & { symbols: string[] };
         dip_sniper: ApexModeConfig;
+        momentum: ApexModeConfig;
         confluence: ApexModeConfig;
     };
     orakel: {
@@ -93,10 +94,12 @@ export const APEX_DEFAULTS: ApexTomlConfig = {
         min_score_full_kelly: 60,
         min_score_half_kelly: 40,
         weights: {
-            vedic_venus_rx: 40, cryonix_deep_value: 30, cryonix_dip_buy: 25,
+            vedic_venus_rx: 40, cryonix_deep_value: 30, cryonix_dip_buy: 25, cryonix_bollinger: 20,
             copynix_single_whale: 25, polymarket_sentiment_shift: 15, cmc_extreme_fear: 15,
             psinix_coherence: 10, solanix_volume_spike: 10, aktienix_macro_bullish: 5,
             cmc_btc_dom_falling: 5,
+            // Momentum weights (uptrend patterns)
+            cryonix_macd_bullish: 20, cryonix_ema_bullish: 15, cryonix_volume_spike_up: 15,
             cryonix_rsi_overbought: 20, cryonix_macd_bearish: 20,
             polymarket_sentiment_falling: 15, cmc_fear_greed_dropping: 10, cmc_btc_dom_rising: 10,
             orakel_direction: 15, orakel_regime: 10, orakel_fused: 10,
@@ -122,6 +125,10 @@ export const APEX_DEFAULTS: ApexTomlConfig = {
         dip_sniper: {
             enabled: true, sizing_pct: 20.0, tp_pct: 5.0, sl_pct: 2.5,
             trailing_pct: 2.0, trailing_activation_pct: 2.5, max_hold_hours: 48,
+        },
+        momentum: {
+            enabled: true, sizing_pct: 12.0, tp_pct: 4.0, sl_pct: 2.0,
+            trailing_pct: 1.5, trailing_activation_pct: 2.0, max_hold_hours: 24,
         },
         confluence: {
             enabled: true, sizing_pct: 15.0, tp_pct: 6.0, sl_pct: 3.0,
@@ -163,6 +170,7 @@ export function loadApexConfig(filePath?: string): ApexTomlConfig {
                         : APEX_DEFAULTS.modes.venus_rx.symbols,
                 },
                 dip_sniper: { ...APEX_DEFAULTS.modes.dip_sniper, ...parsed.modes?.dip_sniper },
+                momentum: { ...APEX_DEFAULTS.modes.momentum, ...parsed.modes?.momentum },
                 confluence: { ...APEX_DEFAULTS.modes.confluence, ...parsed.modes?.confluence },
             },
             orakel: { ...APEX_DEFAULTS.orakel, ...parsed.orakel },

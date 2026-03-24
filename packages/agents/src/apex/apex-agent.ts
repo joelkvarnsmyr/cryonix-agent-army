@@ -601,6 +601,7 @@ export class ApexAgent {
         const uniqueSources = new Set(opp.contributingSignals.map(s => s.source)).size;
 
         // Build system prompt based on signal type
+        const isMomentum = opp.mode === 'momentum';
         const systemPrompt = isDeepValue
             ? `You are a crash-hypothesis validator for the APEX autonomous trading system. Test the hypothesis: "This drawdown is PANIC SELLING (buy opportunity), not a FALLING KNIFE."
 List contradictions (reasons NOT to buy) and invalidation criteria (exit triggers).
@@ -608,6 +609,10 @@ Reply JSON only: {"approve":bool,"confidence":0-100,"reason":"string","contradic
             : isDip
             ? `You are a dip-hypothesis validator for the APEX autonomous trading system. Test the hypothesis: "This dip is a mean-reversion opportunity, not the start of a larger decline."
 List contradictions and invalidation criteria.
+Reply JSON only: {"approve":bool,"confidence":0-100,"reason":"string","contradictions":["..."],"invalidation_criteria":["..."]}`
+            : isMomentum
+            ? `You are a momentum validator for the APEX autonomous trading system. Test the hypothesis: "This uptrend has sufficient momentum (MACD cross + EMA alignment + volume confirmation) to continue, not a bull trap or exhaustion spike."
+Consider: Is this early-trend or late-trend? Is volume confirming the move? Are we chasing an extended move?
 Reply JSON only: {"approve":bool,"confidence":0-100,"reason":"string","contradictions":["..."],"invalidation_criteria":["..."]}`
             : `You are a confluence validator for the APEX autonomous trading system. Test the hypothesis: "This multi-signal confluence setup will produce a profitable trade."
 List contradictions and invalidation criteria.
@@ -730,8 +735,11 @@ Reply JSON only: {"approve":bool,"confidence":0-100,"reason":"string","contradic
             // Use same rich prompt as Grok (fair A/B comparison)
             const { systemPrompt, userPrompt } = prebuiltPrompt ?? await this.buildValidationPrompt(opp);
 
+            // Use --bare to prevent CLAUDE.md / hooks from overriding the
+            // system prompt with "software engineering assistant" instructions.
             const child = spawn('claude', [
                 '-p', '--model', model, '--output-format', 'text',
+                '--bare',
                 '--system-prompt', systemPrompt,
             ], {
                 cwd: process.cwd(),
