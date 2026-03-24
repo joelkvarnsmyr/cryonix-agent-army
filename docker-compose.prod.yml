@@ -406,6 +406,25 @@ services:
         condition: service_healthy
 
   # ============================================================
+  # Headline Scanner (Grok X/Twitter breaking news, every 5min)
+  # ============================================================
+
+  headline-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile.headlines
+    container_name: cryonix-headline-scanner
+    restart: unless-stopped
+    environment:
+      - KV_URL=redis://redis:6379
+      - XAI_API_KEY=${XAI_API_KEY}
+    networks:
+      - cryonix-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ============================================================
   # Vedic Trader — Pure astrology paper trading experiment
   # ============================================================
 

@@ -1,0 +1,7 @@
+FROM node:20-alpine
+WORKDIR /app
+RUN npm install --no-save ioredis@5 openai@4 tsx@4 typescript@5
+COPY scripts/services/headline-scanner.ts ./scripts/services/
+COPY packages/agents/src/shared/headline-types.ts ./packages/agents/src/shared/
+USER node
+CMD ["npx", "tsx", "scripts/services/headline-scanner.ts"]
