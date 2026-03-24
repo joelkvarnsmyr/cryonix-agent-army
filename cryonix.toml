@@ -1220,3 +1220,18 @@ max_symbol_exposure_pct = 60
 enabled = true
 claude_model = "claude-sonnet-4-6"
 shadow_mode = true                    # true = Claude logs only, false = Claude controls trades
+
+# ── Headline Scanner ──────────────────────────────────────────
+[headlines]
+bullish_boost = 0.10
+bearish_penalty = 0.12
+contrarian_dv_boost = 0.08
+scan_interval_seconds = 300
+
+# ── Cross-Market Lag Trader ───────────────────────────────────
+[crossmarket]
+rally_boost = 0.08
+selloff_penalty = 0.10
+correlated_assets = ["BTC", "ETH", "SOL", "AVAX", "LINK"]
+lag_window_start_hours = 0.5
+lag_window_end_hours = 4.0
