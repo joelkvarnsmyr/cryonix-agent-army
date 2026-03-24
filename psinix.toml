@@ -12,6 +12,7 @@ sources = [
     "polymarket",      # Prediction market scores (fed, geo, oil, crypto)
     "fear_greed",      # CoinMarketCap Fear & Greed index
     "cryonix_ta",      # Technical analysis patterns from Python engine
+    "finnhub_equity",  # MUTATION 2026-03-24: SPY/QQQ/UUP equity signals (independent oscillator)
 ]
 # Minimum signals needed for Ψ computation (lowered: 2 independent sources enough)
 min_signals = 2
@@ -59,7 +60,9 @@ drawdown_halflife_pct = 5.0
 # Stop trading entirely at this drawdown %
 max_drawdown_halt_pct = 15.0
 # Minimum bars to hold a position (anti-churn, prevents fee-burning)
-min_hold_bars = 3
+# MUTATION 2026-03-24: Raised from 3 → 12. At 15min bars, 3 bars = 45min
+# which is too short for crypto swing trades. 12 bars = 3h gives time to develop.
+min_hold_bars = 12
 # If rolling profit factor drops below this, halve positions
 profit_factor_gate = 0.8
 # Number of recent trades for dynamic Kelly + profit factor calculation
@@ -71,7 +74,9 @@ min_weighted_signal = 0.15
 
 [equity]
 # Finnhub API key (free tier, 60 calls/min). Empty = equity signals disabled.
-finnhub_api_key = ""
+# MUTATION 2026-03-24: Activated Finnhub equity signals for SPY/QQQ/UUP
+# Adds independent oscillator to Kuramoto model (was 3-5, now 4-6)
+finnhub_api_key = "d6tjop9r01qhkb44fnl0d6tjop9r01qhkb44fnlg"
 # Poll interval for SPY/QQQ/UUP quotes (ms) — 5 minutes
 poll_interval_ms = 300000
 

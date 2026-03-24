@@ -3126,15 +3126,25 @@ async function executeBuy(signal: Signal): Promise<{
     // If exitPlan exists, use T1 as initial display TP for backward compat
     const displayTp = exitPlan ? exitPlan.tiers[0].targetPrice : signal.target_price;
 
+    // MUTATION 2026-03-24: Enforce minimum SL distance floor.
+    // When ATR is tiny (Bollinger Squeeze), ATR-based SL can be < 0.1%.
+    // SUI stopped out at -0.05% in 37min. min_sl_pct prevents micro-SL exits.
+    const minSlPct = (TOML as any)?.exits?.min_sl_pct ?? 1.5;
+    const minSlPrice = executedPrice * (1 - minSlPct / 100);
+    const effectiveSL = Math.min(signal.stop_loss, minSlPrice);
+    if (effectiveSL !== signal.stop_loss) {
+      console.log(`[SL-FLOOR] ${signal.symbol}: SL widened from $${signal.stop_loss.toFixed(4)} to $${effectiveSL.toFixed(4)} (min ${minSlPct}% floor)`);
+    }
+
     // Store position in Redis for monitoring
     await addPosition({
       symbol: signal.symbol,
       side: 'BUY',
       entryPrice: executedPrice,
       quantity: executedQty,
-      stopLoss: signal.stop_loss,
+      stopLoss: effectiveSL,
       takeProfit: displayTp,
-      trailingStop: signal.stop_loss,   // Starts at stop-loss
+      trailingStop: effectiveSL,   // Starts at stop-loss
       highWaterMark: executedPrice,      // Starts at entry
       orderId: order.id,
       nativeSlOrderId,                  // Track native SL for cancellation on exit
@@ -3152,13 +3162,13 @@ async function executeBuy(signal: Signal): Promise<{
       indicators: signal.indicators, // Store entry-time indicators for post-trade analysis
     });
 
-    // Sync to Postgres positions table
+    // Sync to Postgres positions table (uses effectiveSL with min_sl_pct floor)
     try {
       await createPosition({
         symbol: signal.symbol,
         quantity: String(executedQty),
         entryPrice: String(executedPrice),
-        stopLoss: signal.stop_loss ? String(signal.stop_loss) : undefined,
+        stopLoss: effectiveSL ? String(effectiveSL) : undefined,
         takeProfit: signal.target_price ? String(signal.target_price) : undefined,
       });
     } catch (err) {
@@ -3997,6 +4007,17 @@ export async function POST() {
 
     for (const { signal, raw } of topSignals) {
 
+      // Huntrix/PredatorHunter blacklist gate — reject signals on manipulated symbols
+      const blacklistKey = `huntrix:blacklist:${signal.symbol}`;
+      const isBlacklisted = await redis.get(blacklistKey);
+      if (isBlacklisted) {
+        console.log(`[HUNTRIX] BLOCKED ${signal.symbol}: ${isBlacklisted}`);
+        await redis.lrem('trades:pending', 1, raw);
+        rejected++;
+        buyResults.push({ symbol: signal.symbol, status: 'HUNTRIX_BLACKLISTED', reason: `${isBlacklisted}` });
+        continue;
+      }
+
       // Bayesian adjustment moved to CONF-V2 groupC (multiplicative model) — no additive pre-adjustment
 
       const riskCheck = await passesRiskChecks(signal);
@@ -4177,6 +4198,17 @@ export async function POST() {
       const taWeight = weightSum > 0 ? rawTaWeight / weightSum : 0.5;
       const aiWeight = weightSum > 0 ? rawAiWeight / weightSum : 0.5;
       signal.confidence = Math.round((signal.confidence * taWeight + aiResult.aiConfidence * aiWeight) * 10000) / 10000;
+
+      // MUTATION 2026-03-24: min_ai_confidence gate — Grok rubber-stamps everything,
+      // so we enforce a floor on the AI-adjusted confidence to filter weak signals.
+      const minAiConfidence = (TOML as any)?.risk?.min_ai_confidence ?? 0.65;
+      if (signal.confidence < minAiConfidence) {
+        console.log(`[AI-GATE] ${signal.symbol}: AI confidence ${signal.confidence.toFixed(4)} < ${minAiConfidence} — REJECTED`);
+        await redis.lrem('trades:pending', 1, raw);
+        rejected++;
+        buyResults.push({ symbol: signal.symbol, status: 'AI_GATE_REJECTED', reason: `AI-blended confidence ${signal.confidence.toFixed(4)} < ${minAiConfidence}` });
+        continue;
+      }
 
       // ══════════════════════════════════════════════════════════════════════
       // Phase 4.5: ORAKEL Forecast Integration
@@ -4648,15 +4680,19 @@ export async function POST() {
       // All adjustments (ORAKEL, V2 model, macro, equity) can reduce
       // confidence below threshold. This last-resort check prevents
       // execution of low-confidence trades.
-      if (signal.confidence < CONFIG.MIN_CONFIDENCE) {
+      // MUTATION 2026-03-24: Also enforce min_ai_confidence from TOML.
+      // Grok rubber-stamps everything — this is the safety net.
+      const minAiConf = (TOML as any)?.risk?.min_ai_confidence ?? CONFIG.MIN_CONFIDENCE;
+      const effectiveMinConf = Math.max(CONFIG.MIN_CONFIDENCE, minAiConf);
+      if (signal.confidence < effectiveMinConf) {
         await redis.lrem('trades:pending', 1, raw);
         await redis.del(dedupKey);
         rejected++;
-        console.log(`[FINAL-GATE] ${signal.symbol} REJECTED: confidence ${(signal.confidence * 100).toFixed(1)}% < ${(CONFIG.MIN_CONFIDENCE * 100).toFixed(0)}% min after all adjustments`);
+        console.log(`[FINAL-GATE] ${signal.symbol} REJECTED: confidence ${(signal.confidence * 100).toFixed(1)}% < ${(effectiveMinConf * 100).toFixed(0)}% min after all adjustments`);
         buyResults.push({
           symbol: signal.symbol,
           status: 'POST_ADJUSTMENT_REJECTED',
-          reason: `Final confidence ${(signal.confidence * 100).toFixed(1)}% < ${(CONFIG.MIN_CONFIDENCE * 100).toFixed(0)}% after ORAKEL/V2/macro adjustments`,
+          reason: `Final confidence ${(signal.confidence * 100).toFixed(1)}% < ${(effectiveMinConf * 100).toFixed(0)}% after ORAKEL/V2/macro adjustments`,
         });
         continue;
       }

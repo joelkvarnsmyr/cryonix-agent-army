@@ -221,7 +221,15 @@ liquidation_buffer_pct = 0.15
 # 0.65 = 65%. Lower means more trades (more opportunity + more noise).
 # When to change: raise to 0.70-0.75 if too many losing trades,
 # lower to 0.60 if not enough trades are executing.
-min_confidence = 0.55
+# MUTATION 2026-03-24: Raised from 0.55 → 0.65. At 0.55, weak single-pattern
+# signals sneak through after consensus penalty (0.65 * 0.85 = 0.55).
+# Need harder gate to force multi-pattern confirmation.
+min_confidence = 0.65
+
+# MUTATION 2026-03-24: NEW — Minimum AI-adjusted confidence after Grok validation.
+# Grok approves everything with "STRONG" consensus and always boosts confidence.
+# This floor ensures the FINAL GATE rejects signals Grok was too lenient on.
+min_ai_confidence = 0.68
 
 # Minimum reward-to-risk ratio. Rejects signals where the potential
 # profit (entry to TP) divided by potential loss (entry to SL) is
@@ -315,6 +323,12 @@ orderbook_depth = 5
 sl_atr_multiplier = 6.0
 tp_atr_multiplier = 10.0
 
+# MUTATION 2026-03-24: NEW — Minimum SL distance as % of entry price.
+# When ATR is tiny (Bollinger Squeeze periods), ATR-based SL can be < 0.1%.
+# SUI stopped out at -0.05% in 37min. This floor prevents micro-SL exits.
+# 1.5% = minimum breathing room regardless of ATR.
+min_sl_pct = 1.5
+
 # Deep value crash trades use wider ATR multipliers — crash bounces
 # are sharp but need room to breathe. R:R = 8.0/6.0 = 1.33.
 deep_value_sl_atr = 6.0
@@ -407,7 +421,10 @@ rsi_overbought = 70
 # When to change: lower squeeze_pct (15) for fewer but stronger signals.
 bollinger_period = 20
 bollinger_std = 2.0
-bollinger_squeeze_pct = 30
+# MUTATION 2026-03-24: Tightened from 30 → 15. At 30%, any mildly quiet period
+# triggers squeeze — combined with ATR-based SL, SL becomes dangerously tight.
+# SUI stopped out at -0.05% in 37min because ATR was tiny during "squeeze".
+bollinger_squeeze_pct = 15
 
 # MACD (Moving Average Convergence Divergence) — trend + momentum.
 # Standard parameters (12, 26, 9) are almost universally used.
@@ -467,7 +484,10 @@ min_candles = 50
 # dip_buy_lookback: how many bars back to look for the recent high.
 # dip_buy_max_rsi: RSI must be below this (avoids buying into strength).
 # When to change: raise drawdown to 0.07-0.10 for fewer, deeper dips.
-dip_buy_drawdown = 0.03
+# MUTATION 2026-03-24: Raised from 3% → 6%. 3% is normal crypto noise.
+# DIP_BUY at 3%: 16.7% WR, EV -0.10, profit factor 0.19.
+# Deeper dips have higher mean-reversion probability.
+dip_buy_drawdown = 0.06
 dip_buy_lookback = 20
 dip_buy_max_rsi = 50
 
@@ -493,7 +513,9 @@ dip_focus_mode = true
 # 2 = require 2+ patterns (strict, fewer signals, higher quality combos)
 # 1 = allow single-pattern signals through (more signals, lower quality)
 # ADR-022 + backtest: consensus_min=2 → 73% WR / +$1.49, consensus_min=1 → 39% WR / -$1.72
-consensus_min_patterns = 1
+# MUTATION 2026-03-24: Restored from proven config (ADR-022 backtest)
+# consensus_min=2 → 73% WR / +$1.49 vs consensus_min=1 → 39% WR / -$1.72
+consensus_min_patterns = 2
 
 # Patterns considered "value" for dip focus filtering.
 # At least one must be present in a signal when dip_focus_mode = true.
@@ -591,8 +613,11 @@ trending_reserve_pct = 0.15
 # ── Smart Rotation ───────────────────────────────────────────────────────
 [rotation]
 enabled = true                    # Enable smart position rotation
-min_score_advantage = 10          # Signal must beat weakest position by this many points
-min_hold_minutes = 30             # Minimum hold time before position can be rotated out
+# MUTATION 2026-03-24: Rotation caused 3 of 6 losses in 48h.
+# Raised advantage 10→25 and hold time 30→120 to reduce churn.
+# At 25.8% WR, selling a loser to open another likely loser destroys value.
+min_score_advantage = 25          # Signal must beat weakest position by this many points
+min_hold_minutes = 120            # Minimum hold time before position can be rotated out
 
 [boosting]
 

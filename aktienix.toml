@@ -57,7 +57,10 @@ skip_first_minutes = 15
 # Close positions before end of day to avoid overnight gap risk.
 # Stock prices can gap 2-5% overnight on news/earnings.
 # When to change: set to false for a multi-day swing strategy.
-close_before_eod = false
+# MUTATION 2026-03-24: Changed from false → true. USO lost -$864.93 overnight
+# due to extended_hours_sl trigger. Overnight gap risk on stocks is 2-5%.
+# Must close positions before market close to prevent catastrophic losses.
+close_before_eod = true
 
 # Minutes before market close to stop opening NEW positions.
 # 30 min = stop new orders at 15:30 ET. Existing positions are kept.
@@ -125,7 +128,10 @@ bars_count = 220
 # Max value for a single position in USD.
 # $10,000 on $100k = 10%. Allows meaningful positions in conviction plays.
 # Combined with max_single_position_pct, prevents runaway concentration.
-max_position_size_usd = 10000
+# MUTATION 2026-03-24: Halved from $10,000 → $5,000. At 90% loss rate,
+# $10k positions burn $500/trade on SL hits. Halving cuts losses proportionally.
+# Will restore to $10k when WR exceeds 40%.
+max_position_size_usd = 5000
 
 # Maximum % of settled cash to deploy per order.
 # 0.95 = 95%. The 5% buffer prevents "insufficient funds" edge cases.
@@ -236,7 +242,10 @@ counter_trend_penalty = 0.50
 # Minimum confidence to execute. 0.40 balances signal quality with
 # capital utilization. Duplicate BUY block prevents accumulation.
 # Macro boost (+15%) can push borderline signals over threshold.
-min_confidence = 0.40
+# MUTATION 2026-03-24: Raised from 0.40 → 0.55. At 0.40, signals with raw
+# confidence 0.10 can pass after macro overlays (+20%). 10% WR demands
+# stricter gate. Crypto uses 0.65 — stocks should be at least 0.55.
+min_confidence = 0.55
 
 # T+1 safety: never trade with less than $1 settled cash.
 # In a cash account, unsettled funds from yesterday's sale CANNOT
@@ -273,7 +282,10 @@ take_profit_pct = 8.0
 
 # Fixed stop-loss percentage. Cut losses at this level.
 # 3.0 = -3%. Risk:Reward = 5.0 / 3.0 = 1.67 R:R (healthy).
-stop_loss_pct = 5.0
+# MUTATION 2026-03-24: Tightened from 5.0% → 3.5%. At 10% WR with 5% SL
+# and 8% TP, EV is -$370/trade. Tighter SL cuts per-trade risk by 30%.
+# R:R improves from 1.6 to 2.3.
+stop_loss_pct = 3.5
 
 # Trailing stop: follows price this % below the high watermark.
 # 2.0 = 2%. Tightened from 4% to lock in gains faster once trailing activates.
