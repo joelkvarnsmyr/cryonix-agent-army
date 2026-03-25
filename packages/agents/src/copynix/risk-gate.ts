@@ -47,6 +47,15 @@ export class CopyRiskGate {
 
             const pairs = (await res.json()) as DexPairResponse[];
             if (!Array.isArray(pairs) || pairs.length === 0) {
+                // Data collection mode: if all gates are 0, allow unknown tokens
+                if (this.minTokenAgeHours <= 0 && this.minLiquidityUsd <= 0 && this.minHolders <= 0) {
+                    return {
+                        tokenMint, tokenSymbol: 'UNKNOWN', ageHours: 0,
+                        liquidityUsd: 0, holderCount: 0, lpBurntPct: 0,
+                        immutableSupply: false, safe: true,
+                        reasons: ['WARN: No DexScreener data (allowed in data collection mode)'],
+                    };
+                }
                 return this.failResult(tokenMint, ['No pairs found on DexScreener']);
             }
 
