@@ -6,10 +6,12 @@ import { fullConfig, loadConfig } from '@/lib/config';
 import { getConfigVersion } from '@/lib/config-version';
 import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { spawn } from 'child_process';
 
 import { TimingService } from '@/lib/trading/timing';
 import { updatePosterior, getBayesianAdjustment, rankSignalsBySoftmax } from '@/lib/trading/bayesian';
+import { SignalBusWriter } from '@cryonix/agents/shared/signal-bus-writer';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +32,9 @@ if (!IS_PRODUCTION) {
 
 const CONFIG = loadConfig();
 const TOML = fullConfig();
+
+// Signal Bus — publish trade events for cross-agent awareness (reuses existing Redis)
+const signalBus = new SignalBusWriter('cryonix-core', redis);
 
 // ============================================================================
 // INSTANCE LOCK — prevent multiple environments from trading the same account
@@ -73,6 +78,33 @@ function getGrok(): OpenAI | null {
     baseURL: 'https://api.x.ai/v1',
   });
   return grok;
+}
+
+// ============================================================================
+// CLAUDE AI SINGLETON (Anthropic SDK — stricter signal validation)
+// ============================================================================
+
+let anthropicClient: Anthropic | null = null;
+
+function getAnthropicClient(): Anthropic | null {
+  if (!CONFIG.AI_VALIDATION || !process.env.ANTHROPIC_API_KEY) return null;
+  if (anthropicClient) return anthropicClient;
+  anthropicClient = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+  return anthropicClient;
+}
+
+/**
+ * Determine which AI validator to use.
+ * Priority: env var AI_VALIDATOR > TOML ai.ai_validator > default "grok"
+ */
+function getActiveValidator(): 'claude' | 'grok' {
+  const envVal = process.env.AI_VALIDATOR?.toLowerCase();
+  if (envVal === 'claude' || envVal === 'grok') return envVal;
+  const tomlVal = (TOML as any)?.ai?.ai_validator?.toLowerCase();
+  if (tomlVal === 'claude' || tomlVal === 'grok') return tomlVal;
+  return 'grok'; // default: backward-compatible
 }
 
 // ============================================================================
@@ -1580,6 +1612,24 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             await postTradeAnalysis(pos, closePrice, pnlPct, exitType);
           } catch { /* non-critical */ }
 
+          // Broadcast SELL to signal bus for cross-agent awareness
+          try {
+            await signalBus.publish({
+              type: 'SELL',
+              symbol: pos.symbol,
+              confidence: 1,
+              pattern: pos.pattern,
+              reasoning: exitReason,
+              metadata: {
+                exitType,
+                entryPrice: pos.entryPrice,
+                exitPrice: closePrice,
+                pnl: realizedPnl - fees,
+                pnlPct,
+              },
+            });
+          } catch { /* non-critical */ }
+
           results.push({
             symbol: pos.symbol,
             action: exitType,
@@ -2507,11 +2557,26 @@ TP distance: ${tpDistancePct}%`;
       ? (typeof reasoningContent === 'string' ? reasoningContent.slice(0, 500) : JSON.stringify(reasoningContent).slice(0, 500))
       : undefined;
 
-    console.log(`[AI] ${signal.symbol}: ${result.approve ? 'APPROVED' : 'REJECTED'} (${result.confidence}%) [${modelId}, ${reasoningTokens} thinking tokens] - ${result.reasoning}`);
+    // MUTATION 2026-03-25: Override Grok's approval when contradictions are severe.
+    // Grok rubber-stamps everything — if it lists 3+ contradictions but still
+    // approves, we override to reject. Also reject if confidence < 60.
+    let finalApprove = result.approve;
+    const contradictions: string[] = result.contradictions ?? [];
+    const aiConf = result.confidence ?? 50;
+    if (finalApprove && contradictions.length >= 3) {
+      finalApprove = false;
+      console.log(`[AI-OVERRIDE] ${signal.symbol}: Grok approved but ${contradictions.length} contradictions → REJECTED`);
+    }
+    if (finalApprove && aiConf < 60) {
+      finalApprove = false;
+      console.log(`[AI-OVERRIDE] ${signal.symbol}: Grok approved but confidence ${aiConf}% < 60% → REJECTED`);
+    }
+
+    console.log(`[AI] ${signal.symbol}: ${finalApprove ? 'APPROVED' : 'REJECTED'} (${aiConf}%) [${modelId}, ${reasoningTokens} thinking tokens] - ${result.reasoning}`);
 
     return {
-      approved: result.approve,
-      aiConfidence: (result.confidence || 50) / 100,
+      approved: finalApprove,
+      aiConfidence: (aiConf || 50) / 100,
       reasoning: result.reasoning || 'No reasoning',
       thinkingSummary,
       adjustedSL: result.sl || undefined,
@@ -2532,6 +2597,179 @@ TP distance: ${tpDistancePct}%`;
     // On AI failure, reject (fail-closed) — don't trade without validation
     return { approved: false, aiConfidence: 0, reasoning: `AI error (fail-closed): ${msg}` };
   }
+}
+
+// ============================================================================
+// CLAUDE AI VALIDATION — Anthropic SDK (stricter than Grok)
+// ============================================================================
+
+async function getClaudeValidation(signal: Signal): Promise<AIValidation> {
+  const claude = getAnthropicClient();
+  if (!claude) {
+    console.warn('[CLAUDE-VAL] No ANTHROPIC_API_KEY — falling back to Grok');
+    return getAIValidation(signal); // Fall back to Grok
+  }
+
+  try {
+    const ex = getExchange();
+    const ticker = await ex.fetchTicker(signal.symbol);
+
+    // Fetch sentiment + calibration context (same as Grok path)
+    const baseAsset = signal.symbol.split('/')[0];
+    const sentimentKey = `sentiment:${baseAsset}`;
+    const [sentimentRaw, sentimentAlert, sentimentContextRaw, evData] = await Promise.all([
+      redis.get(sentimentKey),
+      redis.get(`sentiment:alert:${baseAsset}`),
+      redis.get(`sentiment:context:${baseAsset}`),
+      getPatternCalibration(),
+    ]);
+    const sentimentScore = parseInt(sentimentRaw || '0');
+    let sentimentLabel = 'Neutral';
+    if (sentimentScore > 0) sentimentLabel = 'Positive';
+    if (sentimentScore < 0) sentimentLabel = 'Negative';
+    if (sentimentScore >= 2) sentimentLabel = 'Bullish';
+    if (sentimentScore <= -2) sentimentLabel = 'Bearish';
+
+    let xNarrative = '';
+    try {
+      if (sentimentContextRaw) {
+        const ctx = JSON.parse(sentimentContextRaw as string);
+        xNarrative = ctx.narrative || '';
+      }
+    } catch { /* ignore parse errors */ }
+
+    const evResult = await calculateExpectedValue(signal, evData);
+    const evCtx = evResult
+      ? `EV: $${evResult.ev.toFixed(4)} (${evResult.winRate}% win rate, ${evResult.sampleSize} trades)`
+      : 'EV: insufficient data';
+    const alertCtx = sentimentAlert ? ` | ALERT: ${sentimentAlert}` : '';
+
+    // Portfolio context
+    const [totalCapital, openPositions] = await Promise.all([
+      getTotalCapital(),
+      getOpenPositions(),
+    ]);
+    const positionValue = openPositions.reduce((sum, p) => sum + (p.entryPrice * p.quantity), 0);
+    const availableCash = Math.max(0, totalCapital - positionValue);
+    const positionList = openPositions.map(p =>
+      `${p.symbol} $${(p.entryPrice * p.quantity).toFixed(2)}`
+    ).join(', ') || 'none';
+
+    const slDiff = signal.entry_price - signal.stop_loss;
+    const rr = signal.stop_loss > 0 && Math.abs(slDiff) > 0.0000001
+      ? ((signal.target_price - signal.entry_price) / slDiff).toFixed(2)
+      : 'N/A';
+
+    const tpDistancePct = signal.entry_price > 0
+      ? ((signal.target_price - signal.entry_price) / signal.entry_price * 100).toFixed(1)
+      : '?';
+
+    // Classify signal type
+    const valuePatterns: string[] = TOML?.patterns?.value_patterns ?? ['DIP_BUY', 'DEEP_VALUE_CRASH', 'BOLLINGER_SQUEEZE'];
+    const isDeepValue = signal.is_deep_value || signal.patterns?.includes('DEEP_VALUE_CRASH');
+    const isDipBuy = signal.patterns?.some((p: string) => valuePatterns.includes(p) && p !== 'DEEP_VALUE_CRASH');
+
+    const signalType = isDeepValue ? 'CRASH_BUY' : isDipBuy ? 'DIP_BUY' : 'TECHNICAL';
+
+    const systemPrompt = `You are a STRICT crypto trade validator for an autonomous trading system. Your job is to REJECT bad trades. You are the last line of defense before real money is spent.
+
+CRITICAL RULES:
+- You MUST reject signals where risk/reward is poor (R:R < 1.5)
+- You MUST reject if the pattern doesn't match market conditions
+- You MUST reject if entry timing is bad (price already moved past entry)
+- You MUST reject if there are red flags (hack alerts, delistings, extreme sentiment)
+- You SHOULD reject marginal setups — only approve HIGH CONVICTION trades
+- A confidence of 50 means "coin flip" — that is NOT good enough to risk real money
+- Be skeptical by default. The system over-generates signals. Your job is to filter.
+
+Strategy mode: ${TOML?.patterns?.dip_focus_mode ? 'Smart Dip Hunter (mean-reversion focus)' : 'All patterns'}
+
+Respond with ONLY a JSON object, no markdown, no explanation outside JSON:
+{"approve": boolean, "confidence": 0-100, "reasoning": "one sentence why", "risk_level": "LOW"|"MEDIUM"|"HIGH", "contradictions": ["reasons NOT to trade"], "invalidation_criteria": ["exit triggers"], "sl": number|null, "tp": number|null, "estimated_minutes_to_target": number, "stagnation_threshold_hours": number}`;
+
+    const userPrompt = `VALIDATE THIS ${signalType} SIGNAL:
+
+Symbol: ${signal.symbol}
+Action: ${signal.action}
+Patterns: ${signal.patterns?.join(' + ') || 'none'}
+TA Confidence: ${(signal.confidence * 100).toFixed(0)}%
+
+Entry: $${signal.entry_price.toFixed(4)}
+Stop Loss: $${signal.stop_loss.toFixed(4)}
+Take Profit: $${signal.target_price.toFixed(4)}
+TP Distance: ${tpDistancePct}%
+Risk:Reward: ${rr}
+
+Current Price: $${ticker.last?.toFixed(4) || 'unknown'}
+24h Change: ${ticker.percentage?.toFixed(1) || '?'}%
+24h Volume: $${ticker.quoteVolume?.toFixed(0) || '?'}
+
+Sentiment: ${sentimentLabel} (score: ${sentimentScore})${alertCtx}
+${xNarrative ? `X/Twitter: ${xNarrative}` : ''}
+${evCtx}
+
+Portfolio: $${totalCapital.toFixed(2)} total, $${availableCash.toFixed(2)} cash
+Open positions: ${positionList}
+${isDeepValue ? `Drawdown: ${signal.indicators?.drawdown_pct}% from $${signal.indicators?.recent_high}` : ''}`;
+
+    const response = await claude.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+
+    const content = response.content[0]?.type === 'text' ? response.content[0].text : '';
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.error('[CLAUDE-VAL] Failed to parse JSON response — rejecting (fail-closed)');
+      return { approved: false, aiConfidence: 0, reasoning: 'Claude parse failed - rejecting (fail-closed)' };
+    }
+
+    const result = JSON.parse(jsonMatch[0]);
+
+    console.log(`[CLAUDE-VAL] ${signal.symbol}: ${result.approve ? 'APPROVED' : 'REJECTED'} (${result.confidence}%) risk=${result.risk_level} - ${result.reasoning}`);
+
+    return {
+      approved: result.approve === true,
+      aiConfidence: (result.confidence || 50) / 100,
+      reasoning: result.reasoning || 'No reasoning',
+      adjustedSL: result.sl || undefined,
+      adjustedTP: result.tp || undefined,
+      estimatedMinutesToTarget: result.estimated_minutes_to_target || undefined,
+      stagnationThresholdHours: result.stagnation_threshold_hours || undefined,
+      usage: {
+        prompt_tokens: response.usage?.input_tokens || 0,
+        completion_tokens: response.usage?.output_tokens || 0,
+        reasoning_tokens: 0,
+        total_tokens: (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0),
+        model: response.model,
+      },
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[CLAUDE-VAL] Validation error: ${msg} — falling back to Grok`);
+    // Fall back to Grok on Claude failure
+    try {
+      return await getAIValidation(signal);
+    } catch (grokError) {
+      // Both failed — fail-closed
+      const grokMsg = grokError instanceof Error ? grokError.message : String(grokError);
+      return { approved: false, aiConfidence: 0, reasoning: `Both Claude and Grok failed (fail-closed): Claude: ${msg}, Grok: ${grokMsg}` };
+    }
+  }
+}
+
+/**
+ * Dispatcher: routes to Claude or Grok based on config.
+ * Config priority: env var AI_VALIDATOR > TOML [ai].ai_validator > default "grok"
+ */
+async function getAIValidationDispatch(signal: Signal): Promise<AIValidation> {
+  const validator = getActiveValidator();
+  if (validator === 'claude') {
+    return getClaudeValidation(signal);
+  }
+  return getAIValidation(signal);
 }
 
 // ============================================================================
@@ -4081,7 +4319,7 @@ export async function POST() {
           reasoning: `Fast-tracked: ${(signal.confidence * 100).toFixed(0)}% confidence with ${signal.patterns?.join('+')}`,
         };
       } else {
-        aiResult = await getAIValidation(signal);
+        aiResult = await getAIValidationDispatch(signal);
       }
 
       // STEP 3c: Claude Shadow Validation (A/B test — fire-and-forget, never blocks)
@@ -4140,7 +4378,7 @@ export async function POST() {
           riskLevel,
           approved: aiResult.approved,
           reasoning: aiResult.reasoning,
-          agentId: 'grok-validator',
+          agentId: getActiveValidator() === 'claude' ? 'claude-validator' : 'grok-validator',
           usage: {
             ...aiResult.usage,
             thinkingSummary: aiResult.thinkingSummary,
@@ -4742,6 +4980,23 @@ export async function POST() {
         } catch (err) {
           console.error('[SYNC] Failed to mark signal executed:', err);
         }
+
+        // Broadcast BUY to signal bus for cross-agent awareness
+        try {
+          await signalBus.publish({
+            type: 'BUY',
+            symbol: signal.symbol,
+            confidence: signal.confidence,
+            pattern: signal.patterns?.join(','),
+            reasoning: signal.reason,
+            metadata: {
+              orderId: execution.orderId,
+              price: execution.executedPrice,
+              quantity: execution.quantity,
+              configVersion: getConfigVersion(),
+            },
+          });
+        } catch { /* non-critical */ }
 
         executed++;
         buyResults.push({

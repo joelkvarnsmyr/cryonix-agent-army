@@ -712,10 +712,16 @@ alert_keywords = [
 # and trade based on TA confidence alone. NOT recommended.
 enabled = true
 
-# Which GROK model to use.
+# Which AI validator to use for signal validation.
+#   "grok"   — Grok (xAI) with live X search + contradiction-based override
+#   "claude"  — Claude Haiku (Anthropic) via ANTHROPIC_API_KEY (requires key)
+# MUTATION 2026-03-25: Stay on Grok (has live X search, no extra API key needed).
+# Added contradiction override: 3+ contradictions = auto-reject even if Grok approves.
+ai_validator = "grok"
+
+# Which GROK model to use (when ai_validator = "grok").
 #   "grok-4-1-fast-reasoning" — Best: 2M context, reasoning mode, $0.20/$0.50/1M tokens
 #   "grok-4-1-fast-non-reasoning" — Same model without thinking (faster, no reasoning tokens)
-#   "grok-4-1-fast-non-reasoning" — Same model without thinking (faster, cheaper for simple tasks)
 # Reasoning mode enables multi-step thinking before answering.
 # reasoning_effort controls depth: "low" (fast), "high" (thorough).
 model = "grok-4-1-fast-reasoning"
