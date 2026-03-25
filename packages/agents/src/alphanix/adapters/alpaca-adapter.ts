@@ -30,10 +30,16 @@ export class AlpacaAdapter implements MarketAdapter {
   async connect(): Promise<void> {
     try {
       const Alpaca = (await import('@alpacahq/alpaca-trade-api')).default;
+      // Use paper-specific keys when in paper mode (different from live keys)
+      const isPaper = this.options.paper;
       this.client = new Alpaca({
-        keyId: this.options.apiKey || process.env.ALPACA_API_KEY,
-        secretKey: this.options.apiSecret || process.env.ALPACA_API_SECRET,
-        paper: this.options.paper,
+        keyId: this.options.apiKey
+          || (isPaper ? process.env.ALPACA_PAPER_API_KEY : null)
+          || process.env.ALPACA_API_KEY,
+        secretKey: this.options.apiSecret
+          || (isPaper ? process.env.ALPACA_PAPER_API_SECRET : null)
+          || process.env.ALPACA_API_SECRET,
+        paper: isPaper,
       });
       // Test connection — will throw if keys are invalid
       await this.client.getAccount();
