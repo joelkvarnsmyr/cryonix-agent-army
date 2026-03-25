@@ -230,6 +230,9 @@ export class HuntrixAgent {
         // Persist all signals to Postgres for future backtesting
         await this.persistSignals(signals);
 
+        // Write blacklist keys so auto-trade pipeline blocks flagged tokens
+        await this.writeBlacklistKeys(signals);
+
         // Start tracking detected pumps for profiling
         for (const signal of signals) {
             this.pumpProfiler.startTracking(signal);
@@ -666,6 +669,46 @@ export class HuntrixAgent {
             ]);
         } catch (err) {
             console.error('[HUNTRIX] Failed to save state:', err instanceof Error ? err.message : err);
+        }
+    }
+
+    /**
+     * Write huntrix:blacklist:{SYMBOL} keys for each confirmed manipulation signal.
+     * Auto-trade pipeline reads these keys to block flagged tokens.
+     * TTL: 1 hour — tokens auto-unblock if not re-detected.
+     */
+    private async writeBlacklistKeys(signals: ManipulationSignal[]): Promise<void> {
+        if (signals.length === 0) return;
+
+        const BLACKLIST_TTL = 3600; // 1 hour
+        const pipeline = this.redis.pipeline();
+        const entries: Array<{ symbol: string; reason: string }> = [];
+
+        for (const signal of signals) {
+            const key = `huntrix:blacklist:${signal.symbol}`;
+            const reason = `${signal.type} detected: ${signal.total_shill_accounts} shill accounts, ${signal.confidence}% confidence (${signal.source})`;
+            const value = JSON.stringify({
+                reason,
+                type: signal.type,
+                source: signal.source,
+                confidence: signal.confidence,
+                phase: signal.phase,
+                added_at: new Date().toISOString(),
+            });
+            pipeline.setex(key, BLACKLIST_TTL, value);
+            entries.push({ symbol: signal.symbol, reason });
+            console.log(`[HUNTRIX] Blacklisted ${signal.symbol} — ${signal.type} (${signal.confidence}% conf, TTL ${BLACKLIST_TTL}s)`);
+        }
+
+        // Also write recent blacklist summary for Telegram alert in tick()
+        if (entries.length > 0) {
+            pipeline.setex('huntrix:blacklist:recent', 3600, JSON.stringify(entries));
+        }
+
+        try {
+            await pipeline.exec();
+        } catch (err) {
+            console.error('[HUNTRIX] Failed to write blacklist keys:', err instanceof Error ? err.message : err);
         }
     }
 
