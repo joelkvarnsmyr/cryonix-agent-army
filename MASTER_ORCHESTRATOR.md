@@ -202,6 +202,11 @@ Kontrollera:
 - [ ] Inga stuck positions (>48h)
 - [ ] Inga circuit breakers aktiva
 
+**Ställ dig:**
+- Har något crashat sedan förra cykeln?
+- Fungerar SL/TP/stagnation-exits? (kolla om positions >72h finns)
+- Har vi backups av kritisk data? (Postgres backup ålder)
+
 **Om kritiskt:** Telegram-alert omedelbart, stoppa vidare faser.
 
 **SSH-felhantering:** Om SSH misslyckas i VILKEN fas som helst:
@@ -257,6 +262,12 @@ ssh azureuser@openclaw-vm "docker exec cryonix-redis-1 redis-cli GET cmc:fear_gr
 ssh azureuser@openclaw-vm "docker exec cryonix-redis-1 redis-cli GET market:regime"
 ssh azureuser@openclaw-vm "docker exec cryonix-redis-1 redis-cli KEYS 'calibration:*'"
 ```
+
+**Ställ dig efter datainsamling:**
+- Har vi förlorat mer än vi tjänat senaste 24h? Exakt hur mycket?
+- Vilka signaler avvisade vi som HAD blivit vinnare? (missed alpha)
+- Ligger kapital och sover? (idle cash ratio)
+- Är calibration aktuell eller stale?
 
 ### FAS 3 — PARALLEL AGENT AUDIT (15 min)
 
@@ -317,6 +328,13 @@ Läs alla audit-filer. Analysera:
 Rangordna. **Bara live-agenter** med negativ ROI >7 dagar → rekommendera paus (GRÖN åtgärd).
 Paper-agenter med negativ PnL → mutera TOML-params för att förbättra, aldrig pausa.
 
+**Ställ dig:**
+- Handlar 2+ agenter samma symbol? (dubbelrisk)
+- Förlorar alla agenter samtidigt? (systemiskt → marknaden, inte agenten)
+- Stänger vi vinnare för tidigt? (jämför avg holding: wins vs losses)
+- Kan vi allokera MER kapital till toppagenten?
+- Finns det agents som gör exakt samma sak? (redundans)
+
 ### FAS 5 — MUTATION (10 min)
 
 Baserat på Fas 4, genomför åtgärder:
@@ -341,6 +359,11 @@ Regler:
 - Git commit med `[Master-Orchestrator] {beskrivning}`
 - Kör `pnpm type-check` efter ändring
 - Fail-closed: vid tveksamhet, gör ingenting
+
+**Ställ dig innan mutation:**
+- Vad EXAKT ändrar jag, och vad är det förväntade resultatet?
+- Har evolution/brain redan gjort en liknande ändring nyligen?
+- Har jag backupen? Kan jag rulla tillbaka?
 
 **Inga mutationer om:**
 - Baseline freeze aktiv (`[baseline] frozen = true` i cryonix.toml)
@@ -376,6 +399,11 @@ Regler:
 ## Nästa cykel
 - Förväntat: ...
 ```
+
+**Ställ dig innan rapport:**
+- Vad har jag GJORT denna cykel? (inte bara analyserat)
+- Finns det GRÖNA åtgärder jag identifierade men INTE utförde? (anti-passivitet check)
+- Har jag skickat alla nödvändiga GUL/RÖD Telegram-förfrågningar?
 
 **Telegram-sammanfattning** (till `@cryptoOrchestrator_bot`):
 ```
@@ -585,3 +613,4 @@ curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_ORCHESTRATOR_BOT_TOKEN}/
 | `scripts/evolution/copilot-evolution.mjs` | Evolution engine |
 | `packages/agents/src/*/` | Alla agent-moduler |
 | `cryonix.toml` | Core config (67KB) |
+| `docs/SYSTEM-QUESTIONS.md` | Frågor systemet ska ställa sig (3 nivåer) |
