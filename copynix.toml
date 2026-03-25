@@ -171,12 +171,13 @@ max_position_pct = 0.30
 min_token_age_hours = 4
 
 [safety]
-# DATA COLLECTION MODE: Very relaxed — paper trading, want data including risky tokens
-# Keep honeypot checks (freeze/mint authority) but drop age/liquidity/holders
-min_token_age_hours = 0.5
-min_liquidity_usd = 1000
-min_holders = 10
-# Disable freeze authority block — some legit tokens have it early
+# DATA COLLECTION MODE: ALL GATES OPEN — paper trading, pure data collection.
+# These wallets are launch snipers — they buy tokens at 0h age, $0 liquidity.
+# We need to track outcomes to learn which snipers are profitable.
+# Revert to strict values when switching to live trading.
+min_token_age_hours = 0
+min_liquidity_usd = 0
+min_holders = 0
 block_freeze_authority = false
 max_fdv_liquidity_ratio = 50
 min_lp_burnt_pct = 0
