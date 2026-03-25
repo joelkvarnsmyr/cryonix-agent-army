@@ -2,6 +2,13 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# Guard: exit silently if Telegram not configured
+if [ -z "${TELEGRAM_ORCHESTRATOR_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_ORCHESTRATOR_CHAT_ID:-}" ]; then
+  echo "WARNING: Telegram env vars not set — watchdog disabled"
+  exit 0
+fi
+
 source "${PROJECT_ROOT}/scripts/orchestrator/telegram.sh"
 
 REPORT_BASE="${PROJECT_ROOT}/reports/master-orchestrator"

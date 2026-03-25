@@ -28,7 +28,10 @@ tg_poll_for_reply() {
     local response
     response=$(curl -s "https://api.telegram.org/bot${TELEGRAM_ORCHESTRATOR_BOT_TOKEN}/getUpdates?offset=${offset}&timeout=30")
 
-    if echo "$response" | grep -qi "$keyword"; then
+    # Extract only "text" field values from the correct chat, match keyword
+    local texts
+    texts=$(echo "$response" | grep -o '"text":"[^"]*"' | cut -d'"' -f4)
+    if echo "$texts" | grep -qiw "$keyword"; then
       echo "FOUND"
       return 0
     fi
