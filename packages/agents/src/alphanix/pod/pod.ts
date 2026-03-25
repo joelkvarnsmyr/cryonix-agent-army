@@ -44,13 +44,7 @@ export class Pod {
       minConfidence: 25,
     });
     this.execution = new ExecutionAgent(config.id);
-    this.exitMonitor = new ExitMonitor({
-      takeProfitPct: 5.0,
-      stopLossPct: 3.0,
-      trailingStopActivation: 2.0,
-      trailingStopDistance: 1.0,
-      stagnationHours: 48,
-    });
+    this.exitMonitor = new ExitMonitor(this.getExitConfig(adapter, config.id));
     this.positionTracker = new PositionTracker();
   }
 
@@ -160,6 +154,16 @@ export class Pod {
               const execResult = await this.execution.execute(sized, decision, this.adapter);
               if (execResult.orderId) {
                 result.executed++;
+
+                // Guard: reject tracking positions with $0 entry price (would break PnL calc)
+                if (execResult.fillPrice <= 0) {
+                  console.error(`[Pod:${this.config.id}] BUG: fillPrice=${execResult.fillPrice} for ${symbol} (orderId=${execResult.orderId}) — skipping position tracking`);
+                  result.errors.push(`fillPrice=0 for ${symbol}, position not tracked`);
+                  continue;
+                }
+
+                console.log(`[Pod:${this.config.id}] OPEN ${symbol}: qty=${execResult.fillQty} avgEntryPrice=$${execResult.fillPrice} adapter=${this.adapter.id}`);
+
                 this.positionTracker.open({
                   symbol,
                   qty: execResult.fillQty,
@@ -319,6 +323,41 @@ export class Pod {
       'value_momentum': ['rsi', 'macd', 'bollinger', 'volume'],
     };
     return strategies[strategy] || ['rsi', 'volume', 'macd', 'bollinger', 'ema', 'deep_value', 'dip'];
+  }
+
+  /** Asset-class-aware exit thresholds.
+   *  Nordic large-caps (2-5% daily vol) need wider SL/TP than crypto. */
+  private getExitConfig(adapter: MarketAdapter, podId: string): ExitConfig {
+    const id = podId.toLowerCase();
+    const isNordic = id.includes('nordic') || adapter.id.toLowerCase().includes('ibkr');
+    const isUsStock = adapter.assetClass === 'stock' && !isNordic;
+
+    if (isNordic) {
+      return {
+        takeProfitPct: 8.0,
+        stopLossPct: 5.0,
+        trailingStopActivation: 4.0,
+        trailingStopDistance: 3.0,
+        stagnationHours: 120,
+      };
+    }
+    if (isUsStock) {
+      return {
+        takeProfitPct: 6.0,
+        stopLossPct: 4.0,
+        trailingStopActivation: 3.0,
+        trailingStopDistance: 2.0,
+        stagnationHours: 72,
+      };
+    }
+    // Crypto (default)
+    return {
+      takeProfitPct: 5.0,
+      stopLossPct: 3.0,
+      trailingStopActivation: 2.0,
+      trailingStopDistance: 1.0,
+      stagnationHours: 48,
+    };
   }
 
   async stop(): Promise<void> {

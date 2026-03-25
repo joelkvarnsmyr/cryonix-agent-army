@@ -145,7 +145,7 @@ export class AlpacaAdapter implements MarketAdapter {
 
     const client = this.requireClient();
     try {
-      const result = await client.createOrder({
+      let result = await client.createOrder({
         symbol: order.symbol,
         qty: order.qty,
         side: order.side.toLowerCase(),
@@ -153,12 +153,33 @@ export class AlpacaAdapter implements MarketAdapter {
         time_in_force: 'day',
         ...(order.limitPrice ? { limit_price: order.limitPrice } : {}),
       });
+
+      // Alpaca market orders may return status=new/accepted before fill.
+      // Poll up to 5 times (2.5s total) to get the fill price.
+      let attempts = 0;
+      while (
+        (!result.filled_avg_price || result.filled_avg_price === '0') &&
+        result.status !== 'filled' &&
+        result.status !== 'canceled' &&
+        result.status !== 'expired' &&
+        attempts < 5
+      ) {
+        await new Promise(r => setTimeout(r, 500));
+        result = await client.getOrder(result.id);
+        attempts++;
+      }
+
+      const filledAvgPrice = parseFloat(result.filled_avg_price || '0');
+      if (filledAvgPrice === 0 && result.id) {
+        console.warn(`[AlpacaAdapter] Order ${result.id} for ${order.symbol} has filled_avg_price=0 after ${attempts} poll attempts (status=${result.status})`);
+      }
+
       return {
         success: true,
         orderId: result.id,
         status: result.status,
         filledQty: parseFloat(result.filled_qty || '0'),
-        filledAvgPrice: parseFloat(result.filled_avg_price || '0'),
+        filledAvgPrice,
       };
     } catch (err: any) {
       return { success: false, message: err.message };

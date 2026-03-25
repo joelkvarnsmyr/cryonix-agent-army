@@ -26,7 +26,7 @@ export class ExecutionAgent {
       timestamp: Date.now(),
     };
 
-    if (decision.action !== 'approve') return emptyResult;
+    if (decision.action !== 'approve' && decision.action !== 'reduce') return emptyResult;
 
     // Spread check
     try {
@@ -55,14 +55,23 @@ export class ExecutionAgent {
       qty: sizing.qty,
     });
 
+    const fillPrice = result.filledAvgPrice || 0;
+    const fillQty = result.filledQty || 0;
+
+    if (fillPrice === 0 && result.orderId) {
+      console.warn(
+        `[ExecutionAgent:${this.podId}] fillPrice=0 for ${proposal.symbol} (orderId=${result.orderId}). Adapter returned filledAvgPrice=${result.filledAvgPrice}`,
+      );
+    }
+
     return {
       proposalId: proposal.id,
       orderId: result.orderId || '',
       adapter: proposal.adapter,
-      fillPrice: result.filledAvgPrice || 0,
-      fillQty: result.filledQty || 0,
+      fillPrice,
+      fillQty,
       slippage: 0,
-      fees: (result.filledAvgPrice || 0) * (result.filledQty || 0) * 0.001,
+      fees: fillPrice * fillQty * 0.001,
       timestamp: Date.now(),
     };
   }

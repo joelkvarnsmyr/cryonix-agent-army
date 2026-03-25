@@ -25,6 +25,12 @@ const CHECK_INTERVAL_MS = 60_000;    // check every 60s
 let isRunning = false;
 let redis: Redis;
 
+/** Safely parse JSON from Redis — returns raw string if not valid JSON */
+function safeParse<T = any>(raw: string | null): T | null {
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return raw as unknown as T; }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
     console.log('[alphanix-brain] Starting AlphanixBrain...');
@@ -77,8 +83,8 @@ async function shouldRun(): Promise<string | null> {
     // Acute trigger: high global drawdown or multiple pod failures
     const orchRaw = await redis.get('alphanix:orchestrator:state').catch(() => null);
     if (orchRaw) {
-        try {
-            const orch = JSON.parse(orchRaw);
+        const orch = safeParse(orchRaw);
+        if (orch && typeof orch === 'object') {
             const pods = orch.pods || {};
             const failedPods = Object.values(pods).filter((p: any) => p.status === 'error' || p.status === 'stopped');
             if (failedPods.length >= 2) return `acute: ${failedPods.length} pods in error/stopped state`;
@@ -87,7 +93,7 @@ async function shouldRun(): Promise<string | null> {
             if (orch.globalDrawdownPct && orch.globalDrawdownPct > 4.0) {
                 return `acute: global drawdown ${orch.globalDrawdownPct.toFixed(1)}% exceeds 4%`;
             }
-        } catch { /* ignore parse errors */ }
+        }
     }
 
     return null;
@@ -108,7 +114,7 @@ async function collectData(): Promise<BrainData> {
 
     // Orchestrator state
     const orchRaw = await redis.get('alphanix:orchestrator:state').catch(() => null);
-    const orchestratorState = orchRaw ? JSON.parse(orchRaw) : null;
+    const orchestratorState = safeParse(orchRaw);
 
     // Pod states
     const podStates: Record<string, any> = {};
@@ -120,9 +126,9 @@ async function collectData(): Promise<BrainData> {
                 redis.get(`alphanix:pod:${podId}:performance`).catch(() => null),
             ]);
             podStates[podId] = {
-                state: state ? JSON.parse(state) : null,
-                risk: risk ? JSON.parse(risk) : null,
-                performance: perf ? JSON.parse(perf) : null,
+                state: safeParse(state),
+                risk: safeParse(risk),
+                performance: safeParse(perf),
             };
         }
     }
@@ -131,10 +137,12 @@ async function collectData(): Promise<BrainData> {
     const prevRunRaw = await redis.get('alphanix:brain:last_run').catch(() => null);
     let previousRun: string | null = null;
     if (prevRunRaw) {
-        try {
-            const prev = JSON.parse(prevRunRaw);
+        const prev = safeParse(prevRunRaw);
+        if (prev && typeof prev === 'object' && prev.timestamp) {
             previousRun = `[${prev.timestamp}] ${prev.analysis} Actions: ${(prev.actions ?? []).join(', ')}`;
-        } catch { /* ignore */ }
+        } else if (typeof prev === 'string') {
+            previousRun = prev;
+        }
     }
 
     // Current config from TOML

@@ -33,12 +33,21 @@ export class PositionTracker {
   }
 
   getAll(): TrackedPositionWithPnl[] {
-    return Array.from(this.positions.values()).map(p => ({
+    const result = Array.from(this.positions.values()).map(p => ({
       ...p,
       holdingHours: (Date.now() - p.openedAt) / (1000 * 60 * 60),
       dailyPnlPct: p.unrealizedPnlPct,
       openedAt: new Date(p.openedAt).toISOString(),
     }));
+
+    // Debug: confirm avgEntryPrice is preserved through serialization
+    for (const pos of result) {
+      if (!pos.avgEntryPrice || pos.avgEntryPrice <= 0) {
+        console.error(`[PositionTracker] BUG: ${pos.symbol} has avgEntryPrice=${pos.avgEntryPrice} — PnL will be broken`);
+      }
+    }
+
+    return result;
   }
 
   getByAdapter(adapter: string): TrackedPositionWithPnl[] {

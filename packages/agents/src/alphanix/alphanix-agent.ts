@@ -13,6 +13,7 @@ import { AlphanixDB } from './data/postgres';
 import { ScheduleManager } from './orchestrator/schedule-manager';
 import { SwarmSpawner } from './swarms/swarm-spawner';
 import { registerAllWorkers } from './swarms/workers/index';
+import type { SwarmRequest, SwarmResult } from './swarms/types';
 
 export class AlphanixAgent extends BaseAgent {
   private toml!: AlphanixTomlConfig;
@@ -118,9 +119,8 @@ export class AlphanixAgent extends BaseAgent {
     });
 
     this.scheduler.on('macro_scan', async () => {
-        if (!this.swarmSpawner) return;
-        this.log('info', '=== MACRO SCAN ===');
-        const result = await this.swarmSpawner.spawn({
+        this.log('info', '=== MACRO SCAN (scheduled) ===');
+        await this.spawnAndPublish({
             id: `macro-${Date.now()}`,
             type: 'macro',
             requester: { podId: 'orchestrator', role: 'scheduler' },
@@ -130,10 +130,25 @@ export class AlphanixAgent extends BaseAgent {
             maxDuration: 60000,
             priority: 'normal',
         });
-        this.log('info', `Macro scan: ${result.status}`, { workers: result.workersUsed, duration: result.durationMs });
     });
 
     this.log('info', `Alphanix initialized: ${this.pods.size} pod(s)`);
+  }
+
+  /** Spawn a swarm worker and publish results to Redis */
+  private async spawnAndPublish(request: SwarmRequest): Promise<SwarmResult | null> {
+    if (!this.swarmSpawner) return null;
+    try {
+      const result = await this.swarmSpawner.spawn(request);
+      if (result.status === 'completed' && this.publisher) {
+        await this.publisher.publishSwarmResult(request.type, result.data);
+      }
+      this.log('info', `Swarm [${request.type}]: ${result.status} (${result.durationMs}ms, ${result.workersUsed} workers${result.errors.length ? ', errors: ' + result.errors.join('; ') : ''})`);
+      return result;
+    } catch (err: any) {
+      this.log('warn', `Swarm [${request.type}] failed: ${err.message}`);
+      return null;
+    }
   }
 
   async start(): Promise<void> {
@@ -148,7 +163,9 @@ export class AlphanixAgent extends BaseAgent {
 
       this.cycleCount++;
 
-      // Every 5 cycles (~5 min), run sentiment scan
+      // --- Swarm worker scheduling (cycle-based) ---
+
+      // Sentiment: every 5 cycles (~5 min)
       if (this.cycleCount % 5 === 0 && this.swarmSpawner) {
         try {
           const symbols = [...new Set(
@@ -156,7 +173,7 @@ export class AlphanixAgent extends BaseAgent {
           )].slice(0, 10);  // Top 10 unique symbols
 
           if (symbols.length > 0) {
-            const result = await this.swarmSpawner.spawn({
+            const result = await this.spawnAndPublish({
               id: `sentiment-${Date.now()}`,
               type: 'sentiment',
               requester: { podId: 'orchestrator', role: 'scheduler' },
@@ -166,13 +183,93 @@ export class AlphanixAgent extends BaseAgent {
               maxDuration: 30000,
               priority: 'normal',
             });
-            if (result.status === 'completed') {
-              this.log('info', `Sentiment scan: ${JSON.stringify(result.data).slice(0, 200)}`);
+            if (result?.status === 'completed') {
+              // Wire sentiment scores to pod quant agents
+              // result.data is an array of worker outputs; each may contain { scores: { SYMBOL: number } }
+              const scores: Record<string, number> = {};
+              for (const workerData of (result.data as any[] ?? [])) {
+                if (workerData?.scores && typeof workerData.scores === 'object') {
+                  Object.assign(scores, workerData.scores);
+                }
+              }
+              if (Object.keys(scores).length > 0) {
+                for (const [, pod] of this.pods) {
+                  const podSymbols = pod.getSymbols();
+                  const relevant = podSymbols.map(s => scores[s]).filter(v => v !== undefined);
+                  if (relevant.length > 0) {
+                    const avg = relevant.reduce((a, b) => a + b, 0) / relevant.length;
+                    pod.getQuant().setSentimentBoost(avg);
+                  }
+                }
+                this.log('info', `Sentiment wired to ${this.pods.size} pods (${Object.keys(scores).length} symbols)`);
+              }
             }
           }
         } catch (err: any) {
           this.log('warn', `Sentiment scan failed: ${err.message}`);
         }
+      }
+
+      // News: every 10 cycles (~10 min)
+      if (this.cycleCount % 10 === 0 && this.swarmSpawner) {
+        await this.spawnAndPublish({
+          id: `news-${Date.now()}`,
+          type: 'news',
+          requester: { podId: 'orchestrator', role: 'scheduler' },
+          task: 'Periodic news + geopolitical signal scan',
+          params: { query: 'crypto market fed rate' },
+          workerCount: 1,
+          maxDuration: 30000,
+          priority: 'normal',
+        });
+      }
+
+      // OSINT: every 15 cycles (~15 min)
+      if (this.cycleCount % 15 === 0 && this.swarmSpawner) {
+        const firstSymbol = Array.from(this.pods.values())[0]?.getSymbols()[0] || 'AAPL';
+        await this.spawnAndPublish({
+          id: `osint-${Date.now()}`,
+          type: 'osint',
+          requester: { podId: 'orchestrator', role: 'scheduler' },
+          task: 'Periodic OSINT scan (filings + sentiment)',
+          params: { symbol: firstSymbol },
+          workerCount: 1,
+          maxDuration: 60000,
+          priority: 'low',
+        });
+      }
+
+      // Altdata: every 20 cycles (~20 min)
+      if (this.cycleCount % 20 === 0 && this.swarmSpawner) {
+        await this.spawnAndPublish({
+          id: `altdata-${Date.now()}`,
+          type: 'altdata',
+          requester: { podId: 'orchestrator', role: 'scheduler' },
+          task: 'Periodic alt-data scan (flights + rail)',
+          params: { source: 'all' },
+          workerCount: 1,
+          maxDuration: 60000,
+          priority: 'low',
+        });
+      }
+
+      // Macro: every 30 cycles (~30 min) in addition to the scheduled morning scan
+      if (this.cycleCount % 30 === 0 && this.swarmSpawner) {
+        await this.spawnAndPublish({
+          id: `macro-periodic-${Date.now()}`,
+          type: 'macro',
+          requester: { podId: 'orchestrator', role: 'scheduler' },
+          task: 'Periodic macro data refresh',
+          params: {},
+          workerCount: 1,
+          maxDuration: 60000,
+          priority: 'low',
+        });
+      }
+
+      // Publish swarm active status to Redis every cycle
+      if (this.swarmSpawner && this.publisher) {
+        await this.publisher.publishSwarmActive(this.swarmSpawner.getActiveSwarms());
       }
 
       for (const [id, pod] of this.pods) {

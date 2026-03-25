@@ -38,6 +38,12 @@ export class AlphanixStatePublisher {
   async publishPodPositions(podId: string, positions: NormalizedPosition[]): Promise<void> {
     try {
       await this.ensureConnected();
+      // Debug: log positions with zero entry price before writing to Redis
+      for (const pos of positions) {
+        if (!pos.avgEntryPrice || pos.avgEntryPrice <= 0) {
+          console.error(`[AlphanixState] WARNING: publishing ${pos.symbol} with avgEntryPrice=${pos.avgEntryPrice} to Redis — this will show $0 on dashboard`);
+        }
+      }
       await this.redis.set(`alphanix:pod:${podId}:positions`, JSON.stringify(positions), 'EX', TTL);
     } catch (err) { console.error('[AlphanixState] positions error:', err); }
   }
@@ -61,6 +67,21 @@ export class AlphanixStatePublisher {
       await this.ensureConnected();
       await this.redis.set('alphanix:status', status, 'EX', TTL);
     } catch (err) { console.error('[AlphanixState] status error:', err); }
+  }
+
+  async publishSwarmResult(type: string, data: unknown): Promise<void> {
+    try {
+      await this.ensureConnected();
+      const payload = JSON.stringify({ data, updatedAt: Date.now() });
+      await this.redis.set(`alphanix:swarm:${type}`, payload, 'EX', TTL);
+    } catch (err) { console.error(`[AlphanixState] swarm ${type} error:`, err); }
+  }
+
+  async publishSwarmActive(swarms: Array<{ id: string; type: string; workers: number; runningMs: number }>): Promise<void> {
+    try {
+      await this.ensureConnected();
+      await this.redis.set('alphanix:swarm:active', JSON.stringify(swarms), 'EX', TTL);
+    } catch (err) { console.error('[AlphanixState] swarm active error:', err); }
   }
 
   async disconnect(): Promise<void> {

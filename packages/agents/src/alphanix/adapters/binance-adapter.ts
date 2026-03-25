@@ -146,12 +146,22 @@ export class BinanceAdapter implements MarketAdapter {
         order.qty,
         order.type === 'LIMIT' ? order.limitPrice : undefined,
       );
+      // CCXT: result.average can be null for market orders; fallback to cost/filled or price
+      const filledQty = result.filled ?? 0;
+      let filledAvgPrice = result.average ?? 0;
+      if (!filledAvgPrice && filledQty > 0 && result.cost) {
+        filledAvgPrice = result.cost / filledQty;
+      }
+      if (!filledAvgPrice && result.price) {
+        filledAvgPrice = result.price;
+      }
+
       return {
         success: true,
         orderId: result.id,
         status: result.status,
-        filledQty: result.filled ?? 0,
-        filledAvgPrice: result.average ?? 0,
+        filledQty,
+        filledAvgPrice,
       };
     } catch (err: any) {
       return {
