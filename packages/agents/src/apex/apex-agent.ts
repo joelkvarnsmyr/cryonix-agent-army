@@ -2,10 +2,11 @@ import Redis from 'ioredis';
 import { Client as PgClient } from 'pg';
 import { spawn } from 'child_process';
 import { loadApexConfig, type ApexTomlConfig } from './config';
-import { SignalAggregator, type AggregatorSnapshot } from './signal-aggregator';
+import { SignalAggregator, type AggregatorSnapshot, type NormalizedSignal } from './signal-aggregator';
 import { scoreOpportunities, type ScoredOpportunity } from './confluence-scorer';
 import { RiskGate, type RiskState } from './risk-gate';
 import { ExitMonitor, type ApexPosition } from './exit-monitor';
+import { SignalBus, type BusSignal } from '../shared/signal-bus';
 
 // ---------------------------------------------------------------------------
 // Grok response cache
@@ -42,6 +43,12 @@ export class ApexAgent {
     private claudeValidationRunning = false;
     // Cache last built prompt for A/B reuse
     private lastValidationPrompt: { key: string; prompt: { systemPrompt: string; userPrompt: string } } | null = null;
+
+    // Signal bus — real-time cross-agent signals
+    private signalBus: SignalBus | null = null;
+    private busSignalBuffer: BusSignal[] = [];
+    private readonly BUS_BUFFER_MAX = 50;
+    private readonly BUS_SIGNAL_TTL_MS = 5 * 60 * 1000; // 5min
 
     constructor(private meta: { id: string; name: string }) {}
 
@@ -181,6 +188,26 @@ export class ApexAgent {
             console.warn('[APEX] Grok disabled — all trades will be skipped (fail-closed).');
         }
 
+        // Signal bus — subscribe to real-time cross-agent signals
+        try {
+            this.signalBus = new SignalBus(process.env.KV_URL);
+            await this.signalBus.subscribe((signal: BusSignal) => {
+                // Ignore our own signals
+                if (signal.source === 'apex') return;
+                // Evict stale signals before adding
+                const now = Date.now();
+                this.busSignalBuffer = this.busSignalBuffer.filter(s => now - s.timestamp < this.BUS_SIGNAL_TTL_MS);
+                // Buffer with size cap
+                this.busSignalBuffer.push(signal);
+                if (this.busSignalBuffer.length > this.BUS_BUFFER_MAX) {
+                    this.busSignalBuffer.shift();
+                }
+            });
+            console.log('[APEX] Signal bus connected — receiving real-time cross-agent signals.');
+        } catch (err) {
+            console.warn('[APEX] Signal bus init failed (non-critical, falling back to polling):', err instanceof Error ? err.message : err);
+        }
+
         console.log(`[APEX] Initialized — ${this.meta.name} | mode: ${this.config.general.mode} | capital: $${this.config.general.capital} | scan: ${this.config.general.scan_interval_seconds}s`);
     }
 
@@ -210,6 +237,7 @@ export class ApexAgent {
         } catch (err) {
             console.warn('[APEX] Could not publish final state:', err instanceof Error ? err.message : err);
         }
+        await this.signalBus?.destroy();
         await this.redis?.quit();
         await this.pg?.end();
         console.log('[APEX] Stopped.');
@@ -224,6 +252,10 @@ export class ApexAgent {
     private async tick(): Promise<void> {
         await this.monitorPositions();
         const snapshot = await this.aggregator.snapshot();
+
+        // Inject real-time bus signals into the snapshot
+        this.injectBusSignals(snapshot);
+
         const opportunities = scoreOpportunities(snapshot, this.config);
 
         // Verbose logging every 60 ticks (~30min at 30s interval)
@@ -248,6 +280,46 @@ export class ApexAgent {
         }
 
         await this.publishState(snapshot, opportunities);
+    }
+
+    // -------------------------------------------------------------------------
+    // injectBusSignals — convert buffered pub/sub signals into NormalizedSignals
+    // -------------------------------------------------------------------------
+
+    private injectBusSignals(snapshot: AggregatorSnapshot): void {
+        const now = Date.now();
+        // Evict stale signals
+        this.busSignalBuffer = this.busSignalBuffer.filter(s => now - s.timestamp < this.BUS_SIGNAL_TTL_MS);
+
+        for (const bs of this.busSignalBuffer) {
+            // Map bus signal source to aggregator source
+            const sourceMap: Record<string, NormalizedSignal['source']> = {
+                'cryonix-core': 'cryonix',
+                'aktienix': 'aktienix',
+                'copynix': 'copynix',
+                'psinix': 'psinix',
+                'solanix': 'solanix',
+                'huntrix': 'cryonix', // huntrix signals treated as cryonix variant
+                'polynix': 'cryonix',
+            };
+            const source = sourceMap[bs.source] ?? 'cryonix';
+            const direction = (bs.type === 'BUY') ? 'bullish' as const : 'bearish' as const;
+            if (bs.type === 'ALERT' || bs.type === 'BLACKLIST') continue; // Skip non-directional
+
+            const baseSymbol = bs.symbol.split('/')[0].toUpperCase();
+
+            snapshot.signals.push({
+                symbol: baseSymbol,
+                direction,
+                source,
+                signalType: `bus:${bs.type.toLowerCase()}`,
+                confidence: bs.confidence,
+                score: bs.confidence * 0.8, // Slight discount vs direct reads
+                timestamp: bs.timestamp,
+                temporality: 'momentary',
+                raw: bs,
+            });
+        }
     }
 
     // -------------------------------------------------------------------------

@@ -19,6 +19,9 @@ export * from './executor';
 export * from './utils';
 export * from './aktienix/types';
 export * from './huntrix/types';
+export { SignalBus, SIGNAL_BUS_CHANNEL } from './shared/signal-bus';
+export type { BusSignal, BusSignalSource, BusSignalType } from './shared/signal-bus';
+export { SignalBusWriter } from './shared/signal-bus-writer';
 
 // Agent factory
 export class AgentFactory {
