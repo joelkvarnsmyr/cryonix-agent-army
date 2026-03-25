@@ -14,7 +14,9 @@
       "mcp__plugin_playwright_playwright__browser_console_messages",
       "Skill(code-review:code-review)",
       "mcp__claude_ai_Vercel__web_fetch_vercel_url",
-      "mcp__claude_ai_Crypto_com__get_candlestick"
+      "mcp__claude_ai_Crypto_com__get_candlestick",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "mcp__plugin_playwright_playwright__browser_evaluate"
     ]
   }
 }

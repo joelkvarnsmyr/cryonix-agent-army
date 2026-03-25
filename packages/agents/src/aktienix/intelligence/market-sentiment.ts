@@ -164,9 +164,9 @@ export class MarketSentimentScanner {
         if (Date.now() - this.lastEarningsFetch < 24 * 60 * 60 * 1000) return;
 
         try {
-            // Fetch 14-day window to catch upcoming earnings
+            // Fetch 20-day window to catch pre-earnings momentum zone (up to 15d out)
             const from = new Date().toISOString().split('T')[0];
-            const to = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0];
+            const to = new Date(Date.now() + 20 * 86400000).toISOString().split('T')[0];
             const data = await this.finnhubGet(`/calendar/earnings?from=${from}&to=${to}`);
             if (!data?.earningsCalendar) return;
 
@@ -199,6 +199,48 @@ export class MarketSentimentScanner {
         } catch (err: any) {
             console.warn(`[SENTIMENT] Earnings calendar fetch failed: ${err.message}`);
         }
+    }
+
+    async getEarningsMomentum(symbol: string): Promise<{
+        shouldBuy: boolean;
+        shouldSell: boolean;
+        daysUntil: number;
+        confidence: number;
+        reason: string;
+    }> {
+        try {
+            const raw = await this.publisher.get(`aktienix:earnings:${symbol}`);
+            if (!raw) return { shouldBuy: false, shouldSell: false, daysUntil: -1, confidence: 0, reason: '' };
+            const data = JSON.parse(raw);
+            const daysUntil = data.daysUntil;
+
+            // Pre-earnings momentum zone: 5-15 days before earnings
+            // Research shows stocks drift up as institutions position (+0.58-1.80% per trade)
+            if (daysUntil >= 5 && daysUntil <= 15) {
+                // Stronger signal closer to earnings (more momentum)
+                const strength = daysUntil <= 10 ? 0.10 : 0.06;
+                return {
+                    shouldBuy: true,
+                    shouldSell: false,
+                    daysUntil,
+                    confidence: strength,
+                    reason: `Pre-earnings momentum: ${symbol} reports in ${daysUntil}d (${data.date})`,
+                };
+            }
+
+            // Exit zone: 1-2 days before earnings (take profit before volatility)
+            if (daysUntil >= 0 && daysUntil <= 2) {
+                return {
+                    shouldBuy: false,
+                    shouldSell: true,
+                    daysUntil,
+                    confidence: 0,
+                    reason: `Pre-earnings exit: ${symbol} reports in ${daysUntil}d — sell to avoid earnings gap risk`,
+                };
+            }
+
+            return { shouldBuy: false, shouldSell: false, daysUntil, confidence: 0, reason: '' };
+        } catch { return { shouldBuy: false, shouldSell: false, daysUntil: -1, confidence: 0, reason: '' }; }
     }
 
     async getEarningsGate(symbol: string): Promise<{ blocked: boolean; tightenSL: boolean; reason: string }> {

@@ -1,381 +1,551 @@
-# Cryonix System Architecture
+# 🏗️ Cryonix Agent Army — Fullständig Systemöversikt
 
-## Overview
+## Sammanfattning
 
-Cryonix is a regime-aware AI trading system built as a Turborepo monorepo. It features autonomous trading agents that scan cryptocurrency markets, detect patterns across 8 detectors, validate signals through a multi-stage pipeline (risk gate → capital allocation → EV filter → sentiment → GROK AI), and execute trades on Binance with dynamic capital allocation and comprehensive risk management. State is coordinated through Redis; audit logging via Postgres.
+Cryonix är en **multi-agent autonom handelsplattform** som kör 12+ oberoende trading-agenter, varav varje agent har sitt eget fokusområde (krypto spot, US-aktier, Solana DEX, prediction markets, Polymarket, manipulationsdetektering, etc.). Systemet är byggt som en **monorepo** med `pnpm` workspaces, körs i **Docker** på en Azure VM, och styrs av en central konfigurationsfil (`cryonix.toml`).
 
-## System Flow
+---
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              MARKET DATA LAYER                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   Binance    │  │    CCXT      │  │  Historical  │  │   WebSocket  │     │
-│  │     API      │──│   Adapter    │──│    Data      │──│    Feeds     │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         SIGNAL GENERATION LAYER                              │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                     MARKET SCOUT (market_scout.py)                    │   │
-│  │  • 24/7 scanning        • GainerScanner (MOMENTUM_GAINER)            │   │
-│  │  • Regime detection      • Writes market:regime to Redis             │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                       │                                      │
-│                                       ▼                                      │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                     QUANT GUILD (quant.py) — 8 Pattern Detectors     │   │
-│  │  Bollinger Squeeze │ RSI Extreme │ Volume Spike │ MACD Crossover     │   │
-│  │  EMA 9/21 Cross    │ Dip Buy     │ Deep Value   │ MOMENTUM_GAINER    │   │
-│  │  + Regime classification (volatile / trending / ranging)             │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│         │ SELL signals skipped (spot-only)                                    │
-│         ▼                                                                    │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                     RISK GATE (see cryonix.toml [risk] min_confidence) │   │
-│  │  → Approved signals written to Redis pending queue                    │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          EXECUTION PIPELINE (auto-trade/route.ts)            │
-│                                                                              │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                   CAPITAL ALLOCATOR                                   │   │
-│  │  Pools: see cryonix.toml [capital] signal/grid/reserve_pct           │   │
-│  │  Regime overrides:                                                    │   │
-│  │    volatile  → grid paused, reserve increased                        │   │
-│  │    trending  → more capital to signals                               │   │
-│  │    ranging   → default (grid works well in ranges)                   │   │
-│  │  Tracks per-strategy usage via Redis positions                       │   │
-│  │  Exposed in API response for dashboard                               │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│         │                                                                    │
-│         ▼                                                                    │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │  EV Filter   │→ │  X Sentiment │→ │ GROK AI      │→ │ Spread Check │     │
-│  │ ≥5 trades    │  │ 12 keywords  │  │ Validation   │  │ Max slippage │     │
-│  │ reject -EV   │  │ Redis alert  │  │ (fail-closed)│  │ [exits] cfg  │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
-│                                                                │             │
-│                                                                ▼             │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                          BINANCE EXECUTION                            │   │
-│  │  • Market/Limit BUY order via CCXT                                   │   │
-│  │  • Native STOP_LOSS_LIMIT placed as safety net                       │   │
-│  │  • Position monitor (30s loop: SL / TP / trailing stop)              │   │
-│  │  • Position locking via Redis NX                                     │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              STATE LAYER                                     │
-│  ┌──────────────────────────────┐  ┌────────────────────────────────────┐   │
-│  │         Redis (KV)           │  │         Postgres (Drizzle)         │   │
-│  │  • market:regime    (1h TTL) │  │  • trades        • signals         │   │
-│  │  • positions:open            │  │  • positions     • agent_actions    │   │
-│  │  • risk:portfolio_state (7d) │  │  • portfolio     • backtest_results │   │
-│  │  • calibration:patterns      │  │  • users         • market_data      │   │
-│  │  • sentiment:{SYMBOL} (1h)   │  │                                    │   │
-│  │  • scanner:top_movers        │  │                                    │   │
-│  └──────────────────────────────┘  └────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              PRESENTATION LAYER                              │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                         NEXT.JS DASHBOARD                             │   │
-│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐      │   │
-│  │  │ Portfolio  │  │  Signals   │  │   Trade    │  │   Risk     │      │   │
-│  │  │  Summary   │  │   Panel    │  │   Panel    │  │  Monitor   │      │   │
-│  │  └────────────┘  └────────────┘  └────────────┘  └────────────┘      │   │
-│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐      │   │
-│  │  │ Backtest   │  │ Positions  │  │   Chart    │  │   Agent    │      │   │
-│  │  │  Results   │  │  Manager   │  │   View     │  │   Status   │      │   │
-│  │  └────────────┘  └────────────┘  └────────────┘  └────────────┘      │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │              STRATEGY LAB (read-only analytics layer)                 │   │
-│  │  calibrate.py     │ morning_report.py │ x_sentiment.py               │   │
-│  │  engine_diagnostik.py │ backtest_momentum.py                         │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+## 1. Marknader & Tillgångsklasser
 
-## Component Descriptions
+| Agent | Marknad | Börs/Broker | Handel |
+|-------|---------|-------------|--------|
+| **Cryonix Core** | Krypto Spot/Margin | Binance (CCXT) | Live |
+| **Aktienix** | US-aktier | Alpaca (paper + live) | Paper → Live |
+| **Solanix** | Solana DEX tokens | Helius RPC / Jupiter | Paper |
+| **Copynix** | Solana copy-trading | Helius / Shyft / DexCheck | Paper |
+| **Huntrix** | Krypto manipulation ride | Binance + Bybit + MEXC | Live |
+| **Polynix** | Polymarket binary options | Polymarket API | Paper |
+| **Psinix** | Krypto (Kuramoto phase sync) | Finnhub + Binance | Paper |
+| **Apex** | Meta-confluence (alla agenter) | Binance | Live |
+| **Vedic Trader** | Krypto (astrologi-experiment) | Paper trading | Paper |
+| **Vedic Futures** | Krypto (Bayesian LONG+SHORT) | Paper trading | Paper |
+| **Vedic BTD** | Krypto (Venus Rx buy-the-dip) | Paper trading | Paper |
+| **Alphanix** | Multi-asset (krypto + aktier) | Binance + Alpaca | Paper |
+| **Predator Hunter** | Krypto (front-running detect) | Binance | Paper |
 
-### Market Scout (`packages/engine/src/tanks/market_scout.py`)
-24/7 market scanner and regime detector.
+---
 
-**Responsibilities:**
-- Scan watchlist symbols (BTC, ETH, SOL, BNB, etc.)
-- Run 8 pattern detectors via QuantGuild
-- GainerScanner for MOMENTUM_GAINER detection (top movers 3%+ in 1h)
-- Classify market regime and write to Redis `market:regime` (1h TTL)
-- Skip SELL signals early (spot-only system)
-- Emit BUY signals that pass the confidence risk gate (configured in `cryonix.toml [risk] min_confidence`)
+## 2. Externa API:er
 
-### Quant Guild (`packages/engine/src/guilds/quant.py`)
-Core analysis engine with 8 pattern detectors + regime classification.
+### Marknadsdata
+| API | Vad det ger | Nyckel |
+|-----|-------------|--------|
+| **Binance** (CCXT) | OHLCV prisstaplar, orderbok, ticker, kontohantering, orderexekvering | `BINANCE_API_KEY` |
+| **Alpaca** | US-aktier: priser, ordrar, positioner, marknadskalender | `ALPACA_API_KEY` |
+| **CoinMarketCap** | Fear & Greed index, BTC dominance, marknadsdata, FDV, ranking | `CMC_API_KEY` |
+| **Coinglass** | Futures data, open interest, funding rates, likvidationer | `COINGLASS_API_KEY` |
+| **Finnhub** | Aktiefundamenta, nyheter, earnings | `FINNHUB_API_KEY` |
+| **Helius** | Solana RPC, transaktionshistorik, token-metadata | `HELIUS_API_KEY` |
+| **Shyft** | Solana wallet analytics, DeFi data | `SHYFT_API_KEY` |
+| **DexCheck** | DEX wallet tracking, top traders | `DEXCHECK_API_KEY` |
+| **Dune Analytics** | On-chain SQL queries | `DUNE_API_KEY` |
+| **FRED** | Makroekonomisk data (räntor, CPI, arbetsmarknad) | `FRED_API_KEY` |
+| **Polymarket** | Prediction market priser, event data | Nyckelfri (publik) |
 
-**Pattern Detectors:**
+### AI & Sentimentanalys
+| API | Modell | Syfte |
+|-----|--------|-------|
+| **xAI (Grok)** | `grok-4-1-fast-reasoning` | Trade-validering (approve/reject med reasoning) |
+| **xAI (Grok)** | `grok-3-mini` | X/Twitter sentimentanalys med live search |
+| **Anthropic (Claude)** | `claude-opus-4-6` via CLI | Evolution Engine — autonom kodmutation |
+| **Anthropic (Claude)** | Claude Code CLI | Brain-instanser (Aktienix, Alphanix, Huntrix) |
 
-| # | Pattern | Detection Logic | Confidence |
-|---|---------|----------------|------------|
-| 1 | Bollinger Squeeze | BB width in bottom N% (see `[indicators] bollinger_squeeze_pct`), price near band | 0.75–0.95 |
-| 2 | RSI Extreme | RSI below `[indicators] rsi_oversold` (oversold) | 0.75–0.92 |
-| 3 | Volume Spike | Volume > `[indicators] volume_spike_threshold` × average | 0.65–0.85 |
-| 4 | MACD Crossover | Signal line cross (bullish/bearish) | 0.68 |
-| 5 | EMA 9/21 Cross | EMA9 crosses EMA21 | 0.76 |
-| 6 | Dip Buy | Drawdown from high (see `[patterns] dip_buy_drawdown`), RSI below `dip_buy_max_rsi` | 0.70–0.85 |
-| 7 | Deep Value Crash | Large crash (see `[patterns] deep_value_threshold`) with velocity analysis | 0.80–0.93 |
-| 8 | MOMENTUM_GAINER | GainerScanner top mover + RSI/vol confirmation | 0.72–0.93 |
+### Kommunikation
+| API | Syfte |
+|-----|-------|
+| **Telegram Bot API** | Trade-alerts, performance-rapporter, interaktiv bot |
+| **Telegram MTProto** (Telethon) | Signal-scraping från externa kanaler |
+| **Discord Webhooks** | Signal-distribuering |
 
-**Regime Classification (`_classify_regime`):**
-- **volatile** — ATR > 2× mean
-- **trending** — ADX ≥ `[indicators] adx_trending_threshold`
-- **ranging** — default (neither volatile nor trending)
+---
 
-### Capital Allocator (`apps/web/src/app/api/auto-trade/route.ts`)
-Sits between risk checks and execution. Manages capital budgets per strategy pool.
+## 3. Datalagring
 
-**Pool Allocation:**
+### 3.1 PostgreSQL (Persistent Data)
 
-Configured in `cryonix.toml [capital]` — see `signal_pool_pct`, `grid_pool_pct`, `reserve_pct`.
+Databasen `cryonix` (Postgres 15 Alpine) använder **Drizzle ORM** med 20+ tabeller:
 
-| Pool | Config Key | Purpose |
-|------|-----------|---------|
-| Signal | `signal_pool_pct` | Pattern-based signal trades |
-| Grid | `grid_pool_pct` | Grid trading strategies |
-| Reserve | `reserve_pct` | Always held back as buffer |
+```mermaid
+erDiagram
+    users ||--o{ trades : "has"
+    users ||--o{ positions : "holds"
+    users ||--o{ portfolio : "owns"
+    signals ||--o{ trades : "triggers"
+    signals ||--o{ validationHistory : "validated_by"
+    positions ||--o{ positionHistory : "logged_to"
 
-**Regime-Based Dynamic Allocation:**
+    trades {
+        int id PK
+        timestamp timestamp
+        varchar symbol
+        varchar side
+        decimal entry_price
+        decimal exit_price
+        decimal pnl
+        decimal confidence
+        varchar pattern
+        varchar agent_id
+        varchar config_version
+    }
 
-Regime overrides are applied dynamically based on `market:regime` from Redis. In volatile regimes, grid is paused and reserve is increased. In trending regimes, more capital flows to signals. Ranging uses the default split from config.
+    signals {
+        int id PK
+        varchar symbol
+        varchar action
+        decimal confidence
+        varchar pattern
+        jsonb reasoning
+        varchar agent_id
+        boolean executed
+    }
 
-**Key Behaviors:**
-- Reads `market:regime` from Redis (set by market_scout.py)
-- Tracks per-strategy usage via Redis position keys
-- Budget check performed before every trade
-- Allocation state exposed in API response for dashboard display
-- Position limits: see `cryonix.toml [limits]` for `max_signal_positions`, `max_grid_positions`
-
-### Risk Management — Consolidated
-
-**Single source of truth:** `CONFIG` object in `auto-trade/route.ts`. Python `risk_manager.py` limits are synced with this CONFIG.
-
-**Risk Limits** (all values configured in `cryonix.toml` — sections shown below):
-
-| Limit | Config Section & Key | Purpose |
-|-------|---------------------|---------|
-| Max Daily Loss | `[risk] max_daily_loss_pct` | Circuit breaker on daily drawdown |
-| Max Weekly Loss | `[risk] max_weekly_loss_pct` | Weekly cumulative loss limit |
-| Max Position Size | `[capital] max_position_size_pct` | Per-position cap |
-| Min Confidence | `[risk] min_confidence` | Signal minimum threshold |
-| Volatility Pause | `[risk] volatility_pause_atr_pct` | Volatility threshold |
-| Max Trades/Day | `[limits] max_trades_per_day` | Trade frequency limit |
-| Max Open Positions | `[limits] max_open_positions` | Concurrent position limit |
-| Consecutive Loss Limit | `[risk] max_consecutive_losses` | Cooling-off trigger |
-| Max Slippage | `[exits] max_slippage_pct` | Spread check before execution |
-
-**Safety Layers:**
-- AI validation is **fail-closed** — if GROK is unreachable, trade is rejected
-- Binance-native `STOP_LOSS_LIMIT` order placed as safety net on every trade
-- Position locking via **Redis NX** (prevents duplicate entries on same symbol)
-- Circuit breaker auto-resets daily/weekly
-- Portfolio state tracked in Redis `risk:portfolio_state` (7-day TTL)
-
-### Market Regime Flow
-
-```
-quant.py _classify_regime()
-  │  ATR > 2× mean → volatile
-  │  ADX ≥ threshold → trending  (see [indicators] adx_trending_threshold)
-  │  else           → ranging
-  ▼
-market_scout.py → Redis SET market:regime (1h TTL)
-  ▼
-auto-trade/route.ts reads market:regime
-  │
-  ├─→ Capital Allocator: adjusts pool percentages
-  ├─→ Grid strategy: paused if volatile
-  ├─→ Confidence penalties applied per regime
-  └─→ Passed to GROK AI validator as context
+    positions {
+        int id PK
+        varchar symbol
+        decimal quantity
+        decimal entry_price
+        decimal stop_loss
+        decimal take_profit
+        varchar status
+    }
 ```
 
-## Signal Pipeline
+**Huvudtabeller:**
 
-Full signal lifecycle from detection to execution:
+| Tabell | Vad den lagrar |
+|--------|----------------|
+| `trades` | Alla utförda trades (symbol, side, P&L, confidence, pattern, config_version) |
+| `signals` | Genererade signaler från alla agenter (TA-data, metadata, om den exekverades) |
+| `positions` | Öppna/stängda positioner med SL/TP |
+| `position_history` | Fullständig historik med close_reason, holding_period, fees |
+| `market_data` | OHLCV-data per timeframe (1m → 1d) |
+| `portfolio` | Portföljvärde, cash-balanser |
+| `validation_history` | AI-validering: source_votes, consensus, adjusted confidence, token usage |
+| `risk_checks` | Riskbedömningar: Kelly-fraction, position sizing, godkänt/avvisat |
+| `evolution_runs` | Varje Evolution Engine-körning: duration, performance, changes made |
+| `config_changes` | TOML-ändringar med diff, källa (evolution/brain/human) |
+| `calibration_history` | Pattern EV-snapshots (dagliga, per run_type) |
+| `autopilot_actions` | AI Brain-åtgärder: action_type, target, old/new value, confidence |
+| `backtest_results` | Backtestresultat: config, metrics, equity curve, pattern performance |
+| `telegram_signals` | Parserade signaler från externa Telegram-kanaler |
+| `telegram_channels` | Kanalkvalitet: win rate, total signals, active status |
+| `watchlist_changes` | Dynamisk watchlist-rotation: added/removed symbols, Grok reasoning |
+| `aktienix_positions` | Aktienix-specifika positioner (Alpaca broker) |
+| `aktienix_trades` | Aktienix trades med broker order_id |
+| `aktienix_signals` | Aktienix signaler med macro_boost och macro_blocked |
+| `solanix_positions` | Solanix DEX-positioner med mint_address |
+| `solanix_trades` | Solanix trades |
+| `agent_actions` | Generisk agent-åtgärdslogg |
+| `ml_models` | ML-modellmetadata (namn, version, accuracy) |
+| `orchestrator_state` | Orchestrator-status |
 
-```
-MarketScout (market_scout.py)
-  → QuantGuild (quant.py): 8 pattern detectors + MOMENTUM_GAINER
-    → Regime classification → Redis market:regime
-    → SELL signals skipped early (spot-only)
-    → Risk Gate (see [risk] min_confidence) → Redis pending queue
-      → Capital Allocator (budget check per strategy pool)
-        → EV filter (≥5 trades sample, reject negative EV)
-          → X sentiment alert check (12 keywords via x_sentiment.py)
-            → GROK AI validation (fail-closed, with regime/EV/sentiment context)
-              → Spread check (see [exits] max_slippage_pct)
-                → Binance BUY (market/limit order via CCXT)
-                  → Native STOP_LOSS_LIMIT order placed
-                    → Position monitor (30s loop: SL / TP / trailing stop)
-```
+### 3.2 Redis (Realtidsdata & Cache)
 
-## Strategy Lab (Analytics Layer — Read-Only)
+Redis 7 Alpine med AOF-persistens. Används för:
 
-Located in `scripts/strategy-lab/`. These tools analyze and calibrate the system but never execute trades.
+| Nyckelnamn | TTL | Vad |
+|------------|-----|-----|
+| `trades:pending` | — | Signalkö från engine → auto-trader |
+| `positions:*` | — | Aktiva positioner per agent |
+| `calibration:patterns` | 24h | Pattern EV-scores |
+| `calibration:accuracy` | 48h | Self-calibration accuracy |
+| `cmc:fear_greed` | 10min | Fear & Greed index |
+| `cmc:global` | 10min | Global market cap, BTC dominance |
+| `cmc:mcap:{SYMBOL}` | 10min | Per-symbol market cap + FDV |
+| `sentiment:{SYMBOL}` | 1h | Sentiment score per coin |
+| `sentiment:alert:{SYMBOL}` | 30min | Hack/exploit alert flags |
+| `x-sentiment:latest` | 15min | Senaste X sentiment batch |
+| `telegram:signal:{SYMBOL}` | 30min | Externa Telegram-signaler |
+| `evolution:directives` | — | AI Brain → Evolution Engine kommunikation |
+| `instance:lock` | 60s | Förhindrar dubbeltrade |
+| `position:lock:{ID}` | 30s | Per-position atomär lås |
+| `cvd:{SYMBOL}` | — | Cumulative Volume Delta |
+| `orakel:forecast:*` | — | ML-prognoser |
+| `regime:current` | 1h | Marknadsregim (trending/volatile/ranging) |
 
-| Script | Purpose |
-|--------|---------|
-| `calibrate.py` | Calculates per-pattern win rates & EV from trade history; writes `calibration:patterns` to Redis for the EV filter |
-| `morning_report.py` | Daily briefing: last 24h trade analysis, what-if SL width simulation, identifies dragging patterns |
-| `x_sentiment.py` | Calls GROK xAI with live X/Twitter search; stores sentiment scores (−3 to +3) in Redis `sentiment:{SYMBOL}` (1h TTL) |
-| `engine_diagnostik.py` | Container health check, Docker log parsing, Redis/Postgres connectivity verification, crash analysis |
-| `backtest_momentum.py` | Backtests MOMENTUM_GAINER strategy against historical trades; measures GainerScanner effectiveness |
+---
 
-## API Endpoints
+## 4. Systemarkitektur — Processer & Motorer
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/auto-trade` | POST | Main signal execution pipeline (full pipeline) |
-| `/api/portfolio` | GET | Live portfolio balances |
-| `/api/signals` | GET | Trading signals queue |
-| `/api/analyze` | POST | GROK AI analysis |
-| `/api/trade` | POST | Execute trade |
-| `/api/risk-check` | POST | Pre-trade risk validation |
-| `/api/risk` | GET | Current risk status |
-| `/api/backtest` | POST | Run backtest |
-| `/api/positions` | GET/POST/DELETE | Position management |
-| `/api/validate-signal` | POST | Signal validation |
-| `/api/calibration` | GET | Pattern stats & EV calibration data |
-| `/api/grid-config` | GET/POST | Grid trading configuration |
-| `/api/market` | GET | Market data queries |
-| `/api/scanner-history` | GET | GainerScanner historical data |
-| `/api/x-sentiment` | GET | X/Twitter sentiment polls |
-| `/api/health` | GET | System health checks |
-| `/api/tanks` | GET | Tank engine status |
-| `/api/orchestrator` | POST | Trade orchestration |
-| `/api/process-log` | GET | Log streaming |
-| `/api/agents` | POST | LLM agent coordination |
-| `/api/chat` | POST | Chat interface (copilot) |
+### 4.1 Python Engine (`packages/engine`)
 
-## Redis Keys (State Coordination)
-
-| Key | TTL | Purpose |
-|-----|-----|---------|
-| `market:regime` | 1h | Current regime: volatile / trending / ranging |
-| `positions:open` | — | Live open positions (per-strategy tracking) |
-| `risk:portfolio_state` | 7d | Daily/weekly P&L, circuit breaker state |
-| `calibration:patterns` | — | Per-pattern win rates & EV (set by calibrate.py) |
-| `sentiment:{SYMBOL}` | 1h | X/Twitter sentiment score (−3 to +3) |
-| `scanner:top_movers` | — | GainerScanner top movers data |
-
-## Database Schema
-
-**Core Tables (Postgres via Drizzle ORM):**
-- `users` - User accounts
-- `portfolio` - Portfolio snapshots
-- `positions` - Open/closed positions
-- `trades` - Trade executions
-- `signals` - Trading signals
-- `market_data` - OHLCV candles
-- `agent_actions` - Agent activity log
-- `backtest_results` - Backtest history
-
-## Environment Variables
-
-```bash
-# AI
-XAI_API_KEY=xai-...
-
-# Exchange
-BINANCE_API_KEY=...
-BINANCE_API_SECRET=...
-BINANCE_TESTNET=true
-
-# Database
-POSTGRES_URL=...
-
-# Redis
-KV_URL=...
-
-# App
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-ENABLE_AUTO_TRADING=false
-```
-
-## Directory Structure
+**Kärnan i signalgenerering.** Kör som Docker-container med FastAPI (port 8000).
 
 ```
-cryonix/
-├── apps/
-│   └── web/                          # Next.js dashboard
-│       ├── src/
-│       │   ├── app/
-│       │   │   ├── api/
-│       │   │   │   ├── auto-trade/   # Main signal execution pipeline + Capital Allocator
-│       │   │   │   ├── risk-check/   # Pre-trade risk validation
-│       │   │   │   ├── calibration/  # Pattern stats & EV data
-│       │   │   │   ├── grid-config/  # Grid trading configuration
-│       │   │   │   ├── x-sentiment/  # X/Twitter sentiment
-│       │   │   │   ├── scanner-history/ # GainerScanner data
-│       │   │   │   ├── portfolio/    # Portfolio state
-│       │   │   │   ├── positions/    # Position management
-│       │   │   │   ├── signals/      # Signal queue
-│       │   │   │   ├── market/       # Market data
-│       │   │   │   ├── health/       # System health
-│       │   │   │   └── ...           # Additional routes
-│       │   │   └── page.tsx          # Dashboard
-│       │   ├── components/           # React components
-│       │   ├── hooks/                # Custom hooks
-│       │   └── lib/                  # Utilities
-│       └── scripts/                  # Dev scripts
-├── packages/
-│   ├── engine/                       # Python trading engine
-│   │   └── src/
-│   │       ├── core/
-│   │       │   ├── risk_manager.py   # Risk limits (synced with auto-trade CONFIG)
-│   │       │   ├── state_sync.py     # Redis state synchronization
-│   │       │   └── market_data.py    # Market data fetching
-│   │       ├── guilds/
-│   │       │   └── quant.py          # QuantGuild: 8 pattern detectors + regime classification
-│   │       ├── tanks/
-│   │       │   └── market_scout.py   # 24/7 scanner, GainerScanner, regime → Redis
-│   │       └── models/               # Data models
-│   ├── agents/                       # Trading agents (TypeScript)
-│   │   └── src/
-│   │       ├── orchestrator/
-│   │       ├── market-scout/
-│   │       ├── signal-validator/
-│   │       ├── risk-manager/
-│   │       ├── executor/
-│   │       ├── backtester/
-│   │       └── utils/
-│   ├── database/                     # Drizzle ORM
-│   │   └── src/
-│   │       ├── schema.ts
-│   │       └── *.repository.ts
-│   ├── types/                        # Shared types
-│   │   └── src/
-│   │       └── index.ts
-│   └── ui/                           # shadcn/ui
-├── scripts/
-│   ├── strategy-lab/                 # Analytics (read-only)
-│   │   ├── calibrate.py              # EV model, pattern weights → Redis
-│   │   ├── morning_report.py         # Daily briefing, what-if SL simulation
-│   │   ├── x_sentiment.py            # GROK xAI X/Twitter search → Redis
-│   │   ├── engine_diagnostik.py      # Container health, crash analysis
-│   │   └── backtest_momentum.py      # Momentum strategy simulation
-│   ├── auto-trader.mjs               # Node.js auto-trading orchestrator
-│   └── evolve.py                     # Evolution engine
-├── docs/                             # Documentation
-└── CLAUDE.md                         # AI context
+packages/engine/src/
+├── main.py            — FastAPI entrypoint + event loop
+├── tanks/             — Oberoende scanner-moduler
+│   ├── market_scout.py      — 10s loop: OHLCV → 8 patterns → Redis
+│   ├── news_scout.py        — 15min: RSS sentiment scoring
+│   ├── cmc_scout.py         — 10min: Fear/Greed, BTC dom, market caps
+│   ├── coinglass_scout.py   — Funding rates, open interest
+│   ├── liquidation_scout.py — Likvidationsdata
+│   ├── gainer_scanner.py    — Top movers (1h % change)
+│   └── vedic_scout.py       — Astrologi-data (planets, transits)
+├── guilds/            — Analysdrivare
+│   └── quant_guild.py       — 8 mönsterdetektorer (RSI, BB, MACD, EMA, Vol Spike, Dip Buy, Deep Value, Momentum)
+├── core/              — Risk-gate, config-loader
+└── models/            — Datamodeller
+```
+
+**Pattern Detection Pipeline:**
+```
+Binance OHLCV (15m candles, 100 bars)
+  → RSI_OVERSOLD check (RSI < 35)
+  → BOLLINGER_SQUEEZE (width < 30th pctl)
+  → MACD_BULLISH_CROSS
+  → EMA_CROSS_UP (9/21 EMA)
+  → VOLUME_SPIKE_UP (vol > 1.8× avg)
+  → DIP_BUY (3%+ drawdown)
+  → DEEP_VALUE_CRASH (8%+ drawdown)
+  → MOMENTUM_GAINER
+  → RiskGate (confidence ≥ 55%)
+  → Redis trades:pending
+```
+
+### 4.2 Orakel Intelligence (`packages/intelligence`)
+
+ML-prognos och regimklassificering. Kör som separat Docker-container (port 8001).
+
+```
+packages/intelligence/src/
+├── main.py      — FastAPI server
+├── orakel/      — Forecast engine (LSTM/XGBoost)
+├── guilds/      — Feature engineering
+├── models/      — Serialized models (Docker volume: orakel-models)
+└── api/         — REST endpoints
+```
+
+### 4.3 Auto-Trader (`scripts/services/auto-trader.mjs`)
+
+Execution loop (Node.js) som pollar varje 60s:
+
+```
+1. Monitor open positions → SL/TP/trailing/stagnation
+2. Read trades:pending from Redis
+3. Capital allocator check (regime-based budgets)
+4. GainerScanner boost (+10%)
+5. Telegram signal boost (+5-12%, Phase 1: log only)
+6. CMC Fear & Greed adjustment
+7. CMC BTC dominance penalty
+8. Filters: spot-only, max positions, daily limit, CMC rank,
+   FDV/MC ratio, EV model, X sentiment, orderbook spread
+9. Grok AI validation (fail-closed)
+10. Execute BUY on Binance via CCXT
+11. Place native STOP_LOSS_LIMIT
+12. Tag trade with config_version hash
+```
+
+### 4.4 Signal Worker (`scripts/services/signal-worker.mjs`)
+
+Push-baserad execution via **Redis Pub/Sub** — komplement till pollingbaserad auto-trader för snabbare signalhantering.
+
+### 4.5 CVD Monitor (`scripts/services/cvd-monitor.mjs`)
+
+Bevakar **Cumulative Volume Delta** — order flow-analys via Binance WebSocket för att detektera köp/säljtryck i realtid.
+
+### 4.6 Self-Improvement Systems
+
+#### Evolution Engine (`scripts/evolution/copilot-evolution.mjs`)
+- **Schema:** Var 2:a timme
+- Analyserar 48h performance → identifierar problem
+- Claude Code CLI (`claude-opus-4-6`) genererar mutationer
+- Ändrar `cryonix.toml` + Python/TS-kod
+- Max 100-raders diff-guard, backup + rollback
+- Verification suite → git commit
+
+#### AI Brain (`scripts/strategy-lab/ai_brain.py`)
+- **Schema:** Var 6:e timme + akut trigger vid 3+ förluster
+- Grok 3 Mini Fast analyserar trades, calibration, pipeline
+- Max 4 åtgärder/körning, confidence ≥ 0.7 för auto-apply
+- Skickar `evolution:directives` till Redis
+
+#### Pattern Calibrator (`scripts/strategy-lab/calibrate.py`)
+- **Schema:** Var 6:e timme
+- `EV = (winRate × avgWin) - ((1-winRate) × |avgLoss|)`
+- Skriver till Redis + Postgres snapshot
+
+#### Self-Calibrator (`scripts/strategy-lab/self_calibrate.py`)
+- Jämför signalprediktioner mot faktiska prisutfall
+- Per-pattern hit rate, filter-effektivitet
+
+---
+
+## 5. Agent-Arkitektur
+
+Alla agenter ärver från `base-agent.ts`:
+
+```
+packages/agents/src/
+├── base-agent.ts       — Gemensam agent-klass
+├── aktienix/           — US-aktiehandel (Alpaca)
+├── alphanix/           — Multi-asset AI army
+├── apex/               — Meta-confluence (konsumerar alla agenters signaler)
+├── copynix/            — Solana copy-trading
+├── huntrix/            — Manipulation detection & ride
+├── polynix/            — Polymarket binary options
+├── psinix/             — Kuramoto phase sync
+├── solanix/            — Solana DEX trading
+├── predatorhunter/     — Front-running detection
+├── market-scout/       — TA-analys
+├── signal-validator/   — AI-validering
+├── risk-manager/       — Position sizing, Kelly
+├── executor/           — Order execution
+├── orchestrator/       — Agent-koordinering
+├── analytics/          — Performance tracking
+└── shared/             — Gemensamma typer & utilities
+```
+
+### Agent-specifika Brain-instanser (Claude Code CLI)
+| Brain | Agent | Kör var |
+|-------|-------|---------|
+| `aktienix-brain` | Aktienix | Cron (portföljanalys, config-tuning) |
+| `alphanix-brain` | Alphanix | Cron (multi-asset optimering) |
+| `huntrix-brain` | Huntrix | Cron (manipulationsanalys) |
+
+Brains har **Docker socket proxy-access** (restrikterad — bara container restart) via `tecnativa/docker-socket-proxy`.
+
+---
+
+## 6. Web-App & API:er (`apps/web`)
+
+**Next.js** dashboard (port 3000) med **70+ API-routes**:
+
+### Kärn-API:er
+| Route | Vad |
+|-------|-----|
+| `/api/auto-trade` | Huvudhandels-endpoint (signal → validation → execution) |
+| `/api/health` | Systemhälsa (Redis, Postgres, Engine, MarketScout) |
+| `/api/positions` | Aktiva positioner |
+| `/api/trades` | Trade-historik |
+| `/api/signals` | Signalhistorik |
+| `/api/portfolio` | Portföljöversikt |
+| `/api/calibration` | EV-kalibrering |
+| `/api/evolution` | Evolution-körningar |
+| `/api/autopilot` | AI Brain-åtgärder |
+| `/api/market` | Marknadsdata |
+| `/api/metrics` | Performance metrics + rejections + mutations |
+| `/api/overview` | Dashboard-sammanfattning |
+| `/api/chart-data` | Equity curve data |
+| `/api/costs` | API-kostnadsspårning |
+| `/api/backtest` | Backtest-körning |
+
+### Agent-specifika API:er
+| Prefix | Agent |
+|--------|-------|
+| `/api/aktienix/*` | Portfolio, positions, signals, status, trades, sentiment |
+| `/api/alphanix/*` | Backtest, positions, signals, status, trades |
+| `/api/copynix/*` | Portfolio, positions, status, trades, wallets |
+| `/api/polynix/*` | Portfolio, positions, status, trades |
+| `/api/solanix/*` | Status, trades |
+| `/api/huntrix/*` | Status |
+| `/api/psinix/*` | Status, trades |
+| `/api/apex/*` | Status |
+| `/api/vedic/*` | Results, status |
+| `/api/polymarket/*` | Spreads |
+
+### Infrastruktur
+| Route | Vad |
+|-------|-----|
+| `/api/orchestrator/start\|stop\|status` | Agent-orkestrator |
+| `/api/agents` | Lista alla registrerade agenter |
+| `/api/chat` | AI-chat (Grok) |
+| `/api/analyze` | On-demand analys |
+
+---
+
+## 7. Infrastruktur
+
+### Docker Compose (Produktion)
+
+**25+ containers** i `docker-compose.prod.yml`:
+
+```mermaid
+graph TB
+    subgraph Infrastruktur
+        PG[Postgres 15]
+        RD[Redis 7]
+        CD[Caddy Reverse Proxy]
+        DP[Docker Socket Proxy]
+    end
+
+    subgraph Core Trading
+        EN[Engine - Python]
+        WB[Web - Next.js]
+        AT[Auto-Trader]
+        SW[Signal Worker]
+        CV[CVD Monitor]
+        WS[WS Server]
+    end
+
+    subgraph Trading Agents
+        AK[Aktienix]
+        AL[Alphanix]
+        AP[Apex]
+        CO[Copynix]
+        HU[Huntrix]
+        PO[Polynix]
+        PS[Psinix]
+        SO[Solanix]
+        VT[Vedic Trader]
+        VF[Vedic Futures]
+        VB[Vedic BTD]
+    end
+
+    subgraph Intelligence
+        OR[Orakel ML]
+        HS[Headline Scanner]
+        PM[Polymarket Scanner]
+        TB[Telegram Bot]
+        TS[Telegram Scraper]
+    end
+
+    subgraph Brains - Claude CLI
+        AB[Aktienix Brain]
+        ALB[Alphanix Brain]
+        HB[Huntrix Brain]
+    end
+
+    EN --> RD
+    EN --> PG
+    WB --> RD
+    WB --> PG
+    AT --> WB
+    SW --> RD
+    CV --> RD
+    WS --> RD
+    OR --> RD
+
+    AK --> RD & PG
+    AL --> RD & PG
+    AP --> RD & PG
+    HU --> RD & PG
+    SO --> RD & PG
+
+    AB --> DP
+    ALB --> DP
+    HB --> DP
+```
+
+### Portar
+| Port | Service |
+|------|---------|
+| `3000` | Next.js Web App |
+| `3004` | WebSocket Server |
+| `5432` | Postgres (localhost only) |
+| `6379` | Redis (localhost only) |
+| `80` | Caddy (HTTP) |
+| `8000` | Python Engine (intern) |
+| `8001` | Orakel ML (intern) |
+
+### Cron-schema (sammanfattning)
+
+| System | Intervall |
+|--------|-----------|
+| MarketScout | 10s loop |
+| Auto-Trader | 60s loop |
+| CMCScout | 10min loop |
+| NewsScout | 15min loop |
+| X Sentiment | */15 min |
+| Calibrator | */6h |
+| AI Brain | */6h + akut trigger |
+| Evolution Engine | */2h |
+| Morning Report | 06:00 UTC |
+| Health Monitor | */5min |
+| Auto-Deploy | */1min |
+| Postgres Backup | 03:00 UTC |
+
+---
+
+## 8. Konfigurationsstruktur
+
+**Single source of truth** per agent:
+
+| Fil | Agent | Storlek |
+|-----|-------|---------|
+| `cryonix.toml` | Core (crypto spot/margin) | 66KB, 1238 rader |
+| `aktienix.toml` | Aktienix (US-aktier) | 20KB |
+| `alphanix.toml` | Alphanix (multi-asset) | 3.6KB |
+| `copynix.toml` | Copynix (Solana copy) | 7.4KB |
+| `huntrix.toml` | Huntrix (manipulation) | 2.8KB |
+| `polynix.toml` | Polynix (Polymarket) | 1.5KB |
+| `psinix.toml` | Psinix (phase sync) | 2.9KB |
+| `solanix.toml` | Solanix (DEX) | 1.4KB |
+| `apex.toml` | Apex (meta-confluence) | 2.3KB |
+| `predatorhunter.toml` | Predator Hunter | 5.5KB |
+
+TOML-filerna monteras som **read-only Docker volumes** (`./agent.toml:/app/agent.toml:ro`), utom för Brain-containers som har read-write access för autonom mutation.
+
+---
+
+## 9. AI-modeller i Systemet
+
+| Syfte | Modell | Provider | Var |
+|-------|--------|----------|----|
+| Trade-validering | `grok-4-1-fast-reasoning` | xAI | auto-trade route |
+| X Sentiment | `grok-3-mini` | xAI | x_sentiment.py |
+| AI Brain | `grok-3-mini-fast` | xAI | ai_brain.py |
+| Headline Scanner | Grok (live X search) | xAI | headline-scanner.ts |
+| Evolution | `claude-opus-4-6` | Anthropic CLI | copilot-evolution.mjs |
+| Agent Brains | Claude Code CLI | Anthropic | aktienix/alphanix/huntrix-brain |
+| Orakel Forecast | LSTM/XGBoost (lokala) | Self-hosted | intelligence package |
+
+---
+
+## 10. Dataflöde — Komplett Pipeline
+
+```
+┌──────────────── DATA INSAMLING ──────────────────┐
+│ Binance OHLCV → MarketScout (10s)                │
+│ CoinMarketCap  → CMCScout (10min)                │
+│ RSS Feeds      → NewsScout (15min)               │
+│ X/Twitter      → X Sentiment (15min, Grok)       │
+│ Telegram       → Scraper (realtid, Telethon)     │
+│ Polymarket     → Scanner (5min)                  │
+│ Coinglass      → Liquidation/OI/Funding          │
+│ Binance WS     → CVD Monitor (realtid)           │
+│ Orakel         → ML Forecast (regelbundet)       │
+└──────────────────────────────────────────────────┘
+                    ↓
+┌──────────────── SIGNALGENERERING ────────────────┐
+│ QuantGuild: 8 pattern detectors                  │
+│ Consensus Gate: multi-pattern confirmation       │
+│ Smart Dip Hunter: value pattern filter           │
+│ RiskGate: min confidence 55%                     │
+│                  → Redis trades:pending          │
+└──────────────────────────────────────────────────┘
+                    ↓
+┌──────────────── FILTRERING & VALIDERING ─────────┐
+│ EV Model: reject negative-EV patterns            │
+│ CMC Filters: rank ≤500, FDV/MC <4x              │
+│ Sentiment: reject on hack/exploit alerts         │
+│ GainerScanner boost (+10%)                       │
+│ Telegram convergence boost                       │
+│ Capital Allocator (regime-based)                 │
+│ Grok AI Validation (fail-closed)                 │
+│ Confidence blend: 60% TA + 40% AI               │
+└──────────────────────────────────────────────────┘
+                    ↓
+┌──────────────── EXECUTION ───────────────────────┐
+│ Binance: LIMIT BUY + STOP_LOSS_LIMIT             │
+│ ATR-based SL/TP placement                         │
+│ Config version hash tagging                       │
+└──────────────────────────────────────────────────┘
+                    ↓
+┌──────────────── POSITION MANAGEMENT ─────────────┐
+│ Trailing stop (3%, activation at 1.5%)            │
+│ Stagnation exit (72h timeout)                     │
+│ Smart rotation (replace weak positions)           │
+│ Native SL monitoring                              │
+│ Reconciliation (10min, Binance vs Redis)          │
+└──────────────────────────────────────────────────┘
+                    ↓
+┌──────────────── SELF-IMPROVEMENT ────────────────┐
+│ Calibrator → pattern EV scores (6h)              │
+│ Self-Calibrator → prediction accuracy (6h)       │
+│ AI Brain → parameter tuning (6h)                 │
+│ Evolution Engine → code mutation (2h)            │
+│ Morning Report → performance review (daily)      │
+└──────────────────────────────────────────────────┘
 ```

@@ -874,13 +874,22 @@ export class AktienixAgent extends BaseAgent {
         let { symbol, action, confidence, reasoning, currentPrice } = payload;
         this.log('info', `Evaluating signal to ${action} ${symbol} (Base Confidence: ${confidence})`);
 
-        // Earnings safety gate: block BUY within 3 days of earnings
-        if (action === 'BUY' && this.sentimentScanner) {
+        // Pre-earnings momentum + safety gate
+        if (this.sentimentScanner) {
             try {
-                const earningsGate = await this.sentimentScanner.getEarningsGate(symbol);
-                if (earningsGate.blocked) {
-                    this.log('warn', `EARNINGS GATE: ${symbol} — ${earningsGate.reason}`);
-                    return;
+                const earningsMomentum = await this.sentimentScanner.getEarningsMomentum(symbol);
+
+                if (action === 'BUY') {
+                    // Block BUY within 2 days of earnings (gap risk)
+                    if (earningsMomentum.shouldSell) {
+                        this.log('warn', `EARNINGS GATE: ${symbol} — ${earningsMomentum.reason}`);
+                        return;
+                    }
+                    // Boost confidence in pre-earnings momentum zone (5-15 days before)
+                    if (earningsMomentum.shouldBuy) {
+                        confidence += earningsMomentum.confidence;
+                        this.log('info', `EARNINGS MOMENTUM: ${symbol} +${(earningsMomentum.confidence * 100).toFixed(0)}% — ${earningsMomentum.reason}`);
+                    }
                 }
             } catch { /* non-critical */ }
         }
