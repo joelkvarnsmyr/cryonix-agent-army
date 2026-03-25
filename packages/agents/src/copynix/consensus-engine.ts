@@ -69,21 +69,23 @@ export class ConsensusEngine {
         const uniqueWallets = new Set(entry.trades.map(t => t.walletAddress));
         const walletCount = uniqueWallets.size;
 
-        // Check if consensus reached — only strong (3+) fires
-        // Medium consensus DISABLED — data shows 25% WR vs 100% for single whale.
-        // Waiting for 2nd wallet adds latency without improving signal quality.
+        // Check if consensus reached — strong OR medium
+        // DATA COLLECTION MODE: medium=1 allows single-wallet signals through
+        // consensus engine (separate from single-whale mode in copynix-agent).
         let consensusLevel: CopySignal['consensusLevel'] | null = null;
         if (walletCount >= this.minWalletsStrong) {
             consensusLevel = 'strong';
+        } else if (walletCount >= this.minWalletsMedium) {
+            consensusLevel = 'medium';
         }
 
         if (!consensusLevel) return null;
 
-        // Strong consensus reached — fire signal
+        // Consensus reached — fire signal (confidence varies by level)
         const wallets = Array.from(uniqueWallets);
         const avgPrice = entry.trades.reduce((s, t) => s + t.priceUsd, 0) / entry.trades.length;
         const totalVolume = entry.trades.reduce((s, t) => s + t.amountUsd, 0);
-        const confidence = 85;
+        const confidence = consensusLevel === 'strong' ? 85 : 60;
 
         const signal: CopySignal = {
             tokenMint: trade.tokenMint,
