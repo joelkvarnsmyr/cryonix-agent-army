@@ -19,6 +19,7 @@ export class QuantAgent {
   readonly podId: string;
   readonly models: string[];
   private sentimentBoost: number = 0;
+  private macroBoost: number = 0;
 
   constructor(podId: string, models: string[] = DEFAULT_MODELS) {
     this.podId = podId;
@@ -29,6 +30,11 @@ export class QuantAgent {
     // score: -100 to 100 from sentiment feed
     // Convert to confidence modifier: -20 to +20
     this.sentimentBoost = Math.round(score * 0.2);
+  }
+
+  setMacroBoost(boost: number): void {
+    // Clamp -30 to +20 — VIX/Fed-rate driven confidence modifier
+    this.macroBoost = Math.max(-30, Math.min(20, boost));
   }
 
   analyze(symbol: string, adapter: string, candles: Candle[]): TradeProposal[] {
@@ -145,6 +151,7 @@ export class QuantAgent {
 
     // Apply sentiment boost/penalty
     confidence += this.sentimentBoost;
+    confidence += this.macroBoost;
 
     // Clamp confidence 0-100
     confidence = Math.max(0, Math.min(100, confidence));

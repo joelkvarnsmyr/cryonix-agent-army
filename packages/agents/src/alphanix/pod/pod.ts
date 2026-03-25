@@ -94,7 +94,6 @@ export class Pod {
   }
 
   async runCycle(): Promise<CycleResult> {
-    this.state = 'running';
     const result: CycleResult = {
       scannedSymbols: 0,
       proposalsGenerated: 0,
@@ -104,6 +103,13 @@ export class Pod {
       exited: 0,
       errors: [],
     };
+
+    // Kill-switch paused: skip all new entries (exits still monitored by orchestrator)
+    if (this.state === 'paused') {
+      return result;
+    }
+
+    this.state = 'running';
 
     // Skip scanning if market is closed — prevents stale data trading
     if (!this.isMarketOpen()) {
@@ -308,6 +314,18 @@ export class Pod {
     return this.quant;
   }
 
+  setSentimentBoost(score: number): void {
+    this.quant.setSentimentBoost(score);
+  }
+
+  setMacroBoost(boost: number): void {
+    this.quant.setMacroBoost(boost);
+  }
+
+  getAdapterType(): string {
+    return this.config.adapter;
+  }
+
   private getModelsForStrategy(strategy: string): string[] {
     const strategies: Record<string, string[]> = {
       'momentum': ['rsi', 'macd', 'ema', 'volume'],
@@ -358,6 +376,26 @@ export class Pod {
       trailingStopDistance: 1.0,
       stagnationHours: 48,
     };
+  }
+
+  pause(): void {
+    this.state = 'paused';
+    console.log(`[Pod:${this.config.id}] PAUSED — no new trades`);
+  }
+
+  resume(): void {
+    this.state = 'running';
+    console.log(`[Pod:${this.config.id}] RESUMED`);
+  }
+
+  reduceExposure(factor: number): void {
+    this.capitalBudget = Math.round(this.capitalBudget * factor);
+    console.log(`[Pod:${this.config.id}] Exposure reduced by ${(1 - factor) * 100}%, new budget=$${this.capitalBudget}`);
+  }
+
+  restoreExposure(originalBudget: number): void {
+    this.capitalBudget = originalBudget;
+    console.log(`[Pod:${this.config.id}] Exposure restored to $${this.capitalBudget}`);
   }
 
   async stop(): Promise<void> {

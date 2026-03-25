@@ -77,6 +77,14 @@ export class AlphanixStatePublisher {
     } catch (err) { console.error(`[AlphanixState] swarm ${type} error:`, err); }
   }
 
+  async publishIntel(type: string, data: unknown, ttlSeconds: number): Promise<void> {
+    try {
+      await this.ensureConnected();
+      const key = `alphanix:intel:${type}`;
+      await this.redis.set(key, JSON.stringify(data), 'EX', ttlSeconds);
+    } catch (err) { console.error(`[AlphanixState] intel ${type} error:`, err); }
+  }
+
   async publishSwarmActive(swarms: Array<{ id: string; type: string; workers: number; runningMs: number }>): Promise<void> {
     try {
       await this.ensureConnected();

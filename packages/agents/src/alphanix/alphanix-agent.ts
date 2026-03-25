@@ -14,8 +14,15 @@ import { ScheduleManager } from './orchestrator/schedule-manager';
 import { SwarmSpawner } from './swarms/swarm-spawner';
 import { registerAllWorkers } from './swarms/workers/index';
 import type { SwarmRequest, SwarmResult } from './swarms/types';
+import type { GeopoliticalSignal } from './data/feeds/news-feed';
 
 export class AlphanixAgent extends BaseAgent {
+  private static readonly ADAPTER_MARKET_MAP: Record<string, string[]> = {
+    binance: ['crypto'],
+    alpaca: ['us_stocks'],
+    ibkr: ['eu_stocks', 'energy', 'defense'],
+  };
+
   private toml!: AlphanixTomlConfig;
   private registry = new AdapterRegistry();
   private orchestrator!: Orchestrator;
@@ -120,7 +127,7 @@ export class AlphanixAgent extends BaseAgent {
 
     this.scheduler.on('macro_scan', async () => {
         this.log('info', '=== MACRO SCAN (scheduled) ===');
-        await this.spawnAndPublish({
+        const macroResult = await this.spawnAndPublish({
             id: `macro-${Date.now()}`,
             type: 'macro',
             requester: { podId: 'orchestrator', role: 'scheduler' },
@@ -130,9 +137,149 @@ export class AlphanixAgent extends BaseAgent {
             maxDuration: 60000,
             priority: 'normal',
         });
+
+        // Wire VIX data to pod macroBoost
+        if (macroResult?.status === 'completed') {
+          let vix: number | undefined;
+          for (const workerData of (macroResult.data as any[] ?? [])) {
+            if (workerData?.vix !== undefined && typeof workerData.vix === 'number') {
+              vix = workerData.vix;
+              break;
+            }
+          }
+          if (vix !== undefined) {
+            let macroBoost = 0;
+            if (vix > 30) macroBoost = -25;
+            else if (vix > 20) macroBoost = -10;
+            else if (vix < 15) macroBoost = 15;
+
+            for (const [, pod] of this.pods) {
+              pod.setMacroBoost(macroBoost);
+            }
+            this.log('info', `Macro: VIX=${vix.toFixed(1)}, macroBoost=${macroBoost} applied to ${this.pods.size} pods`);
+
+            // Publish macro intel to Redis for dashboard visibility
+            await this.publisher?.publishIntel('macro', { vix, macroBoost, updatedAt: Date.now() }, 1800);
+          }
+        }
+    });
+
+    // --- Overnight risk reduction (22:00 UTC) ---
+    const originalBudgets = new Map<string, number>();
+    this.scheduler.on('overnight_risk_adjust', async () => {
+        this.log('info', '=== OVERNIGHT RISK ADJUST ===');
+        for (const [id, pod] of this.pods) {
+            originalBudgets.set(id, pod.getCapitalBudget());
+            pod.reduceExposure(0.5); // 50% reduction
+            this.log('info', `[${id}] Overnight: capital halved to $${pod.getCapitalBudget()}`);
+        }
+    });
+
+    // --- EU market open (07:00 UTC) ---
+    this.scheduler.on('eu_market_open', async () => {
+        this.log('info', '=== EU MARKET OPEN ===');
+        for (const [id, pod] of this.pods) {
+            if (pod.getAdapterType() === 'ibkr') {
+                pod.resume();
+                const orig = originalBudgets.get(id);
+                if (orig) pod.restoreExposure(orig);
+                this.log('info', `[${id}] EU pod resumed`);
+            }
+        }
+    });
+
+    // --- EU market close (15:30 UTC) ---
+    this.scheduler.on('eu_market_close', async () => {
+        this.log('info', '=== EU MARKET CLOSE ===');
+        for (const [id, pod] of this.pods) {
+            if (pod.getAdapterType() === 'ibkr') {
+                pod.pause();
+                this.log('info', `[${id}] EU pod paused`);
+            }
+        }
+    });
+
+    // --- US market open (14:30 UTC) ---
+    this.scheduler.on('us_market_open', async () => {
+        this.log('info', '=== US MARKET OPEN ===');
+        for (const [id, pod] of this.pods) {
+            if (pod.getAdapterType() === 'alpaca') {
+                pod.resume();
+                const orig = originalBudgets.get(id);
+                if (orig) pod.restoreExposure(orig);
+                this.log('info', `[${id}] US pod resumed`);
+            }
+        }
+    });
+
+    // --- US market close (21:00 UTC) ---
+    this.scheduler.on('us_market_close', async () => {
+        this.log('info', '=== US MARKET CLOSE ===');
+        for (const [id, pod] of this.pods) {
+            if (pod.getAdapterType() === 'alpaca') {
+                pod.pause();
+                this.log('info', `[${id}] US pod paused`);
+            }
+        }
     });
 
     this.log('info', `Alphanix initialized: ${this.pods.size} pod(s)`);
+  }
+
+  /**
+   * Cross-pod risk aggregation — detects hidden correlated exposure
+   * and triggers a portfolio-level kill switch if daily PnL breaches max drawdown.
+   */
+  private async aggregateRisk(): Promise<void> {
+    let totalPnlToday = 0;
+    let totalExposure = 0;
+    const symbolExposure = new Map<string, number>();
+
+    for (const [podId, pod] of this.pods) {
+      const positions = pod.getPositions();
+      for (const pos of positions) {
+        const notional = pos.avgEntryPrice * pos.qty;
+        totalExposure += notional;
+
+        // Track duplicate exposure across pods
+        const existing = symbolExposure.get(pos.symbol) || 0;
+        symbolExposure.set(pos.symbol, existing + notional);
+
+        // Daily P&L
+        const pnl = (pos.currentPrice - pos.avgEntryPrice) * pos.qty;
+        totalPnlToday += pnl;
+      }
+    }
+
+    // Portfolio-level kill switch
+    const maxDrawdownPct = this.toml.orchestrator.global_max_drawdown_pct / 100;
+    const totalCapital = this.toml.orchestrator.capital_total_usd;
+
+    if (totalPnlToday < -(totalCapital * maxDrawdownPct)) {
+      this.log('error', `PORTFOLIO KILL SWITCH: daily PnL $${totalPnlToday.toFixed(2)} exceeds max drawdown ${(maxDrawdownPct * 100).toFixed(1)}%`);
+      for (const [podId, pod] of this.pods) {
+        pod.pause();
+        this.orchestrator.updatePodState(podId, 'paused');
+        this.log('warn', `Pod ${podId} PAUSED by kill switch`);
+      }
+    }
+
+    // Warn on concentrated exposure (>25% of portfolio in one symbol)
+    for (const [symbol, exposure] of symbolExposure) {
+      if (exposure > totalCapital * 0.25) {
+        this.log('warn', `CONCENTRATION: ${symbol} exposure $${exposure.toFixed(0)} = ${((exposure / totalCapital) * 100).toFixed(0)}% of portfolio`);
+      }
+    }
+
+    // Publish risk summary to Redis
+    await this.publisher?.publishIntel('risk', {
+      totalPnlToday,
+      totalExposure,
+      exposurePct: totalCapital > 0 ? totalExposure / totalCapital : 0,
+      concentrations: Array.from(symbolExposure.entries()).filter(([, v]) => v > totalCapital * 0.15),
+      podCount: this.pods.size,
+      timestamp: Date.now(),
+    }, 300);
   }
 
   /** Spawn a swarm worker and publish results to Redis */
@@ -148,6 +295,26 @@ export class AlphanixAgent extends BaseAgent {
     } catch (err: any) {
       this.log('warn', `Swarm [${request.type}] failed: ${err.message}`);
       return null;
+    }
+  }
+
+  private applyGeopoliticalSignals(signals: GeopoliticalSignal[]): void {
+    const boostMap: Record<string, number> = { bullish: 50, bearish: -50, volatile: -20 };
+    const severityMult: Record<string, number> = { critical: 1.0, high: 0.7, medium: 0.4, low: 0.2 };
+
+    for (const signal of signals) {
+      const rawBoost = boostMap[signal.tradingImplication] ?? 0;
+      const mult = severityMult[signal.severity] ?? 0.2;
+      const boost = Math.round(rawBoost * mult);
+
+      for (const [podId, pod] of this.pods) {
+        const adapterType = pod.getAdapterType();
+        const markets = AlphanixAgent.ADAPTER_MARKET_MAP[adapterType] ?? [];
+        if (signal.affectedMarkets.some(m => markets.includes(m))) {
+          pod.setSentimentBoost(boost);
+          this.log('info', `[${podId}] Geo signal: ${signal.type} (${signal.severity}) → boost=${boost}`);
+        }
+      }
     }
   }
 
@@ -212,7 +379,7 @@ export class AlphanixAgent extends BaseAgent {
 
       // News: every 10 cycles (~10 min)
       if (this.cycleCount % 10 === 0 && this.swarmSpawner) {
-        await this.spawnAndPublish({
+        const newsResult = await this.spawnAndPublish({
           id: `news-${Date.now()}`,
           type: 'news',
           requester: { podId: 'orchestrator', role: 'scheduler' },
@@ -222,6 +389,13 @@ export class AlphanixAgent extends BaseAgent {
           maxDuration: 30000,
           priority: 'normal',
         });
+        // Wire geopolitical signals to pod confidence
+        if (newsResult?.status === 'completed' && newsResult.data) {
+          const newsData = (newsResult.data as any[])[0];
+          if (newsData?.signals?.length > 0) {
+            this.applyGeopoliticalSignals(newsData.signals);
+          }
+        }
       }
 
       // OSINT: every 15 cycles (~15 min)
@@ -255,7 +429,7 @@ export class AlphanixAgent extends BaseAgent {
 
       // Macro: every 30 cycles (~30 min) in addition to the scheduled morning scan
       if (this.cycleCount % 30 === 0 && this.swarmSpawner) {
-        await this.spawnAndPublish({
+        const periodicMacro = await this.spawnAndPublish({
           id: `macro-periodic-${Date.now()}`,
           type: 'macro',
           requester: { podId: 'orchestrator', role: 'scheduler' },
@@ -265,6 +439,29 @@ export class AlphanixAgent extends BaseAgent {
           maxDuration: 60000,
           priority: 'low',
         });
+
+        // Wire VIX to macroBoost (same logic as scheduled macro_scan)
+        if (periodicMacro?.status === 'completed') {
+          let vix: number | undefined;
+          for (const workerData of (periodicMacro.data as any[] ?? [])) {
+            if (workerData?.vix !== undefined && typeof workerData.vix === 'number') {
+              vix = workerData.vix;
+              break;
+            }
+          }
+          if (vix !== undefined) {
+            let macroBoost = 0;
+            if (vix > 30) macroBoost = -25;
+            else if (vix > 20) macroBoost = -10;
+            else if (vix < 15) macroBoost = 15;
+
+            for (const [, pod] of this.pods) {
+              pod.setMacroBoost(macroBoost);
+            }
+            this.log('info', `Macro (periodic): VIX=${vix.toFixed(1)}, macroBoost=${macroBoost} applied to ${this.pods.size} pods`);
+            await this.publisher?.publishIntel('macro', { vix, macroBoost, updatedAt: Date.now() }, 1800);
+          }
+        }
       }
 
       // Publish swarm active status to Redis every cycle
@@ -275,10 +472,11 @@ export class AlphanixAgent extends BaseAgent {
       for (const [id, pod] of this.pods) {
         try {
           const result = await pod.runCycle();
-          this.orchestrator.updatePodState(id, 'running');
+          const podState = pod.getState();
+          this.orchestrator.updatePodState(id, podState);
 
           // Publish full state
-          await this.publisher?.publishPodState(id, 'running');
+          await this.publisher?.publishPodState(id, podState);
           await this.publisher?.publishHeartbeat(id);
           await this.publisher?.publishPodPositions(id, pod.getPositions());
           await this.publisher?.publishPodRisk(id, pod.getRiskState());
@@ -292,6 +490,13 @@ export class AlphanixAgent extends BaseAgent {
           this.log('error', `Pod ${id} error: ${err.message}`);
           this.orchestrator.updatePodState(id, 'error');
         }
+      }
+
+      // Cross-pod risk aggregation (kill switch + concentration warnings)
+      try {
+        await this.aggregateRisk();
+      } catch (err: any) {
+        this.log('warn', `Risk aggregation failed: ${err.message}`);
       }
 
       // Refresh global status every cycle (TTL = 300s)
