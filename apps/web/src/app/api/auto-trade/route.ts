@@ -1281,11 +1281,17 @@ async function monitorPositions(): Promise<MonitorResult[]> {
             const hwmProfitPct = ((pos.highWaterMark - pos.entryPrice) / pos.entryPrice) * 100;
             const hwmThreshold = TOML?.exits?.stagnation_hwm_threshold_pct ?? 1.0;
 
-            if (ageHours >= timeout && Math.abs(pnlPct) < minPnl) {
+            // Absolute hard limit: force-close after 7 days regardless of HWM/trailing
+            const ABSOLUTE_MAX_HOLD_HOURS = 168; // 7 days
+            if (ageHours >= ABSOLUTE_MAX_HOLD_HOURS) {
+              shouldSell = true;
+              exitReason = `Hard timeout: ${ageHours.toFixed(1)}h old (absolute max ${ABSOLUTE_MAX_HOLD_HOURS}h). Forced close.`;
+            } else if (ageHours >= timeout && Math.abs(pnlPct) < minPnl) {
               // If HWM exceeded threshold, position had momentum — let trailing stop handle it
-              if (hwmProfitPct >= hwmThreshold && pos.trailingStop > pos.entryPrice) {
-                // Position reached profit but gave back — trailing stop is active, skip stagnation
-                console.log(`[EXIT] ${pos.symbol}: Skipping stagnation (HWM +${hwmProfitPct.toFixed(2)}% > ${hwmThreshold}% threshold, trailing active at $${pos.trailingStop.toFixed(4)})`);
+              // BUT only if current PnL is still positive (position still has life)
+              if (hwmProfitPct >= hwmThreshold && pos.trailingStop > pos.entryPrice && pnlPct > 0) {
+                // Position reached profit AND is still profitable — trailing stop is active, skip stagnation
+                console.log(`[EXIT] ${pos.symbol}: Skipping stagnation (HWM +${hwmProfitPct.toFixed(2)}% > ${hwmThreshold}% threshold, trailing active at $${pos.trailingStop.toFixed(4)}, current PnL +${pnlPct.toFixed(2)}%)`);
               } else {
                 shouldSell = true;
                 exitReason = `Tiered stagnation exit: ${ageHours.toFixed(1)}h old (limit ${timeout}h, type=${ep.tradeType}), movement ${pnlPct.toFixed(2)}%`;

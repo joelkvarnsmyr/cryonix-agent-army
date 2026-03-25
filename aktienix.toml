@@ -96,7 +96,7 @@ symbols = [
     "XOM",   # ExxonMobil — largest US E&P
     "CVX",   # Chevron
     "XLE",   # Energy Select SPDR ETF
-    "USO",   # Oil ETF
+    # USO removed — -$2K paper loss, extreme overnight gap risk on commodity ETFs
 
     # Airlines — recovery plays after oil/fuel shocks (oil_supply_shock secondary)
     "UAL",   # United Airlines

@@ -78,6 +78,27 @@ export class Pod {
     return '15m';
   }
 
+  /** Check if the market for this pod's asset class is currently open */
+  private isMarketOpen(): boolean {
+    const assetClass = this.adapter.assetClass;
+    if (assetClass === 'crypto') return true; // 24/7
+
+    const now = new Date();
+    const day = now.getUTCDay();
+    if (day === 0 || day === 6) return false; // Weekend
+
+    const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
+    if (assetClass === 'stock') {
+      // Check adapter ID for market detection
+      const id = this.adapter.id.toLowerCase();
+      if (id.includes('ibkr') || id.includes('nordic') || id.includes('eu')) {
+        return utcHour >= 7.0 && utcHour < 15.5; // EU: 08:00-16:30 CET
+      }
+      return utcHour >= 14.5 && utcHour < 21.0; // US: 09:30-16:00 ET
+    }
+    return true;
+  }
+
   async runCycle(): Promise<CycleResult> {
     this.state = 'running';
     const result: CycleResult = {
@@ -89,6 +110,12 @@ export class Pod {
       exited: 0,
       errors: [],
     };
+
+    // Skip scanning if market is closed — prevents stale data trading
+    if (!this.isMarketOpen()) {
+      this.state = 'idle';
+      return result;
+    }
 
     for (const symbol of this.config.symbols) {
       result.scannedSymbols++;
