@@ -816,7 +816,7 @@ Reply JSON only: {"approve":bool,"confidence":0-100,"reason":"string","contradic
             ], {
                 cwd: '/tmp',
                 stdio: ['pipe', 'pipe', 'inherit'],
-                env: { ...process.env, HOME: '/home/node' },
+                env: { ...process.env, HOME: process.env.HOME || '/home/node' },
             });
 
             child.stdin.write(userPrompt);

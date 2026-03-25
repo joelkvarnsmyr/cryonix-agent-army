@@ -212,6 +212,18 @@ export class Pod {
               const pos = this.positions.get(sym);
               const pnlDollar = pos ? (currentPrice - pos.entryPrice) * pos.qty : 0;
               this.risk.recordExit(pnlDollar);
+              // Log sell trade to Postgres
+              if (pos) {
+                await this.db?.logTrade({
+                  podId: this.config.id, symbol: sym, adapter: this.adapter.id,
+                  side: 'SELL', qty: pos.qty, fillPrice: currentPrice,
+                  notional: pos.qty * currentPrice, slippage: 0, fees: 0,
+                  confidence: 0, reasoning: `exit: ${exitSignal.reason} (${exitSignal.pnlPct.toFixed(2)}%)`,
+                  signals: [exitSignal.reason], models: [],
+                  orderId: exitResult.orderId ?? `exit-${Date.now()}`,
+                  proposalId: pos.orderId,
+                });
+              }
               this.positionTracker.close(this.adapter.id, sym);
               this.exitMonitor.untrack(sym);
               this.positions.delete(sym);
