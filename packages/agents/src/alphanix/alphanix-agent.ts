@@ -6,7 +6,7 @@ import { BinanceAdapter } from './adapters/binance-adapter';
 import { AlpacaAdapter } from './adapters/alpaca-adapter';
 import { IbkrAdapter } from './adapters/ibkr-adapter';
 import { Orchestrator } from './orchestrator/orchestrator';
-import { CapitalAllocator } from './orchestrator/capital-allocator';
+import { CapitalAllocator, type PodPerformance } from './orchestrator/capital-allocator';
 import { Pod } from './pod/pod';
 import { AlphanixStatePublisher } from './state/state-publisher';
 import { AlphanixDB } from './data/postgres';
@@ -34,6 +34,7 @@ export class AlphanixAgent extends BaseAgent {
   private swarmSpawner: SwarmSpawner | null = null;
   private running = false;
   private cycleCount = 0;
+  private lastRebalanceAt = 0;
 
   async initialize(): Promise<void> {
     this.log('info', 'Initializing Alphanix...');
@@ -282,6 +283,57 @@ export class AlphanixAgent extends BaseAgent {
     }, 300);
   }
 
+  /**
+   * Performance-based capital rebalancing.
+   * Runs every rebalance_interval_hours — shifts capital from losers to winners.
+   */
+  private async performRebalance(): Promise<void> {
+    const now = Date.now();
+    const intervalMs = (this.toml.orchestrator.rebalance_interval_hours ?? 6) * 3600_000;
+    if (now - this.lastRebalanceAt < intervalMs) return;
+
+    this.lastRebalanceAt = now;
+
+    // Collect per-pod performance from recent positions
+    const podPerformances: PodPerformance[] = [];
+    for (const [id, pod] of this.pods) {
+      const positions = pod.getPositions();
+      const returns = positions
+        .filter(p => p.unrealizedPnlPct !== undefined)
+        .map(p => p.unrealizedPnlPct);
+      podPerformances.push({
+        podId: id,
+        returns,
+        currentBudget: pod.getCapitalBudget(),
+      });
+    }
+
+    const results = this.allocator.rebalance(podPerformances);
+    if (results.length === 0) return;
+
+    // Apply new budgets to pods
+    const logParts: string[] = [];
+    for (const r of results) {
+      const pod = this.pods.get(r.podId);
+      if (pod && r.oldBudget !== r.newBudget) {
+        pod.updateCapitalBudget(r.newBudget);
+        logParts.push(`${r.podId} $${r.oldBudget}→$${r.newBudget} (score=${r.score})`);
+      }
+    }
+
+    if (logParts.length > 0) {
+      this.log('info', `REBALANCE: ${logParts.join(', ')}`);
+    } else {
+      this.log('info', 'REBALANCE: no changes needed');
+    }
+
+    // Publish rebalance event to Redis
+    await this.publisher?.publishIntel('rebalance', {
+      allocations: results,
+      timestamp: now,
+    }, 3600);
+  }
+
   /** Spawn a swarm worker and publish results to Redis */
   private async spawnAndPublish(request: SwarmRequest): Promise<SwarmResult | null> {
     if (!this.swarmSpawner) return null;
@@ -497,6 +549,13 @@ export class AlphanixAgent extends BaseAgent {
         await this.aggregateRisk();
       } catch (err: any) {
         this.log('warn', `Risk aggregation failed: ${err.message}`);
+      }
+
+      // Performance-based capital rebalancing
+      try {
+        await this.performRebalance();
+      } catch (err: any) {
+        this.log('warn', `Rebalance failed: ${err.message}`);
       }
 
       // Refresh global status every cycle (TTL = 300s)
