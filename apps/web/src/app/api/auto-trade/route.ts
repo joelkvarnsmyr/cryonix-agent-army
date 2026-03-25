@@ -6,12 +6,26 @@ import { fullConfig, loadConfig } from '@/lib/config';
 import { getConfigVersion } from '@/lib/config-version';
 import ccxt, { type Exchange } from 'ccxt';
 import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk';
+// Anthropic SDK loaded lazily — only when ai_validator = "claude" and ANTHROPIC_API_KEY is set
+let Anthropic: any = null;
 import { spawn } from 'child_process';
 
 import { TimingService } from '@/lib/trading/timing';
 import { updatePosterior, getBayesianAdjustment, rankSignalsBySoftmax } from '@/lib/trading/bayesian';
-import { SignalBusWriter } from '@cryonix/agents/shared/signal-bus-writer';
+
+// Signal bus — publish trade events to cryonix:signals channel
+// Inline lightweight implementation to avoid cross-package import issues in Docker build
+class SignalBusWriter {
+  private source: string;
+  private redis: any;
+  constructor(source: string, redis: any) { this.source = source; this.redis = redis; }
+  async publish(signal: Omit<any, 'source' | 'timestamp'>): Promise<void> {
+    try {
+      const msg = JSON.stringify({ ...signal, source: this.source, timestamp: Date.now() });
+      await this.redis.publish('cryonix:signals', msg);
+    } catch { /* non-critical */ }
+  }
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -84,14 +98,16 @@ function getGrok(): OpenAI | null {
 // CLAUDE AI SINGLETON (Anthropic SDK — stricter signal validation)
 // ============================================================================
 
-let anthropicClient: Anthropic | null = null;
+let anthropicClient: any = null;
 
-function getAnthropicClient(): Anthropic | null {
+function getAnthropicClient(): any {
   if (!CONFIG.AI_VALIDATION || !process.env.ANTHROPIC_API_KEY) return null;
   if (anthropicClient) return anthropicClient;
-  anthropicClient = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  });
+  try {
+    // Lazy load — only when actually needed (no top-level import)
+    if (!Anthropic) Anthropic = require('@anthropic-ai/sdk').default;
+    anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  } catch { return null; }
   return anthropicClient;
 }
 
