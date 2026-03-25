@@ -121,7 +121,8 @@ export class ConsensusEngine {
         const cooldownExpiry = this.cooldowns.get(trade.tokenMint);
         if (cooldownExpiry && now < cooldownExpiry) return null;
 
-        if (walletScore < 80) return null; // Only top-tier wallets
+        // Threshold check removed — caller (copynix-agent.ts) handles the score gate
+        // via TOML [single_whale] min_score. This function just creates the signal.
 
         this.cooldowns.set(trade.tokenMint, now + this.cooldownMs);
 

@@ -171,11 +171,13 @@ max_position_pct = 0.30
 min_token_age_hours = 4
 
 [safety]
-# DATA COLLECTION MODE: Relaxed safety — paper trading, want data on ALL token types
-# including risky ones (to train scam detection in CopyTracker/Bayesian)
-min_token_age_hours = 2
-min_liquidity_usd = 10000
-min_holders = 50
+# DATA COLLECTION MODE: Very relaxed — paper trading, want data including risky tokens
+# Keep honeypot checks (freeze/mint authority) but drop age/liquidity/holders
+min_token_age_hours = 0.5
+min_liquidity_usd = 1000
+min_holders = 10
+# Disable freeze authority block — some legit tokens have it early
+block_freeze_authority = false
 max_fdv_liquidity_ratio = 50
 min_lp_burnt_pct = 0
 require_immutable_supply = false

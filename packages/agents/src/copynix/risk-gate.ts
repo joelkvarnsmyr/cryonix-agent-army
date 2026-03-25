@@ -13,6 +13,7 @@ export class CopyRiskGate {
     private minLpBurntPct: number;
     private requireImmutableSupply: boolean;
     private maxFdvLiquidityRatio: number;
+    private blockFreezeAuthority: boolean;
 
     constructor(config: {
         min_token_age_hours: number;
@@ -21,6 +22,7 @@ export class CopyRiskGate {
         min_lp_burnt_pct: number;
         require_immutable_supply: boolean;
         max_fdv_liquidity_ratio?: number;
+        block_freeze_authority?: boolean;
     }) {
         this.minTokenAgeHours = config.min_token_age_hours;
         this.minLiquidityUsd = config.min_liquidity_usd;
@@ -28,6 +30,7 @@ export class CopyRiskGate {
         this.minLpBurntPct = config.min_lp_burnt_pct;
         this.requireImmutableSupply = config.require_immutable_supply;
         this.maxFdvLiquidityRatio = config.max_fdv_liquidity_ratio ?? 50;
+        this.blockFreezeAuthority = config.block_freeze_authority ?? true;
     }
 
     async checkToken(tokenMint: string): Promise<TokenSafetyCheck> {
@@ -95,8 +98,12 @@ export class CopyRiskGate {
                 // Don't block — just warn. Many legit tokens have active mint.
             }
             if (onChain.freezeAuthorityActive) {
-                safe = false;
-                reasons.push('BLOCKED: Freeze authority active (dev can freeze your tokens)');
+                if (this.blockFreezeAuthority) {
+                    safe = false;
+                    reasons.push('BLOCKED: Freeze authority active (dev can freeze your tokens)');
+                } else {
+                    reasons.push('WARN: Freeze authority active (allowed by config)');
+                }
             }
 
             return {
