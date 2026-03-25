@@ -79,13 +79,17 @@ export class AlphanixAgent extends BaseAgent {
       enabledPods[id] = podToml.capital_pct;
     }
 
+    // Postgres — must init before pods so they can persist trades
+    this.db = new AlphanixDB();
+    await this.db.connect();
+
     // Allocate capital and create Pod instances
     const budgets = this.allocator.allocate(enabledPods);
     for (const [id, podToml] of Object.entries(this.toml.pods)) {
       if (!podToml.enabled || !budgets[id]) continue;
       const adapter = this.registry.get(podToml.adapter)!;
       const config = toPodConfig(id, podToml);
-      const pod = new Pod(config, adapter, budgets[id]);
+      const pod = new Pod(config, adapter, budgets[id], this.db);
       this.pods.set(id, pod);
       this.orchestrator.registerPod(id, 'starting');
       this.log('info', `Pod created: ${id} ($${budgets[id]})`);
@@ -96,10 +100,6 @@ export class AlphanixAgent extends BaseAgent {
     this.swarmSpawner = new SwarmSpawner(maxWorkers);
     registerAllWorkers(this.swarmSpawner);
     this.log('info', `Swarm system: ${maxWorkers} max workers, ${this.swarmSpawner.getBudgetStatus().active} active`);
-
-    // Postgres
-    this.db = new AlphanixDB();
-    await this.db.connect();
 
     // Schedule events
     this.scheduler.on('morning_huddle', async () => {

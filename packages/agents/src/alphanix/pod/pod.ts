@@ -2,6 +2,7 @@
 
 import type { PodConfig, PodState, TradeProposal } from '../types.js';
 import type { MarketAdapter } from '../adapters/types.js';
+import type { AlphanixDB } from '../data/postgres.js';
 import { QuantAgent } from './quant-agent.js';
 import { RiskAgent } from './risk-agent.js';
 import { ExecutionAgent } from './execution-agent.js';
@@ -29,11 +30,13 @@ export class Pod {
   private exitMonitor: ExitMonitor;
   private positionTracker: PositionTracker;
   private positions = new Map<string, any>();
+  private db: AlphanixDB | null;
 
-  constructor(config: PodConfig, adapter: MarketAdapter, capitalBudget: number) {
+  constructor(config: PodConfig, adapter: MarketAdapter, capitalBudget: number, db?: AlphanixDB | null) {
     this.config = config;
     this.adapter = adapter;
     this.capitalBudget = capitalBudget;
+    this.db = db ?? null;
     this.quant = new QuantAgent(config.id, this.getModelsForStrategy(config.strategy));
     this.risk = new RiskAgent(config.id, {
       maxDrawdownPct: config.riskMaxDrawdownPct,
@@ -112,6 +115,15 @@ export class Pod {
           if (decision.action === 'veto') {
             result.vetoed++;
             console.log(`[Pod:${this.config.id}] VETO ${symbol}: ${decision.vetoReason} (conf=${sized.confidence}, signals=${sized.signals})`);
+            // Log vetoed signal to Postgres
+            await this.db?.logSignal({
+              podId: this.config.id, symbol, adapter: this.adapter.id,
+              side: sized.side, confidence: sized.confidence,
+              signals: sized.signals, models: sized.models,
+              reasoning: sized.reasoning,
+              riskAction: 'veto', riskReason: decision.vetoReason,
+              proposalId: sized.id,
+            });
             continue;
           }
 
@@ -140,6 +152,26 @@ export class Pod {
                 });
                 // Count the trade in risk tracking
                 this.risk.recordTrade();
+                // Log approved signal
+                await this.db?.logSignal({
+                  podId: this.config.id, symbol, adapter: this.adapter.id,
+                  side: sized.side, confidence: sized.confidence,
+                  signals: sized.signals, models: sized.models,
+                  reasoning: sized.reasoning,
+                  riskAction: decision.action,
+                  proposalId: sized.id,
+                });
+                // Log executed trade
+                await this.db?.logTrade({
+                  podId: this.config.id, symbol, adapter: this.adapter.id,
+                  side: sized.side, qty: execResult.fillQty,
+                  fillPrice: execResult.fillPrice,
+                  notional: execResult.fillQty * execResult.fillPrice,
+                  slippage: execResult.slippage, fees: execResult.fees,
+                  confidence: sized.confidence, reasoning: sized.reasoning,
+                  signals: sized.signals, models: sized.models,
+                  orderId: execResult.orderId, proposalId: sized.id,
+                });
               } else {
                 result.errors.push(`Order not filled for ${symbol} (adapter returned empty orderId)`);
               }
