@@ -142,14 +142,16 @@ Varje cykel MÅSTE resultera i minst en åtgärd. Att bara rapportera problem ut
 
 ### GRÖN — KÖR DIREKT (inga undantagn)
 
-| Problem | Åtgärd (kör direkt) |
-|---------|---------------------|
-| Symbol med negativ EV | `ssh azureuser@openclaw-vm "sed -i '/SYMBOL/d' ~/cryonix/{agent}.toml"` + restart |
-| Paper-agent med dålig WR | Mutera TOML-params: SL ±1%, TP ±1%, confidence ±3% |
-| Orphaned DB-positions >7d | `docker exec cryonix-postgres-1 psql -U postgres -d cryonix -c "UPDATE positions SET status='FORCE_CLOSED', closed_at=NOW() WHERE status='OPEN' AND opened_at < NOW()-INTERVAL '7 days'"` |
-| Stagnant agent (0 trades 7d) | Sänk confidence-threshold 5%, bredda filter |
-| Calibration visar hög hit rate på skippade patterns | Aktivera/prioritera mönstret i TOML |
-| Fee ratio >40% | Höj min_trade_size eller TP i TOML |
+| Problem | Exakt kommando (kör via SSH) |
+|---------|------------------------------|
+| Symbol med negativ EV | `ssh azureuser@openclaw-vm "sed -i '/\"SYMBOL\"/d' ~/cryonix/{agent}.toml && cd ~/cryonix && docker compose -f docker-compose.prod.yml restart {service}"` |
+| Paper-agent med dålig WR | `ssh azureuser@openclaw-vm "sed -i 's/^stop_loss_pct = X/stop_loss_pct = Y/' ~/cryonix/{agent}.toml"` + restart |
+| Orphaned DB-positions >7d | `ssh azureuser@openclaw-vm "docker exec cryonix-postgres-1 psql -U postgres -d cryonix -c \"UPDATE positions SET status='FORCE_CLOSED', closed_at=NOW() WHERE status='OPEN' AND opened_at < NOW()-INTERVAL '7 days'\""` |
+| Stagnant agent (0 trades 7d) | `ssh azureuser@openclaw-vm "sed -i 's/^min_confidence = 0.70/min_confidence = 0.65/' ~/cryonix/{agent}.toml"` + restart |
+| Fee ratio >40% | `ssh azureuser@openclaw-vm "sed -i 's/^tp_pct = X/tp_pct = Y/' ~/cryonix/cryonix.toml"` + restart auto-trader |
+| Calibration hög hit rate skippade | `ssh azureuser@openclaw-vm "sed -i 's/^PATTERN_enabled = false/PATTERN_enabled = true/' ~/cryonix/cryonix.toml"` + restart |
+
+**ALLA TOML-ändringar sker DIREKT PÅ VM:en via `ssh + sed -i`.** Verifiera alltid med `grep` efter.
 
 ### GUL — SKICKA TELEGRAM, VÄNTA, KÖR
 
@@ -339,19 +341,34 @@ Paper-agenter med negativ PnL → mutera TOML-params för att förbättra, aldri
 
 Baserat på Fas 4, genomför åtgärder:
 
-**TOML-justeringar (GRÖN):**
+**TOML-justeringar (GRÖN) — EXAKT PROCEDUR:**
+
 ```bash
-# Läs nuvarande värde FÖRST
-ssh azureuser@openclaw-vm "grep 'stop_loss_pct' ~/cryonix/cryonix.toml"
-# Ändra lokalt, commit, push till VM
+# 1. LÄS nuvarande värde
+OLD=$(ssh azureuser@openclaw-vm "grep '^tp_pct' ~/cryonix/cryonix.toml")
+echo "Nuvarande: $OLD"
+
+# 2. ÄNDRA PÅ VM:en direkt (inte lokalt!)
+ssh azureuser@openclaw-vm "sed -i 's/^tp_pct = 1.5/tp_pct = 2.0/' ~/cryonix/cryonix.toml"
+
+# 3. VERIFIERA att ändringen tog
+NEW=$(ssh azureuser@openclaw-vm "grep '^tp_pct' ~/cryonix/cryonix.toml")
+echo "Nytt: $NEW"
+
+# 4. RESTART berörd tjänst (auto-trader läser TOML vid start)
+ssh azureuser@openclaw-vm "cd ~/cryonix && docker compose -f docker-compose.prod.yml restart auto-trader"
 ```
+
+**VIKTIGT:** Ändra TOML **direkt på VM:en via SSH + sed**. Ändra INTE lokalt — du har inte deploy-rättigheter. Verifiera ALLTID med grep efter sed.
 
 Regler:
 - Max ±2% SL/TP per cykel
 - Max ±5% confidence per cykel
 - Max ±20% position size per cykel
 - ALLTID läs nuvarande värde innan ändring
-- ALLTID logga: vad, varför, förväntat impact
+- ALLTID verifiera med grep efter ändring
+- ALLTID restart berörd tjänst efter TOML-ändring
+- ALLTID logga i rapporten: vad, gammalt värde → nytt värde, varför
 
 **Kodmutation (GUL):**
 - Max 100 rader diff
