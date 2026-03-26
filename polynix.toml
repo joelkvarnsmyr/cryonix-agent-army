@@ -33,7 +33,7 @@ max_consecutive_losses = 5
 fee_rate = 0.0156
 
 [timing]
-scan_interval_ms = 20000          # 20s (was 30s — faster arb discovery)
+scan_interval_ms = 5000          # 5s (was 20s — faster arb discovery)
 settlement_check_ms = 300000
 
 [micro_markets]

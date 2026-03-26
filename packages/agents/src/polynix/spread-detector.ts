@@ -19,40 +19,48 @@ export class SpreadDetector {
      * Returns non-null only if profitable after round-trip fees.
      */
     async check(market: CryptoMicroMarket, config: PolynixConfig): Promise<ArbOpportunity | null> {
-        const [yesBuyPrice, noBuyPrice] = await Promise.all([
-            this.fetchPrice(market.yesTokenId, 'buy'),
-            this.fetchPrice(market.noTokenId, 'buy'),
+        // We evaluate VWAP for the typical max arb bet size to avoid assuming instant 1-share fills
+        const targetBetSizeUSD = config.strategy.arb_max_bet_size_usd || 10;
+        
+        const [yesFill, noFill] = await Promise.all([
+            this.fetchBookAskVWAP(market.yesTokenId, targetBetSizeUSD),
+            this.fetchBookAskVWAP(market.noTokenId, targetBetSizeUSD),
         ]);
 
-        if (yesBuyPrice === null || noBuyPrice === null) return null;
+        if (!yesFill || !noFill) return null;
 
-        const combinedCost = yesBuyPrice + noBuyPrice;
+        const combinedCost = yesFill.vwapPrice + noFill.vwapPrice;
 
         // Sanity: combined cost < 0.50 usually means illiquid / bad data
         if (combinedCost < 0.50) return null;
 
         const grossEdge = 1.0 - combinedCost;
-        const roundTripFees = 2 * config.risk.fee_rate;
-        const netEdge = grossEdge - roundTripFees;
+        const roundTripFeesPct = 2 * config.risk.fee_rate;
+        const roundTripFeesUSD = targetBetSizeUSD * roundTripFeesPct;
+        
+        // Add static Polygon Gas estimate ($0.05 per trade)
+        const polyGasUSD = 0.05 * 2;
+        
+        const totalCostUSD = roundTripFeesUSD + polyGasUSD;
+        // Edge expressed as a pure decimal (like grossEdge)
+        const netEdge = grossEdge - (totalCostUSD / targetBetSizeUSD);
 
-        // Only return if profitable after fees AND below threshold
+        // Only return if profitable after fees/gas AND below threshold
         if (netEdge <= 0) return null;
         if (combinedCost >= config.strategy.arb_threshold) return null;
 
-        // Estimate liquidity from the market object
-        const liquidity = market.liquidity || 0;
-        const halfLiq = liquidity / 2;
+        const maxSize = Math.min(yesFill.filledSizeUSD, noFill.filledSizeUSD, config.capital.max_bet_size_usd);
 
         return {
             market,
-            yesBestAsk: yesBuyPrice,
-            noBestAsk: noBuyPrice,
+            yesBestAsk: yesFill.vwapPrice,
+            noBestAsk: noFill.vwapPrice,
             combinedCost,
             grossEdge,
             netEdge,
-            yesLiquidity: halfLiq,
-            noLiquidity: halfLiq,
-            maxSize: Math.min(halfLiq, config.capital.max_bet_size_usd),
+            yesLiquidity: yesFill.filledSizeUSD,
+            noLiquidity: noFill.filledSizeUSD,
+            maxSize,
         };
     }
 
@@ -64,19 +72,48 @@ export class SpreadDetector {
     }
 
     /**
-     * Fetch the actual AMM-inclusive price to buy/sell a token.
+     * Fetch L2 Orderbook and calculate VWAP to fill a target USD size from asks.
      */
-    private async fetchPrice(tokenId: string, side: 'buy' | 'sell'): Promise<number | null> {
+    private async fetchBookAskVWAP(tokenId: string, targetSizeUSD: number): Promise<{ vwapPrice: number, filledSizeUSD: number } | null> {
         try {
-            const url = `${this.clobUrl}/price?token_id=${tokenId}&side=${side}`;
+            const url = `${this.clobUrl}/book?token_id=${tokenId}`;
             const res = await fetch(url, {
                 headers: { 'Accept': 'application/json' },
                 signal: AbortSignal.timeout(8_000),
             });
             if (!res.ok) return null;
-            const data = await res.json() as { price: string };
-            const price = parseFloat(data.price);
-            return isNaN(price) || price <= 0 ? null : price;
+            const data = await res.json() as { asks: { price: string, size: string }[] };
+            if (!data.asks || data.asks.length === 0) return null;
+            
+            // Sort asks from lowest to highest price
+            const asks = data.asks
+                .map(a => ({ price: parseFloat(a.price), sizeShares: parseFloat(a.size) }))
+                .filter(a => !isNaN(a.price) && !isNaN(a.sizeShares) && a.price > 0 && a.sizeShares > 0)
+                .sort((a, b) => a.price - b.price);
+
+            let remainingUSD = targetSizeUSD;
+            let totalCostSpentUSD = 0;
+            let totalSharesBought = 0;
+
+            for (const ask of asks) {
+                if (remainingUSD <= 0) break;
+                
+                const askAvailableUSD = ask.price * ask.sizeShares;
+                const spendUSD = Math.min(remainingUSD, askAvailableUSD);
+                const sharesReceived = spendUSD / ask.price;
+                
+                totalSharesBought += sharesReceived;
+                totalCostSpentUSD += spendUSD;
+                remainingUSD -= spendUSD;
+            }
+
+            if (totalSharesBought === 0) return null;
+            
+            // VWAP = total cost / total shares
+            const vwapPrice = totalCostSpentUSD / totalSharesBought;
+            const filledSizeUSD = totalCostSpentUSD;
+            
+            return { vwapPrice, filledSizeUSD };
         } catch {
             return null;
         }
